@@ -10,7 +10,7 @@
 import os
 import shutil
 
-import edit_image
+import edit_image_v2
 
 # ⚠ ต้องมี `r` นำหน้า — ไม่งั้น `\56` ถูกตีความเป็น **escape เลขฐานแปด**
 #   `"...Backend-server\56_149.jpg"` → `"...Backend-server._149.jpg"` (`\56` = '.')
@@ -37,5 +37,5 @@ if __name__ == "__main__":
     print(f"ต้นฉบับ  : {SRC}")
     print(f"ผลลัพธ์  : {dst}")
 
-    edit_image.process_and_save_image(dst, pair)
+    edit_image_v2.process_and_save_image(dst, pair)
     print("✅ เสร็จแล้ว — เปิดไฟล์ผลลัพธ์ดูได้เลย")
