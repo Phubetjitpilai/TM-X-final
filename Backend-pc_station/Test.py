@@ -1,6 +1,16 @@
-target_count = 17
-TRAY_CAPACITY = 8
-for piece in range(1, target_count + 1):
-        print(piece)
-        if TRAY_CAPACITY and piece > 1 and (piece - 1) % TRAY_CAPACITY == 0:
-                print("ask tray")
+rounds = 0
+result = "OK"          # ← ① ต้องมี กัน NameError รอบแรก
+ok = False
+while True:
+    if ok:
+        if result != "UNKNOWN":
+            print("Everything ok")
+            break
+    else:
+        rounds += 1
+    if not ok:
+        print("T1 error")
+        break
+    elif result == "UNKNOWN":                   # ← ② else ไม่ใช่ if — รอบนึงถามครั้งเดียว
+        print("GM error")
+        break
