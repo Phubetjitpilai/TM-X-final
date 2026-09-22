@@ -12,14 +12,17 @@
 #
 # ต่างจาก send_command.py ตรงที่:
 #   - ไม่ต้องกด Enter ทีละชิ้น (เดินอัตโนมัติ เว้นระยะตาม MEASURE_INTERVAL)
-#   - ไม่ต่อ TM-X เลย (ไม่มี R0/PW/T1/S0, ไม่มี FTP, ไม่มีรูปภาพ)
+#   - ไม่ต่อ TM-X เลย (ไม่มี R0/PW/T1/S0, ไม่มี FTP); สุ่มรูปจากโฟลเดอร์ image
 #   - สุ่มค่าให้ "อิงกับ nominal/tolerance จริงของ ALPL นั้น" ที่ดึงจาก Backend
 #     เพื่อให้ผล OK/NG ที่ออกมาสมจริง ไม่ใช่สุ่มมั่วจนได้ NG หมดทุกชิ้น
 
 import os
+import sys
 import random
 import threading
 import time
+import mimetypes
+from pathlib import Path
 
 import httpx
 import uvicorn
@@ -29,8 +32,17 @@ from pydantic import BaseModel
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+# Windows terminals may use a legacy encoding that cannot print Thai/emoji.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+# Default: uninterrupted UI demo. Opt in explicitly to the old fault scenarios.
+DEMO_MODE = "--faults" not in sys.argv
+
 # ── Config ──────────────────────────────────────────────────────────────────
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+MOCK_IMAGE_DIR = Path(__file__).resolve().parent / "image"
 AGENT_PORT  = int(os.getenv("AGENT_PORT", 9998))
 # ⚠ เดิม hardcode เป็น 5 ไว้เฉยๆ ทั้งที่ .env มี HEARTBEAT_INTERVAL อยู่แล้ว —
 #   พอมีคนไปลด HEARTBEAT_TIMEOUT ใน .env เป็น 5 ตัวนี้ไม่ตามให้ กลายเป็น
@@ -89,6 +101,9 @@ MAX_ASK_USER_ROUNDS = int(os.getenv("MAX_ASK_USER_ROUNDS", 3))
 current_session_id = None   # session ที่กำลังวัดอยู่ (None = idle)
 is_running = False          # ธงหยุดกลางคัน — ตั้งเป็น False เมื่อได้คำสั่ง stop
 _hb_last_ok = time.time()   # เวลาที่ heartbeat ยิงออกสำเร็จครั้งล่าสุด
+# โหมด trigger ของ session ปัจจุบัน — ต้องแนบไปกับ heartbeat ให้ Backend รู้ว่า
+# หน้าเว็บควรแสดงปุ่ม Trigger (manual) หรือซ่อนปุ่ม (auto)
+_trigger_mode = "auto"
 
 # คำตอบจาก modal — เขียนโดย /command (thread ของ uvicorn) อ่านโดย measurement_flow
 # ⚠ ต้องประกาศระดับโมดูล ไม่ใช่ในฟังก์ชัน เพราะคนละ thread ต้องเห็นตัวเดียวกัน
@@ -107,9 +122,25 @@ _answer_action = None       # "retry" | "accept" | "stop" | None
 #   นี่คือกับดักเดียวกับ pause ที่เคยทำให้เทสต์ผ่านแต่เครื่องจริงพัง
 MOCK_WAIT_TRIGGER = os.getenv("MOCK_WAIT_TRIGGER", "0") == "1"
 
+if DEMO_MODE:
+    MOCK_MODE = "default"
+    MOCK_WAIT_TRIGGER = False
+    TRAY_CAPACITY = 0
+MEASURE_INTERVAL = max(0.2, MEASURE_INTERVAL)
+HB_INTERVAL = max(0.2, min(HB_INTERVAL, HB_TIMEOUT_HINT / 3))
+
 _trigger = threading.Event()
 _waiting_for_trigger = False   # heartbeat แนบค่านี้ไป → ปุ่มบนหน้าเว็บสว่างตามจริง
 _answer_lock   = threading.Lock()
+
+
+def _trigger_wait_enabled() -> bool:
+    """คืน True เมื่อรอบปัจจุบันต้องรอสัญญาณก่อนวัดชิ้นถัดไป
+
+    โหมด manual ต้องรอปุ่มจากเว็บเสมอ ส่วน MOCK_WAIT_TRIGGER ยังเก็บไว้
+    สำหรับการทดสอบโหมด auto แบบจำลองเซนเซอร์ด้วยมือ
+    """
+    return _trigger_mode == "manual" or MOCK_WAIT_TRIGGER
 
 http_app = FastAPI(title="TM-X Mock Agent")
 
@@ -147,10 +178,10 @@ def random_value(lo, hi, force_ng):
     """
     span = hi - lo
     if force_ng:
-        out = span * random.uniform(0.5, 2.0)     # หลุดออกไป 0.5–2 เท่าของความกว้างช่วง
+        out = max(span, 0.01) * random.uniform(0.5, 2.0)
         return round(lo - out if random.random() < 0.5 else hi + out, 3)
     pad = span * 0.10
-    return round(random.uniform(lo + pad, hi - pad), 3)
+    return min(hi, max(lo, round(random.uniform(lo + pad, hi - pad), 6)))
 
 
 def random_offset(offset_max):
@@ -169,7 +200,7 @@ def random_offset(offset_max):
     return round(random.uniform(0.0, offset_max * 0.85), 3)
 
 
-def random_offsets(offset_max):
+def random_offsets(offset_max, force_ok=False):
     """สุ่มค่า offset ให้ครบทุกช่องที่ `MeasurementCreate` บังคับ
 
     คืน `(offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top)` — **6 ค่า**
@@ -183,8 +214,8 @@ def random_offsets(offset_max):
     อิงจากมันอีกที — ถ้าสุ่มอิสระทุกตัว โอกาสได้ NG จะกลายเป็น ~6 เท่าของ
     `NG_RATE` ที่ตั้งไว้ ทำให้เทสต์ NG rate ไม่ได้ตามที่ตั้งใจ
     """
-    ox = random_offset(offset_max)                          # ตัวนี้ถือ NG_RATE ไว้
-    oy = round(abs(ox) * random.uniform(0.30, 0.95), 3)     # แกน Y อ่อนกว่าเสมอ
+    ox = (0.0 if offset_max == 0 else random.uniform(0, offset_max * 0.7)) if force_ok and offset_max is not None else random_offset(offset_max)
+    oy = abs(ox) * random.uniform(0.30, 0.95)
 
     # 4 มุมกระจายรอบ ๆ ค่าที่มากที่สุด — backend เอาไปหา "มุมที่แคบที่สุด"
     # (`_get_min_position_label`) ค่าต้องไม่เท่ากันหมด ไม่งั้นได้มุมเดิมทุกแถว
@@ -192,6 +223,32 @@ def random_offsets(offset_max):
     tr, tl, bl, br = (round(max(0.0, base + random.uniform(-0.004, 0.004)), 3)
                       for _ in range(4))
     return ox, oy, tr, tl, bl, br
+
+
+def upload_random_image(measurement_id):
+    """แนบรูปสุ่มกับผลวัดที่บันทึกแล้ว โดยไม่แก้ไขหรือลบไฟล์ต้นฉบับ."""
+    try:
+        images = [p for p in MOCK_IMAGE_DIR.iterdir()
+                  if p.is_file() and p.suffix.lower() in
+                  {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}]
+        if not images:
+            print(f"   ⚠ ไม่มีรูปใน {MOCK_IMAGE_DIR} — ข้ามการส่งรูป")
+            return False
+        image_path = random.choice(images)
+        with image_path.open("rb") as image_file:
+            response = httpx.post(
+                f"{BACKEND_URL}/api/measurements/{measurement_id}/image-upload",
+                files={"file": (image_path.name, image_file,
+                                mimetypes.guess_type(image_path.name)[0] or "application/octet-stream")},
+                timeout=60,
+            )
+            response.raise_for_status()
+        print(f"   🖼 ส่งรูป {image_path.name} → measurement {measurement_id} แล้ว")
+        return True
+    except Exception as exc:
+        # ผลวัดบันทึกไปแล้ว: รูปล้มเหลวต้องไม่ส่งผลวัดซ้ำหรือหยุดรอบจำลอง
+        print(f"   ⚠ ส่งรูปของ measurement {measurement_id} ไม่สำเร็จ: {exc}")
+        return False
 
 
 def post_measurement(session_id, number_alpl, value_x, value_y,
@@ -269,6 +326,7 @@ def heartbeat_loop():
                     # ต้องส่งเหมือน Pi.py — ไม่งั้นปุ่ม ⚡ Trigger บนหน้าเว็บ
                     # จะดับค้างตอนเทสต์ด้วย mock แล้วเข้าใจผิดว่าฟีเจอร์พัง
                     "waiting_for_trigger": _waiting_for_trigger,
+                    "trigger_mode": _trigger_mode,
                 },
                 timeout=5,
             )
@@ -451,6 +509,20 @@ def wait_for_trigger_mock(piece, target_count):
     _waiting_for_trigger = True
     print(f"\nชิ้นที่ {piece}/{target_count} — รอสัญญาณ trigger ... "
           f"(กดปุ่ม ⚡ Trigger บนหน้าเว็บ หรือ curl -X POST :{AGENT_PORT}/trigger)")
+    # แจ้งสถานะพร้อมรับ Trigger ทันที ไม่ต้องรอ heartbeat รอบถัดไป
+    # (เหมือน wait_for_trigger_web() ใน Pi_auto_manual_mode.py)
+    try:
+        httpx.post(
+            f"{BACKEND_URL}/api/heartbeat",
+            json={
+                "session_id": current_session_id,
+                "waiting_for_trigger": True,
+                "trigger_mode": _trigger_mode,
+            },
+            timeout=0.5,
+        )
+    except Exception:
+        pass
     try:
         while is_running:
             if _trigger.wait(0.1):
@@ -458,6 +530,19 @@ def wait_for_trigger_mock(piece, target_count):
         return False
     finally:
         _waiting_for_trigger = False
+        # ดับปุ่มบนเว็บทันทีเมื่อได้ Trigger หรือถูก Stop
+        try:
+            httpx.post(
+                f"{BACKEND_URL}/api/heartbeat",
+                json={
+                    "session_id": current_session_id,
+                    "waiting_for_trigger": False,
+                    "trigger_mode": _trigger_mode,
+                },
+                timeout=5,
+            )
+        except Exception:
+            pass
 
 
 def measurement_flow(session_id, groups, target_count):
@@ -475,7 +560,6 @@ def measurement_flow(session_id, groups, target_count):
     # ทิ้งทันทีที่กด Start (เหตุผลเต็มอยู่ใน send_command(Pi).py)
     _hb_last_ok = time.time()
     current_session_id = session_id
-    is_running = True
     target_count = target_count or 1
     stop_reason = None          # เหตุผลที่จบกลางคัน — แนบไปกับ /api/session/stop
 
@@ -516,9 +600,11 @@ def measurement_flow(session_id, groups, target_count):
             print(f"\n🔄 สลับโปรแกรมวัด → PW,1,{template_name}  (Pi จริงยิงคำสั่งนี้ตรงนี้)")
             prev_template = template_name
 
-        # ── รอสัญญาณทริกเกอร์ (เฉพาะ MOCK_WAIT_TRIGGER=1) ────────────────
-        # ลำดับเดียวกับ Pi.py — โหลดโปรแกรมเสร็จแล้วค่อยยืนรอชิ้นงาน
-        if MOCK_WAIT_TRIGGER and not wait_for_trigger_mock(piece, target_count):
+        # ── รอสัญญาณทริกเกอร์ ─────────────────────────────────────────────
+        # โหมด manual ต้องรอปุ่ม Trigger เสมอ แม้ DEMO_MODE จะปิด
+        # MOCK_WAIT_TRIGGER ไว้เพื่อให้โหมด auto ของ mock เดินเองได้ก็ตาม
+        # โหมด auto ของ mock จึงยังวัดต่อเองได้เมื่อไม่มี MCU จริง
+        if _trigger_wait_enabled() and not wait_for_trigger_mock(piece, target_count):
             print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
             break
 
@@ -543,11 +629,11 @@ def measurement_flow(session_id, groups, target_count):
             stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด (จำลอง)"
             break
 
-        force_ng = random.random() < NG_RATE
+        force_ng = piece % 2 == 0 if DEMO_MODE else random.random() < NG_RATE
         value_x = random_value(limits["x_lo"], limits["x_hi"], force_ng)
         value_y = random_value(limits["y_lo"], limits["y_hi"], force_ng)
         offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top = \
-            random_offsets(limits.get("offset_max"))
+            random_offsets(limits.get("offset_max"), force_ok=DEMO_MODE)
         verdict = judge(value_x, value_y, offset_opx, offset_opy, limits)
 
         print(f"\n🔍 ชิ้นที่ {piece}/{target_count} (ALPL {alpl}) — "
@@ -572,6 +658,12 @@ def measurement_flow(session_id, groups, target_count):
 
         d = post_measurement(session_id, alpl, value_x, value_y,
                              offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top)
+        if not d:
+            stop_reason = f"Mock could not save piece {piece}; check Backend/DB connection"
+            break  # Never advance the simulated queue after an unsuccessful POST.
+        # fault recieve จำลองการรับค่าจาก Pi โดยไม่มีรูปตามเดิม
+        if not (MOCK_MODE == "recieve" and piece == MOCK_FAIL_PIECE):
+            upload_random_image(d["measurement_id"])
         # ⚠ จุดที่ควรจับตา: ถ้า Pi กับ Backend ตัดสินไม่ตรงกัน แปลว่า `limits`
         #   ที่ส่งมากับเกณฑ์ที่ backend ใช้ query ตอนบันทึกไม่ใช่ชุดเดียวกัน
         #   (เคสนี้คือสิ่งที่ _build_groups พยายามกันไว้ — เห็นตรงนี้ถือว่าหลุด)
@@ -642,6 +734,9 @@ class CommandRequest(BaseModel):
     action: str
     session_id: int | None = None
     target_count: int | None = None
+    # "manual" = รอปุ่ม Trigger บนเว็บ · "auto" = mock เดินเองเหมือน MCU
+    # ค่าเริ่มต้น auto เพื่อรองรับ Backend รุ่นเก่าที่ยังไม่ส่งฟิลด์นี้
+    trigger_mode: str = "auto"
     # groups = แหล่งความจริงเดียวของ "วัดอะไร ด้วยโปรแกรมไหน เกณฑ์เท่าไหร่"
     # (Backend เลิกส่ง template_name/number_alpl ระดับบนสุดแล้ว — ทั้งคู่เป็นของ
     #  กลุ่มแรกซึ่งอยู่ใน groups[0] อยู่ดี ส่งซ้ำจะมีแหล่งความจริง 2 ที่)
@@ -659,14 +754,29 @@ async def command(req: CommandRequest):
       backend ขยับคิวไปแล้วแต่สั่ง Pi ไม่ผ่าน → คิวเหลื่อมถาวร · ที่นี่เคยรองรับ
       อยู่ฝ่ายเดียวจึงเป็นกับดักซ้ำรอย pause พอดี
     """
-    global is_running, _answer_action
+    global is_running, _answer_action, _trigger_mode
 
     if req.action == "start":
+        if is_running:
+            raise HTTPException(409, "Mock is already running a session")
+        if req.trigger_mode not in ("manual", "auto"):
+            raise HTTPException(
+                400,
+                f"trigger_mode '{req.trigger_mode}' ไม่ถูกต้อง — ต้องเป็น 'manual' หรือ 'auto'",
+            )
         groups = [g.model_dump() for g in (req.groups or [])]
+        if req.session_id is None or not groups or not req.target_count:
+            raise HTTPException(400, "Start a test session from Dashboard first")
+        if sum(len(g["alpl"]) for g in groups) != req.target_count or any(g["limits"] is None for g in groups):
+            raise HTTPException(400, "Groups, limits and target_count must match")
         # ล้างคำตอบค้างจาก session ก่อนหน้า — ถ้ารอบที่แล้วจบตอน modal เปิดอยู่
         with _answer_lock:
             _answer_action = None
             _answer_event.clear()
+        # ตั้งโหมดก่อนเปิด is_running เพื่อให้ heartbeat รอบแรกส่งค่าถูกต้อง
+        # และ Backend เปิดปุ่ม Trigger ได้ทันทีเมื่อผู้ใช้เลือก manual
+        _trigger_mode = req.trigger_mode
+        is_running = True
         threading.Thread(
             target=measurement_flow,
             args=(req.session_id, groups, req.target_count),
@@ -709,7 +819,8 @@ async def command(req: CommandRequest):
                 409,
                 "ยังไม่ถึงช่วงรอสัญญาณ — ระบบกำลังโหลดโปรแกรมวัด "
                 "หรือกำลังรอผลของชิ้นก่อนหน้าอยู่"
-                + ("" if MOCK_WAIT_TRIGGER else " (mock ตั้ง MOCK_WAIT_TRIGGER=0 จึงวัดเองไม่รอสัญญาณ)"),
+                + ("" if _trigger_wait_enabled()
+                   else " (mock ตั้งให้โหมด auto วัดเองไม่รอสัญญาณ)"),
             )
         _trigger.set()
         print("\n⚡ ได้รับสัญญาณ trigger (จากปุ่มบนหน้าเว็บ)")
@@ -746,8 +857,8 @@ async def trigger():
     if not _waiting_for_trigger:
         return {"ok": False,
                 "reason": "ยังไม่ถึงช่วงรอสัญญาณ"
-                          + ("" if MOCK_WAIT_TRIGGER
-                             else " — mock ตั้ง MOCK_WAIT_TRIGGER=0 จึงวัดเองไม่รอสัญญาณ")}
+                          + ("" if _trigger_wait_enabled()
+                             else " — mock ตั้งให้โหมด auto วัดเองไม่รอสัญญาณ")}
     _trigger.set()
     print("\n⚡ ได้รับสัญญาณ trigger")
     return {"ok": True}
@@ -757,6 +868,10 @@ if __name__ == "__main__":
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     print(f"🤖 mockup.py — Mock Agent (สุ่มค่าแทนฮาร์ดแวร์จริง)")
     print(f"   Backend  : {BACKEND_URL}")
+    if DEMO_MODE:
+        print("   DEMO: alternating OK / NG, no fault popups; manual mode waits for Trigger")
+        print("   Open Dashboard, create a test queue, then click Start. Results are saved to DB.")
+        print("   Stop the real Pi agent first; both use the same agent port.")
     print(f"   หน่วงเวลา/ชิ้น: {MEASURE_INTERVAL}s   |   NG rate: {NG_RATE:.0%}")
 
     # ── โหมดจำลอง error ──────────────────────────────────────────────────
@@ -782,7 +897,7 @@ if __name__ == "__main__":
         print(f"      กดปุ่ม ⚡ Trigger บนหน้าเว็บ หรือ curl -X POST localhost:{AGENT_PORT}/trigger")
     else:
         print("   ⏩ MOCK_WAIT_TRIGGER=0 — วัดเองรวดเดียวไม่รอสัญญาณ "
-              "(ตั้งเป็น 1 ถ้าอยากเทสต์ปุ่ม Trigger)")
+              "(โหมด manual ที่เลือกตอน Start จะรอปุ่ม Trigger เสมอ)")
 
     print(f"   heartbeat ทุก {HB_INTERVAL:g}s · หยุดเองถ้าขาดติดต่อเกิน {HB_TIMEOUT_HINT:g}s")
     print(f"   กำลังรอคำสั่ง Start จาก Backend ที่ port {AGENT_PORT}...\n")

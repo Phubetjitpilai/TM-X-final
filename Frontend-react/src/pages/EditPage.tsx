@@ -536,7 +536,7 @@ export default function EditPage() {
     try {
       if (isAdd) await apiPost("/api/parts", record);
       else await apiPatch(`/api/parts/${editContext.key}`, record);
-      toast.show(isAdd ? `เพิ่ม ALPL ${nAlpl} สำเร็จ` : `บันทึก ALPL ${nAlpl} สำเร็จ`);
+      toast.show(isAdd ? `เพิ่ม ALPL ${nAlpl} สำเร็จ` : `บันทึก ALPL ${nAlpl} สำเร็จ`, undefined, "success");
       bumpHistory();
       await reloadPartsAfterMutation(nAlpl);
       closeEditModal();
@@ -563,7 +563,7 @@ export default function EditPage() {
           await reloadPartsAfterMutation();
           bumpTrash();
           closeEditModal();
-          toast.show(`ลบ ALPL ${numberAlpl} สำเร็จ`);
+          toast.show(`ลบ ALPL ${numberAlpl} สำเร็จ`, undefined, "success");
         } catch (err) {
           setAlertText(errMsg(err, "ลบ Part ไม่สำเร็จ"));
         }
@@ -638,7 +638,7 @@ export default function EditPage() {
         ? await apiPatch<{ result?: string }>(`/api/measurements/${editContext.key}`, payload)
         : await apiPost<{ result?: string }>("/api/measurements", payload);
       const resultNote = res?.result ? ` (Result: ${res.result})` : "";
-      toast.show(isEdit ? `บันทึก Measurement ID ${editContext.key} เรียบร้อยแล้ว${resultNote}` : `เพิ่ม Measurement เรียบร้อยแล้ว${resultNote}`);
+      toast.show(isEdit ? `บันทึก Measurement ID ${editContext.key} เรียบร้อยแล้ว${resultNote}` : `เพิ่ม Measurement เรียบร้อยแล้ว${resultNote}`, undefined, "success");
       bumpHistory();
       await reloadMeasAfterMutation((editContext.key as number) ?? undefined);
       closeEditModal();
@@ -661,7 +661,7 @@ export default function EditPage() {
           bumpTrash();
           await reloadMeasAfterMutation();
           closeEditModal();
-          toast.show(`ลบ Measurement ID ${measurementId} สำเร็จ`);
+      toast.show(`ลบ Measurement ID ${measurementId} สำเร็จ`, undefined, "success");
         } catch (err) {
           setAlertText(errMsg(err, "ลบ Measurement ไม่สำเร็จ"));
         }
@@ -1289,7 +1289,7 @@ export default function EditPage() {
           แยกจาก confirm modal เพราะอันนั้นมีปุ่ม "ลบ" ที่ทำ action จริง ส่วนอันนี้
           แค่โชว์ข้อความแล้วกดตกลงปิดไปเฉยๆ (เช่น ลบไม่ได้เพราะยังมีข้อมูลอ้างอิงอยู่) */}
       <div className={`modal-overlay${alertText ? " open" : ""}`}>
-        <div className="confirm-box">
+        <div className="confirm-box alert-box-warning">
           <p>{alertText}</p>
           <div className="confirm-actions">
             <button type="button" className="btn-save" onClick={() => setAlertText(null)}>

@@ -12,6 +12,7 @@ import { ReportAxis } from "../components/dashboard/ReportAxis";
 import OffsetMap from "../components/dashboard/OffsetMap";
 import IpmSummaryModal, { type IpmSummaryRow } from "../components/dashboard/IpmSummaryModal";
 import PartEntryModal, { type EntryQueue } from "../components/dashboard/PartEntryModal";
+import { formatAlplRanges } from "../utils/formatAlplRanges";
 
 // DashboardPage — พอร์ตจาก Frontend/index.html (TM-X Dashboard) แบบยึด
 // โครงสร้าง/ข้อความ/พฤติกรรมตามต้นฉบับเป๊ะๆ (ไม่ใช่ดีไซน์ใหม่ของตัวเอง) —
@@ -207,14 +208,64 @@ export default function DashboardPage() {
    *    สิ่งที่ถูกเขียนลง localStorage คือค่า "ก่อนล้าง" → จอล้างจริงตอนกด แต่
    *    พอ refresh ค่าเดิมโผล่กลับมา เหมือนปุ่ม Clear ไม่ทำงาน (อาการที่เจอจริง) */
   const telemetryRef = useRef<Telemetry | null>(null);
+  const latestTelemetryRef = useRef<Telemetry | null>(null);
+  const [selectedQueueIndex, setSelectedQueueIndex] = useState<number | null>(null);
+  const selectedQueueRef = useRef<number | null>(null);
+  const telemetryRequestRef = useRef(0);
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
+
+  function followLatestTelemetry() {
+    telemetryRequestRef.current += 1;
+    selectedQueueRef.current = null;
+    setSelectedQueueIndex(null);
+    setTelemetryLoading(false);
+    applyTelemetry(latestTelemetryRef.current);
+  }
+
+  async function selectQueueTelemetry(index: number, alpl: number) {
+    const sid = sessionRef.current.session_id;
+    if (sid == null) return;
+    const request = ++telemetryRequestRef.current;
+    selectedQueueRef.current = index;
+    setSelectedQueueIndex(index);
+    setTelemetryLoading(true);
+    applyTelemetry(null);
+    try {
+      const data = await apiGet<{ items: Telemetry[] }>("/api/measurements", {
+        session_id: sid, number_alpl: alpl, limit: 1,
+      });
+      if (request !== telemetryRequestRef.current || sessionRef.current.session_id !== sid) return;
+      if (!data.items[0]) {
+        showToast("ยังไม่พบผลวัดของชิ้นนี้", undefined, "warning");
+        followLatestTelemetry();
+        return;
+      }
+      applyTelemetry(data.items[0]);
+    } catch (err) {
+      if (request !== telemetryRequestRef.current) return;
+      showToast(err instanceof ApiError ? err.message : "โหลดผลวัดไม่สำเร็จ");
+      followLatestTelemetry();
+    } finally {
+      if (request === telemetryRequestRef.current) setTelemetryLoading(false);
+    }
+  }
   /** ตั้งค่า telemetry — ใช้ตัวนี้แทน setTelemetry() ทุกที่ เพื่อให้ ref ตรงกับ state เสมอ */
-  const applyTelemetry = (v: Telemetry | null) => { telemetryRef.current = v; setTelemetry(v); };
+  const applyTelemetry = (v: Telemetry | null) => {
+    telemetryRef.current = v;
+    setTelemetry(v);
+    // รูปต้องเป็นของผลวัดที่กำลังแสดงเสมอ รวมถึงตอนเปลี่ยนคิว/กลับไปค่าล่าสุด
+    cameraRequestRef.current += 1;
+    setCameraImgUrl(null);
+    applyLastImageId(null);
+    if (v?.measurement_id != null) void updateCameraPreview(v.measurement_id);
+  };
   const [lastImageMeasurementId, setLastImageMeasurementId] = useState<number | null>(null);
   /** เหตุผลเดียวกับ telemetryRef — รูปที่ค้างใน Camera Preview ก็ถูกเซฟกลับด้วย
    *  ค่าเก่าเหมือนกัน กด Clear แล้ว refresh รูปเดิมจึงโผล่กลับมา */
   const lastImageIdRef = useRef<number | null>(null);
   const applyLastImageId = (v: number | null) => { lastImageIdRef.current = v; setLastImageMeasurementId(v); };
   const [cameraImgUrl, setCameraImgUrl] = useState<string | null>(null);
+  const cameraRequestRef = useRef(0);
   /** รูปที่กำลังเปิดดูเต็มจอ — null = ไม่ได้เปิด
    *  แยกจาก cameraImgUrl เพราะรูปใน Camera Preview เปลี่ยนเองทุกครั้งที่วัดชิ้นใหม่
    *  ถ้าผูกกันไว้ รูปที่กำลังซูมดูอยู่จะโดนสลับกลางคันตอนชิ้นถัดไปมาถึง */
@@ -293,6 +344,13 @@ export default function DashboardPage() {
   const [trayModal, setTrayModal] = useState<
     { session_id: number; piece?: number; target?: number; capacity?: number } | null
   >(null);
+
+
+  const [mcuModal, setMcuModal] = useState<
+    { session_id: number; piece?: number | null; target?: number | null } | null
+  >(null);
+  const mcuFailRef = useRef(0);
+  
   /** นับว่าส่งคำตอบใน modal ไปที่ Pi ไม่สำเร็จติดกันกี่ครั้ง
    *
    *  ใช้ `useRef` ไม่ใช่ `useState` เพราะเป็นค่าที่ใช้ **ตัดสินใจภายใน** อย่างเดียว
@@ -308,6 +366,26 @@ export default function DashboardPage() {
   const [queueStrip, setQueueStrip] = useState<
     { alpl: number; state: "ok" | "ng" | "done" | "now" | "wait" }[]
   >([]);
+  const queueStripRef = useRef<HTMLDivElement>(null);
+  const queueNowIndex = queueStrip.findIndex((item) => item.state === "now");
+  const queueFollowIndex = queueNowIndex >= 0 ? queueNowIndex
+    : queueStrip.reduce((last, item, index) =>
+      item.state === "ok" || item.state === "ng" || item.state === "done" ? index : last, -1);
+  const queueFollowAlpl = queueStrip[queueFollowIndex]?.alpl;
+
+  useEffect(() => {
+    if (selectedQueueIndex !== null) return;
+    const strip = queueStripRef.current;
+    const chip = strip?.children[queueFollowIndex] as HTMLElement | undefined;
+    if (!strip || !chip) return;
+    const stripRect = strip.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    // Scroll only this strip; keep the latest result and next piece nearby.
+    strip.scrollTo({
+      left: strip.scrollLeft + chipRect.left - stripRect.left - (strip.clientWidth - chipRect.width) / 2,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  }, [queueFollowIndex, queueFollowAlpl, selectedQueueIndex]);
 
   // ── Parts cache (ใช้ validate ALPL + report modal — ไม่มีตารางแสดงในหน้านี้) ──
   const partsRef = useRef<Part[]>([]);
@@ -386,6 +464,7 @@ export default function DashboardPage() {
     image_updated: (d) => onImageUpdated(d),
     measure_timeout: (d) => onMeasureTimeout(d),
     tray_full: (d) => setTrayModal(d),
+    mcu_disconnected: (d) => onMcuDisconnected(d),
     station_event: (d) => onStationEvent(d),
   });
   const stationStatusRef = useRef(stationStatus);
@@ -425,7 +504,7 @@ export default function DashboardPage() {
   async function sendManualTrigger() {
     try {
       await apiPost("/api/session/trigger", { session_id: session?.session_id });
-      showToast("⚡ ส่งสัญญาณแล้ว");
+      showToast("⚡ ส่งสัญญาณแล้ว", undefined, "success");
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : "ส่งสัญญาณไม่สำเร็จ");
     }
@@ -438,8 +517,8 @@ export default function DashboardPage() {
         PART_ENTRY_STORAGE_KEY,
         JSON.stringify({
           entryQueue: entryQueueRef.current,
-          lastTelemetry: telemetryRef.current,
-          lastImageMeasurementId: lastImageIdRef.current,
+          lastTelemetry: latestTelemetryRef.current,
+          lastImageMeasurementId: latestTelemetryRef.current?.measurement_id ?? null,
           // ผล OK/NG รายชิ้น — ต้องรอดการ refresh เหมือน lastTelemetry ไม่งั้น
           // แถบคิวจะลืมผลทั้งแถวแล้วชิปกลายเป็น "ไม่รู้ผล" ทั้งที่เพิ่งวัดไปเอง
           results: resultsRef.current,
@@ -622,6 +701,8 @@ export default function DashboardPage() {
   }
 
   function resetTelemetry() {
+    latestTelemetryRef.current = null;
+    followLatestTelemetry();
     applyTelemetry(null);
     setCameraImgUrl(null);
     applyLastImageId(null);
@@ -677,20 +758,11 @@ export default function DashboardPage() {
     // ผู้ใช้กด 🧹 Clear ไว้ — ต้องค้างว่างไว้ ไม่ใช่โหลดกลับมาใหม่
     if (isTelemetryCleared()) { setQueueStrip([]); return; }
 
-    /* ⚠ session ที่จบไปแล้ว **ห้ามวาดแถบคิวขึ้นมาใหม่**
-       /api/session/state คืน session ล่าสุดเสมอโดยไม่ดู state เลย
-       (session.py — `SELECT ... FROM sessions ORDER BY session_id DESC LIMIT 1`
-        ไม่มี WHERE) `queue_state` ของรอบที่จบไปเมื่อวานจึงยังถูกส่งมาทุกครั้ง
-       ที่เปิดหน้า → เปิดเว็บวันถัดไปแล้วเจอคิวเก่าค้างอยู่ทั้งที่ล้างไปแล้ว
-
-       แถบคิวยังรอดการรีเฟรชกลาง session ตามเจตนาเดิมทุกประการ เพราะตอนนั้น
-       `state` เป็น "running" (นั่นคือเหตุผลที่ backend แนบ queue_state มาให้
-        ตั้งแต่แรก — ดูคอมเมนต์ที่ session.py:141)
-
-       ⚠ ห้ามแก้เป็น "จำค่าไว้ใน localStorage แทน" — คิวเป็นข้อเท็จจริงของ
-         session ที่ DB จำอยู่แล้ว เก็บสำเนาที่สองไว้จะเพี้ยนจากต้นฉบับได้
-         (เช่นมีคนลบแถวจากหน้า Edit) และจะทำให้ของเก่าค้างข้ามวันหนักกว่าเดิม */
-    if (st?.state !== "running") { setQueueStrip([]); return; }
+    // เก็บคิวของรอบที่วัดครบไว้ให้เลือกดูผลย้อนหลัง รวมถึงหลัง refresh
+    // ใช้ queue_state จาก backend; clearedSid ด้านบนกันการคืนคิวที่กด Clear ไปแล้ว
+    const completed = st?.state === "stopped"
+      && st.target_count > 0 && st.measured_count >= st.target_count;
+    if (st?.state !== "running" && !completed) { setQueueStrip([]); return; }
 
     const raw = st?.queue_state;
     if (!raw) { setQueueStrip([]); return; }
@@ -733,12 +805,13 @@ export default function DashboardPage() {
     //   ไว้ใน ref (อัปเดตทุก render)
     if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
     if (mtModal) {
-      showToast("ค่ามาถึงแล้ว — ปิดคำถามอัตโนมัติ");
+      showToast("ค่ามาถึงแล้ว — ปิดคำถามอัตโนมัติ", undefined, "success");
       setMtModal(null);
     }
 
     updateSession({ measured_count: d.measured, target_count: d.target });
-    applyTelemetry(d);
+    latestTelemetryRef.current = d;
+    if (selectedQueueRef.current === null) applyTelemetry(d);
     // เก็บผลรายชิ้นไว้ระบายสีชิปในแถบคิว — d.measured คือลำดับที่ 1..n
     if (d.measured > 0) resultsRef.current[d.measured - 1] = d.result;
     setQueueStrip((prev) =>
@@ -790,7 +863,12 @@ export default function DashboardPage() {
    */
   function onStationEvent(d: any) {
     const detail = d?.detail ? `: ${d.detail}` : "";
-    showToast(`⚠ ${d?.event ?? "STATION_EVENT"}${detail}`);
+    showToast(`⚠ ${d?.event ?? "STATION_EVENT"}${detail}`, undefined,
+      d?.type === "warning" ? "warning" : d?.type === "success" ? "success" : "error");
+  }
+  function onMcuDisconnected(d: any) {
+    setMcuModal(d);
+    mcuFailRef.current = 0;   // คำถามใหม่ = เริ่มนับความล้มเหลวใหม่ เหมือน mtFailRef
   }
 
   // ⚠ ถอด "ข้ามชิ้นนี้" (action `continue`) ออกแล้ว — 22 ส.ค. 2569
@@ -850,6 +928,8 @@ export default function DashboardPage() {
    *    แล้วคำสั่งส่งไม่ถึง Pi ผู้ใช้จะเหลือหน้าจอเปล่าที่ไม่มีปุ่มอะไรให้กด
    *    ทั้งที่เครื่องยังยืนรอคำตอบอยู่จริง — ไม่มีทางไปต่อนอกจากกด Stop
    */
+
+  
   async function resolveTrayFull(action: "resume" | "stop") {
     const sid = trayModal?.session_id ?? null;
     if (sid == null) { setTrayModal(null); return; }
@@ -875,6 +955,37 @@ export default function DashboardPage() {
     }
   }
 
+  async function resolveMcuDisconnected(action: "retry" | "stop") {
+    const sid = mcuModal?.session_id ?? null;
+    if (sid == null) { setMcuModal(null); return; }
+
+    if (action === "stop") { setMcuModal(null); await doStopSession(sid); return; }
+
+    try {
+      await apiPost("/api/session/mcu-retry", { session_id: sid });
+      // Pi อาจแจ้งล้มเหลวรอบใหม่ก่อน response นี้กลับมา อย่าปิดคำถามใหม่
+      setMcuModal((current) => current === mcuModal ? null : current);
+      mcuFailRef.current = 0;
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      if (msg.includes("404")) {
+        setMcuModal(null);
+        showToast("session นี้ถูกหยุดไปแล้ว");
+        return;
+      }
+      mcuFailRef.current += 1;
+      if (mcuFailRef.current >= 3) {
+        dialog.alert(
+          `สั่งลองใหม่ไม่สำเร็จ ${mcuFailRef.current} ครั้งติดกัน\n\n${msg}\n\n` +
+          `ตรวจสอบสาย/การเชื่อมต่อ MCU ที่เครื่องจริง แล้วกด Stop ถ้ายังไม่หาย`,
+          { title: "⚠ MCU ยังเชื่อมต่อไม่ได้", danger: true },
+        );
+      } else {
+        showToast(`สั่งลองใหม่ไม่สำเร็จ: ${msg} — กดใหม่อีกครั้ง หรือกดหยุดการวัด`);
+      }
+    }
+  }
+
   function onSessionStopped(d?: { agent_error?: string | null }) {
     resetTelemetry();
     resultsRef.current = [];
@@ -883,6 +994,7 @@ export default function DashboardPage() {
     // session จบแล้ว ไม่มีใครรอคำตอบอีก — ถ้าไม่ปิด modal จะค้างบนจอโดยที่
     // กดปุ่มไหนก็ได้ 404 (backend ล้าง tray_pending ไปพร้อมกับ session แล้ว)
     setTrayModal(null);
+    setMcuModal(null);   // ← เพิ่ม เหตุผลเดียวกัน
 
     // แท็บที่ **ไม่ได้เป็นคนกด Stop** ก็ต้องรู้ด้วยว่าเครื่องอาจยังวัดต่ออยู่
     // (คนกดได้เห็นจาก response ของตัวเองไปแล้วใน doStopSession)
@@ -897,7 +1009,6 @@ export default function DashboardPage() {
   function onSessionComplete(d: any) {
     // เก็บ session_id ไว้ "ก่อน" clearAllQueuesAndForms() — ตัวนั้นล้าง state ทิ้ง
     const sid = d.session_id ?? sessionRef.current.session_id;
-    resetTelemetry();
     setTrayModal(null);      // เหตุผลเดียวกับ onSessionStopped
     updateSession({ state: "stopped", measured_count: d.measured, target_count: d.target });
     clearAllQueuesAndForms();
@@ -931,19 +1042,30 @@ export default function DashboardPage() {
   }
   async function onImageUpdated(d: any) {
     setMeasurements((prev) => prev.map((m) => (m.measurement_id === d.measurement_id ? { ...m, image_path: d.image_path, image_upload_failed: !!d.upload_failed } : m)));
-    if (d.upload_failed) return;
+    if (d.measurement_id !== telemetryRef.current?.measurement_id) return;
+    if (d.upload_failed) {
+      cameraRequestRef.current += 1;
+      setCameraImgUrl(null);
+      applyLastImageId(null);
+      return;
+    }
     await updateCameraPreview(d.measurement_id);
   }
 
   async function updateCameraPreview(measurementId: number) {
+    const request = ++cameraRequestRef.current;
     try {
       const data = await apiGet<{ url: string }>(`/api/image-url/${measurementId}`);
+      // ผู้ใช้อาจเปลี่ยนคิวก่อนคำขอเดิมตอบกลับ หรือมี image_updated ใหม่กว่า
+      if (request !== cameraRequestRef.current || telemetryRef.current?.measurement_id !== measurementId) return;
       setCameraImgUrl(data.url);
       applyLastImageId(measurementId);
       savePartEntryState();
     } catch (e) {
-      // /api/image-url ปัจจุบันเป็นแค่ stub (ตอบ 404 เสมอ — ดู CLAUDE.md) —
-      // ล้มเหลวเงียบๆ เหมือนต้นฉบับ ปล่อยให้ Camera Preview โชว่ placeholder ต่อไป
+      if (request !== cameraRequestRef.current) return;
+      // ผลวัดอาจมาถึงก่อนรูป; รอ image_updated แล้วโหลดใหม่
+      setCameraImgUrl(null);
+      applyLastImageId(null);
       console.warn("updateCameraPreview:", e);
     }
   }
@@ -963,16 +1085,15 @@ export default function DashboardPage() {
       if (raw) {
         const d = JSON.parse(raw);
         if (d.entryQueue) { setEntryQueue(d.entryQueue); entryQueueRef.current = d.entryQueue; }
-        if (d.lastTelemetry) applyTelemetry(d.lastTelemetry);
+        if (d.lastTelemetry) {
+          latestTelemetryRef.current = d.lastTelemetry;
+          applyTelemetry(d.lastTelemetry);
+        }
         // ⚠ ต้องกู้ผลรายชิ้น **ก่อน** ที่ผล poll ตัวแรกจะมาถึงแล้วเรียก
         //   syncQueueStrip — effect นั้นอ่าน resultsRef เพื่อระบายสีชิป
         //   (effect ของ mount ทำงานแบบ synchronous จึงเสร็จก่อน response แน่นอน)
         if (Array.isArray(d.results)) resultsRef.current = d.results;
         clearedSidRef.current = d.clearedSid ?? null;
-        if (d.lastImageMeasurementId) {
-          applyLastImageId(d.lastImageMeasurementId);
-          updateCameraPreview(d.lastImageMeasurementId);
-        }
       }
     } catch (e) {
       console.warn("loadPartEntryState:", e);
@@ -1122,7 +1243,7 @@ export default function DashboardPage() {
           const bits = [g.package_size, g.part_number].filter(Boolean).join(" · ");
           return (
             <div key={gi}>
-              กลุ่มที่ {gi + 1}: {g.number_alpl.join(", ")}
+              กลุ่มที่ {gi + 1}: {formatAlplRanges(g.number_alpl)}
               {bits ? <span style={{ opacity: 0.7 }}> ({bits})</span> : null}
             </div>
           );
@@ -1158,7 +1279,7 @@ export default function DashboardPage() {
       updateSession({ state: "running", session_id: data.session_id, measured_count: 0, target_count: data.target_count });
       refreshParts();
     } catch (e) {
-      dialog.alert(e instanceof ApiError ? e.message : "เริ่ม session ไม่สำเร็จ", { title: "เริ่มการวัดไม่สำเร็จ" });
+      dialog.alert(e instanceof ApiError ? e.message : "เริ่ม session ไม่สำเร็จ", { title: "เริ่มการวัดไม่สำเร็จ", danger: true });
     }
   }
 
@@ -1193,7 +1314,7 @@ export default function DashboardPage() {
         );
       }
     } catch (e) {
-      dialog.alert(e instanceof ApiError ? e.message : "หยุด session ไม่สำเร็จ", { title: "หยุดการวัดไม่สำเร็จ" });
+      dialog.alert(e instanceof ApiError ? e.message : "หยุด session ไม่สำเร็จ", { title: "หยุดการวัดไม่สำเร็จ", danger: true });
     }
   }
 
@@ -1335,7 +1456,7 @@ export default function DashboardPage() {
                   <div className="pe-summary-dropdown session-entry-summary">
                     <button type="button" className="pe-summary-toggle" onClick={() => setPeSummaryOpen((v) => !v)}>
                       <span className="pe-summary-toggle-left">
-                        <span>ALPL: {entryQueue.list.join(", ")}</span>
+                        <span>ALPL: {formatAlplRanges(entryQueue.list)}</span>
                       </span>
                       <span className={`pe-summary-arrow${peSummaryOpen ? " open" : ""}`}>▼</span>
                     </button>
@@ -1350,7 +1471,7 @@ export default function DashboardPage() {
                       {entryQueue.groups.map((g, gi) => (
                         <div key={gi} className="pe-summary-grid" style={{ marginTop: "0.6rem" }}>
                           <span className="pg-label">กลุ่มที่ {gi + 1}</span>
-                          <span className="pg-value">{(g.number_alpl as number[]).join(", ")}</span>
+                          <span className="pg-value">{formatAlplRanges(g.number_alpl as number[])}</span>
                           {Object.entries(g)
                             .filter(([k, v]) => k !== "number_alpl" && v !== "" && v != null)
                             .map(([k, v]) => (
@@ -1412,6 +1533,11 @@ export default function DashboardPage() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span className="telemetry-alpl-badge">ALPL {telemetry?.number_alpl ?? "—"}</span>
+                  {selectedQueueIndex !== null && (
+                    <button type="button" className="btn-clear" onClick={followLatestTelemetry}>
+                      กลับไปค่าล่าสุด
+                    </button>
+                  )}
                   {/* ล้างเฉพาะสิ่งที่แสดงบนจอ ไม่แตะฐานข้อมูล — ผลวัดที่บันทึกไปแล้ว
                       ยังอยู่ครบในตาราง Measurements ด้านล่าง
                       ⚠ ล็อกตอน running เพราะล้างกลางคันแล้ว SSE ตัวถัดไปจะเติม
@@ -1428,7 +1554,12 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
-              <div className="telemetry-grid">
+              {selectedQueueIndex !== null && (
+                <div role="status" style={{ marginBottom: "0.5rem", color: "var(--muted)" }}>
+                  {telemetryLoading ? "กำลังโหลดผลวัด…" : `กำลังดูผล ALPL ${telemetry?.number_alpl ?? "—"}`}
+                </div>
+              )}
+              <div className="telemetry-grid" aria-busy={telemetryLoading}>
                 <div className="telemetry-xy-col">
                   <div className="telemetry-cell x">
                     <div className="tc-head">
@@ -1508,9 +1639,14 @@ export default function DashboardPage() {
               {queueStrip.length > 0 && (
                 <div className="telemetry-queue">
                   <div className="tq-label">Queue</div>
-                  <div className="tq-strip">
+                  <div ref={queueStripRef} className="tq-strip" tabIndex={0} role="region" aria-label="Queue — เลื่อนแนวนอนเพื่อดูรายการเพิ่มเติม">
                     {queueStrip.map((q, i) => (
-                      <span key={`${q.alpl}-${i}`} className={`tq-chip ${q.state}`}>
+                      <button type="button" key={`${q.alpl}-${i}`}
+                        className={`tq-chip ${q.state}${selectedQueueIndex === i ? " selected" : ""}`}
+                        disabled={q.state === "wait" || q.state === "now"}
+                        aria-pressed={selectedQueueIndex === i}
+                        aria-label={`ALPL ${q.alpl} — ${q.state === "wait" || q.state === "now" ? "ยังไม่มีผลวัด" : "ดูผลวัด"}`}
+                        onClick={() => selectQueueTelemetry(i, q.alpl)}>
                         {q.state === "now" && <span className="tq-dot" />}
                         {(q.state === "ok" || q.state === "ng" || q.state === "done") && (
                           <span
@@ -1521,7 +1657,7 @@ export default function DashboardPage() {
                           </span>
                         )}
                         {q.alpl}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -1764,6 +1900,38 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {mcuModal && (
+        <div className="modal-overlay open">
+          <div className="pe-modal-box" style={{ maxWidth: 460 }}>
+            <div className="pe-modal-header">
+              <div className="card-title">🔌 MCU ขาดการเชื่อมต่อ</div>
+            </div>
+            <div style={{ fontSize: "0.9rem", lineHeight: 1.7, marginBottom: "0.75rem" }}>
+              เครื่องขาดการเชื่อมต่อ
+              {mcuModal.piece != null && mcuModal.target != null && (
+                <> ระหว่างวัดชิ้นที่ <strong>{mcuModal.piece}/{mcuModal.target}</strong></>
+              )}
+              <br />กรุณาตรวจสอบสาย/เครื่องที่หน้างาน แล้วกด &ldquo;ลองใหม่&rdquo;
+            </div>
+            <div style={{
+              fontSize: "0.8rem", lineHeight: 1.6, color: "var(--muted)",
+              background: "var(--surface2)", border: "1px solid var(--border)",
+              borderRadius: "var(--radius)", padding: "0.6rem 0.75rem", marginBottom: "1.25rem",
+            }}>
+              เครื่องหยุดรออยู่ <strong>ไม่มีกำหนดเวลา</strong> — ใช้เวลาได้ตามต้องการ
+            </div>
+            <div className="entry-actions" style={{ justifyContent: "flex-end" }}>
+              <button type="button" className="btn-edit-entry" onClick={() => resolveMcuDisconnected("stop")}>
+                หยุดการวัด
+              </button>
+              <button type="button" className="btn-submit-entry" onClick={() => resolveMcuDisconnected("retry")}>
+                🔁 ลองใหม่
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Measure timeout ────────────────────────────────────────────────
           ⚠ ตั้งใจ **ไม่มีปุ่มปิด (✕) และคลิกพื้นหลังปิดไม่ได้** เพราะเครื่องฝั่ง Pi
             กำลังค้างรอคำตอบอยู่จริง ๆ ถ้าปิดทิ้งเฉย ๆ session จะค้างโดยไม่มีใครรู้
@@ -1972,11 +2140,11 @@ export default function DashboardPage() {
             dialog.confirm(
               <>
                 <strong>ALPL ต่อไปนี้ยังไม่เคยบันทึกมาก่อน</strong>
-                <br />
-                {items.map((it) => (
-                  <div key={it.alpl}>• ALPL {it.alpl} → Package Size "{it.package_size || "—"}"</div>
-                ))}
-                <br />
+                <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ALPL ที่ยังไม่ลงทะเบียน — เลื่อนเพื่อดูรายการเพิ่มเติม">
+                  {items.map((it) => (
+                    <div key={it.alpl}>• ALPL {it.alpl} → Package Size "{it.package_size || "—"}"</div>
+                  ))}
+                </div>
                 จะลงทะเบียนให้ตอนวัดชิ้นนั้นสำเร็จ แล้ววัดต่อเลยไหม
               </>,
               { title: "มี ALPL ที่ยังไม่ลงทะเบียน", okLabel: "ลงทะเบียนแล้ววัดต่อ" },

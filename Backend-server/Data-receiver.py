@@ -240,12 +240,12 @@ def _exc_line(exc: BaseException) -> str:
     return f"{name}: {msg[:160]}"
 
 
-def report(event: str, detail: str, *, persist: bool = True):
+def report(event: str, detail: str, *, persist: bool = True, show_toast: bool = True, type: str = "error"):
     log.info(f"   📣 {event}: {detail}")
     try:
         httpx.post(
             f"{BACKEND_URL}/api/session/event",
-            json={"event": event, "detail": detail, "persist": persist},
+            json={"event": event, "detail": detail, "persist": persist, "show_toast": show_toast, "type": type},
             timeout=2,
         )
     except Exception as exc:
@@ -262,14 +262,16 @@ def upload_image_to_backend(measurement_id, image_path):
         if resp.status_code == 200:
             log.info(f"   🖼 อัปโหลดรูปสำเร็จ (measurement_id={measurement_id})")
         else:
-            report("IMAGE_UPLOAD_FAILED",
+            log.info(f"   🖼 อัปโหลดรูปไม่สำเร็จ (measurement_id={measurement_id})")
+            report("IMAGE_UPLOAD_FAILED", #warning
                    f"รูปของ measurement {measurement_id} อัปโหลดไม่สำเร็จ "
                    f"(HTTP {resp.status_code}): {resp.text[:120]}",
-                   persist=False)
+                   persist=False, type="warning")
     except Exception as exc:
-        report("IMAGE_UPLOAD_FAILED",
+        log.info(f"   🖼 อัปโหลดรูปไม่สำเร็จ (measurement_id={measurement_id})")
+        report("IMAGE_UPLOAD_FAILED",  #warning
                f"รูปของ measurement {measurement_id} อัปโหลดไม่สำเร็จ: {exc}",
-               persist=False)
+               persist=False, type="warning")
     finally:
         _remove_quietly(image_path)
 
@@ -365,7 +367,7 @@ def _handle_capture_inner(image_path):
     # ── ด่าน 1: จับคู่ค่ากับรูป ──────────────────────────────────────────
     pair = _find_measurement_for_image()
     if pair is None:
-        report("TXT_NOT_FOUND",f"ไม่พบค่าการวัด "f"(รอ {TXT_WAIT_TIMEOUT:.0f} วิแล้ว)")
+        report("TXT_NOT_FOUND",f"ไม่พบค่าการวัด "f"(รอ {TXT_WAIT_TIMEOUT:.0f} วิแล้ว)", show_toast=False) # Show False
         return
     
     (
@@ -377,8 +379,8 @@ def _handle_capture_inner(image_path):
     # ── ด่าน 2: ต้องมี session ที่ running อยู่ ─────────────────────────
     session_id = get_current_session()
     if session_id is None:
-        report("NO_SESSION",
-               f"ได้ค่า/รูป {name} มาแต่ไม่มี session ที่ running อยู่ — ทิ้งไป")
+        report("NO_SESSION", # show false
+               f"ได้ค่า/รูป {name} มาแต่ไม่มี session ที่ running อยู่ — ทิ้งไป", show_toast=False)
         clear_temp_dir(wait_timeout=0)
         return
     
@@ -401,9 +403,9 @@ def _handle_capture_inner(image_path):
         edit_image.process_and_save_image(image_path, pair)
     except Exception as exc:
         log.exception("วาดเส้นบนรูป %s ไม่สำเร็จ", name)   # traceback เต็มลง log เครื่อง PC
-        report("IMAGE_EDIT_FAILED",
+        report("IMAGE_EDIT_FAILED", #Warning
                f"วาดเส้นบนรูป {name} ไม่สำเร็จ ({_exc_line(exc)}) — ส่งรูปดิบไปแทน",
-               persist=False)
+               persist=False, type="warning")
 
     # ── ด่าน 4: ส่งเข้า Backend ─────────────────────────────────────────
     log.info(
@@ -420,8 +422,8 @@ def _handle_capture_inner(image_path):
         offset_opx, offset_opy
         )
     except Exception as exc:
-        report("BACKEND_REJECT",
-               f"POST /api/measurements ไม่สำเร็จ: {exc} — เก็บรูปไว้ไม่ลบ")
+        report("BACKEND_REJECT",  #Show False
+               f"POST /api/measurements ไม่สำเร็จ: {exc} — เก็บรูปไว้ไม่ลบ",show_toast=False)
         return
     
     if resp.status_code != 200:
@@ -430,8 +432,8 @@ def _handle_capture_inner(image_path):
             detail = resp.json().get("detail", "")
         except Exception:
             detail = resp.text[:200]
-        report("BACKEND_REJECT",
-               f"Backend ปฏิเสธค่านี้ (HTTP {resp.status_code}): {detail}")
+        report("BACKEND_REJECT", #Show false
+               f"Backend ปฏิเสธค่านี้ (HTTP {resp.status_code}): {detail}",show_toast=False)
         _remove_quietly(image_path)
         return
 

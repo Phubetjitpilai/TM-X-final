@@ -37,7 +37,7 @@ export default function IpmSummaryModal({
       .join("\n");
     try {
       await navigator.clipboard.writeText(tsv);
-      show(`คัดลอกแล้ว ${rows.length} แถว — วางใน Excel ได้เลย`);
+      show(`คัดลอกแล้ว ${rows.length} แถว — วางใน Excel ได้เลย`, undefined, "success");
     } catch {
       // ⚠ clipboard API ใช้ไม่ได้ถ้าเปิดผ่าน http จากเครื่องอื่น (ต้อง https หรือ
       //   localhost) ซึ่งเป็นกรณีปกติของระบบนี้ — โอเปอเรเตอร์เปิดจากเครื่องอื่น
@@ -50,7 +50,7 @@ export default function IpmSummaryModal({
       ta.select();
       try {
         document.execCommand("copy");
-        show(`คัดลอกแล้ว ${rows.length} แถว — วางใน Excel ได้เลย`);
+        show(`คัดลอกแล้ว ${rows.length} แถว — วางใน Excel ได้เลย`, undefined, "success");
       } catch {
         show("คัดลอกไม่สำเร็จ — ลากเลือกข้อความในตารางแล้วกด Ctrl+C แทน");
       }

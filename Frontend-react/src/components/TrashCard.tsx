@@ -90,7 +90,7 @@ export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: Trash
   const restore = useMutation({
     mutationFn: (id: string) => apiPost("/api/deleted/restore", { id }),
     onSuccess: () => {
-      toast.show("กู้คืนข้อมูลเรียบร้อยแล้ว");
+      toast.show("กู้คืนข้อมูลเรียบร้อยแล้ว", undefined, "success");
       refetch();
       qc.invalidateQueries({ queryKey: ["session-state"] });
       onRestored?.();   // ให้หน้าแม่โหลดตารางของตัวเองใหม่
@@ -102,7 +102,7 @@ export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: Trash
     mutationFn: (id: string) => apiPost("/api/deleted/remove", { id }),
     // ลบถาวรไม่ได้แตะฐานข้อมูลเลย (แถวถูกลบไปตั้งแต่ตอนกดลบครั้งแรกแล้ว
     // ตรงนี้แค่ทิ้งตัวสำรอง) จึงไม่ต้องบอกให้หน้าแม่โหลดตารางใหม่
-    onSuccess: () => { toast.show("ลบถาวรแล้ว"); refetch(); onPurged?.(); },
+    onSuccess: () => { toast.show("ลบถาวรแล้ว", undefined, "success"); refetch(); onPurged?.(); },
     onError: (e: Error) => toast.show(`ลบไม่สำเร็จ — ${e.message}`),
   });
 

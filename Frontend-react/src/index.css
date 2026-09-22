@@ -666,11 +666,19 @@ button.topbar-link {
 .btn-clear:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
 .btn-clear:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.telemetry-queue { margin-bottom: 0.85rem; }
+.telemetry-queue { margin-bottom: 0.85rem; min-width: 0; max-width: 100%; }
 .tq-label { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.4rem; }
-.tq-strip { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.35rem; }
+.tq-strip {
+  display: flex; gap: 0.4rem;
+  width: 100%; max-width: 63.6rem; min-width: 0;
+  overflow-x: auto; padding-bottom: 0.5rem;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+.tq-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tq-chip {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 0.3rem;
+  flex: 0 0 6rem; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem;
+  scroll-snap-align: start; overflow: hidden; text-overflow: ellipsis;
   font-size: 0.8rem; font-weight: 600; padding: 0.32rem 0.65rem;
   border-radius: 7px; border: 1px solid transparent;
   white-space: nowrap; font-family: inherit; line-height: 1.4;
@@ -679,6 +687,10 @@ button.topbar-link {
 .tq-chip.ng   { background: var(--ng-bg); color: var(--ng); }
 .tq-chip.now  { background: var(--surface); color: var(--accent); border-color: var(--accent); }
 .tq-chip.wait { background: var(--surface2); color: var(--muted); }
+.tq-chip:not(:disabled) { cursor: pointer; }
+.tq-chip:disabled { cursor: default; opacity: 1; }
+.tq-chip.selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.tq-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* วัดไปแล้วแต่หน้านี้ไม่รู้ผล (เปิดจากอีกเครื่อง / ข้อมูลเก่ากว่าที่เซฟไว้) —
    เส้นประบอกว่า "ยังไม่ยืนยัน" ห้ามใช้สีเขียวเด็ดขาด เพราะจะอ่านว่าผ่าน */
 .tq-chip.done { background: var(--surface2); color: var(--muted); border: 1px dashed var(--border); }
@@ -1214,7 +1226,7 @@ button.topbar-link {
 /* ── Section 2 — Live View ───────────────────────────────────────────── */
 .live-view-grid {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   gap: 1.5rem;
 }
 @media (max-width: 760px) {
@@ -1460,6 +1472,7 @@ button.topbar-link {
 
 .entry-toggle {
   display: inline-flex;
+  align-self: flex-start;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1820,6 +1833,31 @@ tr[data-clickable] { cursor: pointer; }
   width: 100%;
   max-width: 460px;
 }
+.ui-dialog-overlay > .ui-dialog-box {
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ui-dialog-box.danger {
+  border-color: var(--ng);
+  border-top: 4px solid var(--ng);
+  box-shadow: 0 18px 60px rgba(127, 29, 29, .22);
+}
+.ui-dialog-box.danger .ui-dialog-title { color: var(--ng); }
+.ui-dialog-overlay .ui-dialog-msg { min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
+.ui-dialog-overlay .ui-dialog-title,
+.ui-dialog-overlay .ui-dialog-actions { flex-shrink: 0; }
+.register-alpl-list {
+  line-height: 1.7;
+  max-height: min(17em, 40dvh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  margin: .6rem 0;
+  padding-right: .5rem;
+}
+.register-alpl-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ui-dialog-title {
   font-size: 0.95rem;
   font-weight: 700;
@@ -1896,23 +1934,196 @@ tr[data-clickable] { cursor: pointer; }
 .confirm-box p { font-size: 0.88rem; margin-bottom: 1.25rem; line-height: 1.5; }
 .confirm-box p strong { color: var(--text); }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
-
-.toast {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(0.95);
-  background: var(--text);
-  color: #fff;
-  padding: 0.65rem 1.25rem;
-  border-radius: var(--radius);
-  font-size: 0.85rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .2s, transform .2s;
-  z-index: 300;
+.alert-box-warning {
+  border: 1px solid #b45309;
+  border-top: 4px solid #b45309;
+  box-shadow: 0 18px 60px rgba(180, 83, 9, .22);
 }
-.toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.alert-box-warning p {
+  color: #854f0b;
+}
+.alert-box-warning .btn-save {
+  background: #b45309;
+  border-color: #b45309;
+}
+
+/* Container แสดงผลและ Stack ลงด้านล่าง */
+.toast-dialog {
+  margin: auto;
+  border: 1px solid var(--ng);
+  border-top: 4px solid var(--ng);
+  box-shadow: 0 18px 60px rgba(127, 29, 29, .22);
+  max-width: min(460px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.toast-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+.toast-dialog .ui-dialog-title {
+  color: var(--ng);
+}
+.toast-dialog .ui-dialog-msg {
+  background: rgba(239, 68, 68, .08);
+  border-left: 3px solid var(--ng);
+  border-radius: 6px;
+  padding: .75rem .9rem;
+}
+.toast-dialog .ui-dialog-ok {
+  background: var(--ng);
+  border-color: var(--ng);
+}
+.toast-dialog .ui-dialog-ok:focus-visible {
+  outline: 2px solid var(--ng);
+  outline-offset: 3px;
+}
+.toast-dialog-warning {
+  border-color: #b45309;
+  box-shadow: 0 18px 60px rgba(180, 83, 9, .22);
+}
+.toast-dialog-warning .ui-dialog-title { color: #b45309; }
+.toast-dialog-warning .ui-dialog-msg {
+  background: rgba(245, 158, 11, .1);
+  border-left-color: #b45309;
+}
+.toast-dialog-warning .ui-dialog-ok {
+  background: #b45309;
+  border-color: #b45309;
+}
+.toast-dialog-warning .ui-dialog-ok:focus-visible { outline-color: #b45309; }
+.toast-dialog-success {
+  border-color: var(--ok);
+  box-shadow: 0 18px 60px rgba(22, 101, 52, .22);
+  animation: toast-success-fade 2s ease-in forwards;
+}
+.toast-dialog-success::backdrop {
+  animation: toast-success-backdrop-fade 2s ease-in forwards;
+}
+.toast-dialog-success .ui-dialog-title { color: var(--ok); }
+.toast-dialog-success .ui-dialog-msg {
+  background: rgba(34, 197, 94, .1);
+  border-left-color: var(--ok);
+}
+.toast-dialog-success .ui-dialog-ok {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.toast-dialog-success .ui-dialog-ok:focus-visible { outline-color: var(--ok); }
+
+@keyframes toast-success-fade {
+  0%, 84% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes toast-success-backdrop-fade {
+  0%, 84% { background: rgba(0, 0, 0, .5); }
+  100% { background: rgba(0, 0, 0, 0); }
+}
+
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 9999;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+}
+
+/* ตัว Card Toast */
+.toast-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 12px 16px 12px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  animation: slideIn 0.25s ease-out forwards;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* แถบสีแนวตั้งขอบซ้ายสุด */
+.toast-accent-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background-color: #2ecc71;
+}
+
+/* กล่องไอคอนฝั่งซ้าย */
+.toast-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background-color: #2ecc71;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  margin-right: 12px;
+  flex-shrink: 0;
+  color: #ffffff;
+}
+
+.toast-icon-box svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* รายละเอียดข้อความ */
+.toast-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+}
+
+.toast-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #1a1a1a;
+}
+
+.toast-message {
+  font-size: 0.8rem;
+  color: #666666;
+  line-height: 1.3;
+}
+
+/* ปุ่มปิด (✕) มุมขวาบน */
+.toast-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  font-size: 0.8rem;
+  color: #888888;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.toast-close:hover {
+  color: #1a1a1a;
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    Measurement report modal (ยกจาก Frontend/index.html ทั้งชุด)
@@ -1922,17 +2133,19 @@ tr[data-clickable] { cursor: pointer; }
 .report-modal-box {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 0;
-  width: 75vw; max-width: 1280px; max-height: 95vh;
+  width: min(1280px, 100%); min-width: 0; max-height: calc(100dvh - 2rem);
   overflow-y: auto; position: relative;
   display: flex; flex-direction: column;
 }
 .report-header {
   display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
   padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
+.report-header > :first-child { min-width: 0; flex: 1 1 240px; overflow-wrap: anywhere; }
 .report-header-title { font-size: 1.1rem; font-weight: 700; color: var(--text); }
 .report-header-sub { font-size: 0.83rem; color: var(--muted); margin-top: 0.25rem; }
-.report-header-right { display: flex; align-items: center; gap: 0.85rem; }
+.report-header-right { display: flex; align-items: center; gap: 0.85rem; flex-shrink: 0; margin-left: auto; }
 .report-verdict {
   font-size: 1.35rem; font-weight: 800; letter-spacing: .03em;
   padding: 0.25rem 1.1rem; border-radius: 8px; line-height: 1.3;
@@ -1941,11 +2154,12 @@ tr[data-clickable] { cursor: pointer; }
 .report-verdict.ng { background: var(--ng-bg); color: var(--ng); }
 .report-body {
   display: grid;
-  grid-template-columns: minmax(0, 620px) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  flex-shrink: 0; min-width: 0;
   gap: 1.25rem; padding: 1.25rem 1.5rem;
   align-items: start;   /* กันไม่ให้กล่องรูปถูกยืดสูงตามคอลัมน์ขวา */
 }
-@media (max-width: 900px) { .report-body { grid-template-columns: 1fr; } }
+.report-body > * { min-width: 0; }
 /* ⚠ **ห้ามใส่ `aspect-ratio` กลับมา** — เดิมตรึงไว้ `1 / 1` เพราะรูปดิบของ
    TM-X เป็นจัตุรัส 2048×2048 แต่ตั้งแต่ `edit_image.py` เข้ามาครอปชิ้นงาน
    แล้วต่อตารางค่าไว้ด้านขวา รูปกลายเป็นแนวนอน (วัดจากไฟล์จริง 1310×600 =
@@ -1962,7 +2176,7 @@ tr[data-clickable] { cursor: pointer; }
   min-height: 180px;   /* กันกล่องยุบแบนตอนขึ้น "Loading…" / "No image" */
   overflow: hidden; display: flex; align-items: center; justify-content: center;
 }
-.report-image-cell img { width: 100%; height: auto; display: block; cursor: zoom-in; }
+.report-image-cell img { width: 100%; max-width: 100%; min-width: 0; height: auto; display: block; cursor: zoom-in; }
 .report-image-cell .report-no-image { color: var(--muted); font-size: 0.85rem; }
 .report-axes { display: flex; flex-direction: column; gap: 0.85rem; }
 
@@ -2005,7 +2219,8 @@ tr[data-clickable] { cursor: pointer; }
 .report-specs {
   border-top: 1px solid var(--border); background: var(--surface2);
   padding: 1rem 1.5rem 1.25rem;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  flex-shrink: 0; min-width: 0;
   gap: 0.8rem 1.25rem; font-size: 0.82rem;
 }
 .report-specs .rs-full { grid-column: 1 / -1; }
@@ -2017,6 +2232,11 @@ tr[data-clickable] { cursor: pointer; }
   flex-shrink: 0; cursor: pointer;
 }
 .report-close:hover { color: var(--text); }
+
+@media (max-width: 600px) {
+  .report-header, .report-body, .report-specs { padding: 1rem; }
+  .report-specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* ── การ์ด History หน้า Edit ──────────────────────────────────────────────
    ป้ายสีสื่อความรุนแรงของการกระทำ: เพิ่ม = เขียว · แก้ไข = เหลือง · ลบ = แดง

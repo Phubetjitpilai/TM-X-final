@@ -4,6 +4,7 @@ import EntryGroups, {
   GROUP_FIELDS, OPTIONAL_FIELDS, emptyGroup,
   type EntryMode, type GroupValues,
 } from "./EntryGroups";
+import { formatAlplRanges } from "../../utils/formatAlplRanges";
 
 /** คิวที่พร้อมกด Start — โครงเดียวกันทั้ง 3 โหมด ต่างกันแค่ field ในกลุ่ม */
 /** กลุ่มที่พร้อมส่ง backend — number_alpl ถูกแปลงเป็นลิสต์ตัวเลขแล้ว
@@ -78,7 +79,7 @@ interface Props {
    *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข ALPL แล้วกดตกลงไปโดยไม่รู้ */
   confirmRegister: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
   /** แจ้งเตือนทั่วไป (toast) — ใช้ตอน autofill เขียนทับค่าที่ผู้ใช้พิมพ์เอง */
-  onNotify: (message: string) => void;
+  onNotify: (message: string, detail?: string, type?: "warning" | "error") => void;
   /** ถามยืนยันก่อนสลับโหมดตอนฟอร์มมีข้อมูลค้าง — คืน false = ยกเลิก อยู่โหมดเดิม
    *
    *  ให้หน้าแม่เป็นคนถาม (ไม่ใช่ window.confirm ในนี้) เพราะ dialog ของโปรเจกต์
@@ -100,16 +101,17 @@ const MODES: EntryMode[] = ["IPM", "New", "Rework"];
  *  ⚠ สองชนิดนี้เก็บ ALPL คนละแบบ — `PayloadGroup.number_alpl` เป็น `number[]`
  *    (คลี่ช่วงแล้ว) ส่วนฟอร์มเป็น string ดิบที่ผู้ใช้พิมพ์
  *
- *  ⚠ **การแปลงกลับสูญข้อมูลรูปแบบ** — ถ้าผู้ใช้พิมพ์ "400-403" ตอนแรก มันถูก
- *    คลี่เป็น [400,401,402,403] ไปแล้วตั้งแต่ตอน Save เปิด Edit จึงเห็นเป็น
- *    "400, 401, 402, 403" ค่าถูกต้องทุกตัวแต่หน้าตาไม่เหมือนที่พิมพ์
- *    ถ้าจะให้เหมือนเป๊ะต้องเก็บ string ดิบไว้ใน EntryQueue อีกฟิลด์
+ *  ALPL ถูกเก็บใน EntryQueue เป็นลิสต์ตัวเลขเพื่อส่ง Backend แต่ตอนเติมกลับเข้า
+ *  ฟอร์มจะบีบเลขเรียงติดกันกลับเป็นช่วงอีกครั้ง เช่น [1,2,3,4,5] → "1-5"
+ *  เพื่อให้กด Edit แล้วรูปแบบที่เห็นยังอ่านง่ายเหมือนเดิม
  */
 function toFormGroups(q: EntryQueue): GroupValues[] {
   return q.groups.map((g) => {
     const out: GroupValues = {};
     for (const [k, v] of Object.entries(g)) {
-      out[k] = Array.isArray(v) ? v.join(", ") : String(v ?? "");
+      out[k] = Array.isArray(v)
+        ? (k === "number_alpl" ? formatAlplRanges(v as number[]) : v.join(", "))
+        : String(v ?? "");
     }
     return out;
   });
@@ -397,7 +399,7 @@ export default function PartEntryModal({
           groups={groups}
           onChange={setGroups}
           errors={errors}
-          onOverwrite={onNotify}
+          onOverwrite={(message) => onNotify(message, undefined, "warning")}
           options={{ vendor: vendors, owner: owners, packageSize: packageSizes,
                      partNumbersFor, handlersFor, handlerOfPartNumber }}
         />

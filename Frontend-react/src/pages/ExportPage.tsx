@@ -289,7 +289,7 @@ export default function ExportPage() {
       return apiPost<Template>("/api/export/templates", { name, columns, kind: format });
     },
     onSuccess: (res: any) => {
-      toast.show(editingTpl ? "บันทึกการแก้ไขแล้ว" : "สร้าง Template แล้ว");
+      toast.show(editingTpl ? "บันทึกการแก้ไขแล้ว" : "สร้าง Template แล้ว", undefined, "success");
       if (!editingTpl && res?.export_template_id) setSelectedTplId(res.export_template_id);
       setModalOpen(false);
       setEditingTpl(null);
@@ -301,7 +301,7 @@ export default function ExportPage() {
   const dupTpl = useMutation({
     mutationFn: (id: number) => apiPost<Template>(`/api/export/templates/${id}/duplicate`),
     onSuccess: (res: any) => {
-      toast.show("คัดลอก Template แล้ว");
+      toast.show("คัดลอก Template แล้ว", undefined, "success");
       if (res?.export_template_id) setSelectedTplId(res.export_template_id);
       refreshTpl();
     },
@@ -311,7 +311,7 @@ export default function ExportPage() {
   const delTpl = useMutation({
     mutationFn: (id: number) => apiDelete(`/api/export/templates/${id}`),
     onSuccess: (_d, id) => {
-      toast.show("ลบ Template แล้ว");
+      toast.show("ลบ Template แล้ว", undefined, "success");
       if (selectedTplId === id) setSelectedTplId(null);
       refreshTpl();
     },

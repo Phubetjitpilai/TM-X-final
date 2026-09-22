@@ -469,7 +469,7 @@ export default function ReportTemplatePage() {
   function togglePainter() {
     // เก็บสำเนา กันไม่ให้แก้รูปแบบต้นฉบับทีหลังแล้วสิ่งที่ทาไปเปลี่ยนตาม
     painterRef.current = painterRef.current ? null : { ...styleOf(cur()) };
-    if (painterRef.current) toast.show("คัดลอกรูปแบบแล้ว — คลิกช่องที่ต้องการทา (Esc เพื่อเลิก)");
+    if (painterRef.current) toast.show("คัดลอกรูปแบบแล้ว — คลิกช่องที่ต้องการทา (Esc เพื่อเลิก)", undefined, "success");
     bump();
   }
 
@@ -480,7 +480,7 @@ export default function ReportTemplatePage() {
       for (let c = q.c1; c <= q.c2; c++) if (g()[r][c].span) { unspan(r, c); count++; }
     if (!count) { toast.show("ช่องที่เลือกไม่มีการผสานอยู่"); return; }
     bump();
-    toast.show(`ยกเลิกการผสานแล้ว ${count} จุด`);
+    toast.show(`ยกเลิกการผสานแล้ว ${count} จุด`, undefined, "success");
   }
 
   async function mergeCells() {
@@ -575,7 +575,7 @@ export default function ReportTemplatePage() {
 
       if (e.key === "Escape" && painterRef.current) {
         e.preventDefault(); painterRef.current = null; bump();
-        toast.show("เลิกใช้ Format Painter"); return;
+        toast.show("เลิกใช้ Format Painter", undefined, "success"); return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         // ลบเฉพาะ "เนื้อหา" ของทุกเซลล์ในช่วง — สี/ตัวหนา/การผสาน ยังอยู่
@@ -642,7 +642,7 @@ export default function ReportTemplatePage() {
       // ตัวที่ถูกล็อกไว้ → สร้างเป็นตัวใหม่เสมอ ไม่ยิง PATCH ไปให้โดนปฏิเสธ
       if (editingId != null && !lockedDefault) await apiPatch(`/api/export/templates/${editingId}`, body);
       else await apiPost("/api/export/templates", body);
-      toast.show("บันทึกแล้ว");
+      toast.show("บันทึกแล้ว", undefined, "success");
       backToWizard();
     } catch (err) {
       toast.show(err instanceof ApiError ? err.message : "บันทึกไม่สำเร็จ");
@@ -858,7 +858,7 @@ export default function ReportTemplatePage() {
               e.preventDefault();
               const src = g()[from.r][from.c];
               const key = src.f || src.hdr;
-              if (key) { removeField(key); toast.show(`เอา "${labelOf(key)}" ออกแล้ว`); }
+              if (key) { removeField(key); toast.show(`เอา "${labelOf(key)}" ออกแล้ว`, undefined, "success"); }
               else src.v = "";
               dragFromRef.current = null;
               bump();

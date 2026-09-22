@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 import httpx
 import pandas as pd
@@ -721,6 +721,7 @@ async def heartbeat_checker() -> None:
             session_queues.pop(sid, None)
             measure_timeouts.pop(sid, None)  # คำถามค้างของ session ที่ตายไปแล้ว ไม่มีใครตอบได้อีก
             tray_pending.pop(sid, None)      # เหตุผลเดียวกัน — ถาดเต็มของ session ที่ตายแล้ว
+            mcu_disconnected_pending.pop(sid, None)
             log.warning("Session %s: ไม่ได้ heartbeat เกิน %ss — mark เป็น 'timeout'", sid, HEARTBEAT_TIMEOUT)
             await push_event("session_timeout", {"session_id": sid})
 
@@ -935,18 +936,28 @@ class TrayFullRequest(BaseModel):
     target: int | None = None
     capacity: int | None = None
 
+mcu_disconnected_pending: dict[int, dict] = {}
+
+class McuDisconnectedRequest(BaseModel):
+    session_id: int
+    piece: int | None = None
+    target: int | None = None
+
 class SessionEventRequest(BaseModel):
     """Recieve_tm-x.py แจ้งสาเหตุที่มัน "ทิ้งค่า" ไปโดยไม่บันทึกลง DB
 
     ไม่มี session_id — Recieve ไม่รู้ในบางด่าน (ด่าน 1-2 เกิดก่อนด่าน 3 ที่เป็น
     ตัวถาม session) Backend จึงแนบเข้ากับ session ที่ running อยู่ตอนนั้นเอง
 
-    persist=False → ยิง SSE เตือนอย่างเดียว ไม่เขียนลง last_event
+    persist=False → ไม่เขียนลง last_event
                     ใช้กับเรื่องที่ "ค่าลง DB ไปแล้ว" เช่นรูปอัปโหลดไม่สำเร็จ
+    show_toast=False → ไม่ส่ง SSE เตือนบนเว็บ แต่ยังบันทึกตามค่า persist
     """
     event:   str
     detail:  str | None = None
     persist: bool = True
+    show_toast: bool = True
+    type: Literal["warning", "error", "success"] = "error"
 
 class SessionContinueRequest(BaseModel):
     session_id: int
@@ -1719,6 +1730,8 @@ __all__ = [
     "logging",
     "measure_timeouts",
     "tray_pending",
+    "McuDisconnectedRequest",
+    "mcu_disconnected_pending",
     "os",
     "pd",
     "push_event",

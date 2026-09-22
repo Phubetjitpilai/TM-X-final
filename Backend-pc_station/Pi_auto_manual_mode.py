@@ -414,18 +414,29 @@ def get_measured_count(session_id):
 # ทั้งคู่มีสัญญาเดียวกัน: คืน True = มีสัญญาณ · False = โดน Stop ระหว่างรอ
 # ผู้เรียก (`command_flow`) จึงไม่ต้องรู้ว่ามาจากทางไหน
 
-def wait_for_trigger_serial():
+def wait_for_trigger_serial(session_id,piece,target_count):
     """โหมด auto — รอ `<TRIGGER_TMX>` จาก MCU ผ่าน Serial"""
     log.info("   ⏳ รอสัญญาณจาก MCU ... (กด Stop เพื่อยกเลิก)")
     while is_running:
-        if mega_ser.in_waiting > 0:
-            try:
+        try:
+            if mega_ser.in_waiting > 0:
                 line = mega_ser.readline().decode("utf-8").strip()
                 if line == "<TRIGGER_TMX>":
                     log.info("   📥 [RX ← Mega] ได้รับคำสั่ง <TRIGGER_TMX> แล้ว")
                     return True
-            except UnicodeDecodeError:
-                pass
+        except UnicodeDecodeError:
+            # ข้อมูลที่อ่านได้ไม่ใช่ UTF-8 ไม่ได้แปลว่าพอร์ตหลุด
+            pass
+        except Exception as exc:
+            log.error("อ่านสัญญาณจาก Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+            _drop_mega("รอสัญญาณ trigger")
+            while is_running:
+                if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
+                    return False
+                if not is_running:
+                    return False
+                if open_mega():
+                    break  # ออกจากลูปเชื่อมต่อ แล้วกลับไปรอ trigger ในลูปหลัก
         time.sleep(0.05)
     return False           # ออกจาก loop เพราะโดน Stop จาก Backend และ return False
 
@@ -468,11 +479,11 @@ def wait_for_trigger_web():
             pass
 
 
-def wait_for_trigger():
+def wait_for_trigger(session_id,piece,target_count):
     """แยกทางตามโหมดของ session นี้ — ตัวเรียกไม่ต้องรู้ว่ามาจากไหน"""
     if _trigger_mode == "auto":
         print("Auto")
-        return wait_for_trigger_serial()
+        return wait_for_trigger_serial(session_id,piece,target_count)
     return wait_for_trigger_web()
 
 def send_recv(sock, command, timeout=SOCKET_TIMEOUT):
@@ -699,7 +710,7 @@ def get_measurement_tmx(sock, limits, timeout=GM_MAX_WAIT):
     return "UNKNOWN", None, None, None, None, None, None, None, None
 
 #วนไปถามว่าพร้อมรับ result ยัง ให้ MCU set Flag เอา idle(ยังไม่มีชิ้นงาน) -> obj_is_ready(เมื่อวางชิ้นงานแล้ว) -> waiting_for_result(พร้อมรับ result) -> idle(เสร็จการวัด 1 ชิ้น)
-def send_result_to_mcu(result) -> bool:
+def send_result_to_mcu(result,session_id,piece,target_count) -> bool:
     # ⚠ ต้องมี `global` — ข้างล่างมีการเขียน `mega_ser = None` ถ้าไม่ประกาศ
     #   Python จะถือว่าเป็นตัวแปรท้องถิ่นของฟังก์ชันนี้ โค้ดรันผ่านไม่มี error
     #   แต่ตัวแปรระดับโมดูลไม่ถูกแตะเลย = พฤติกรรมเหมือนไม่ได้แก้อะไร
@@ -714,37 +725,49 @@ def send_result_to_mcu(result) -> bool:
         ack_msg = "<MEASURE_OK>\n"
     elif result == "NG":
         ack_msg = "<MEASURE_NG>\n"
-    try: 
-        mega_ser.write(ack_msg.encode("utf-8"))
-        log.info(f"   [TX → Mega] {ack_msg.strip()}")
-        log.info("   🔀 → MCU: %s %s", icon, result)
-        return True
-    except Exception as exc:
-        log.error("   ❌ ส่ง Result ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
-        report("MCU_WRITE_FAILED",
+    while is_running:
+        try: 
+            mega_ser.write(ack_msg.encode("utf-8"))
+            log.info(f"   [TX → Mega] {ack_msg.strip()}")
+            log.info("   🔀 → MCU: %s %s", icon, result)
+            return True
+        except Exception as exc:
+            log.error("   ❌ ส่ง Result ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+            report("MCU_WRITE_FAILED",
                f"ส่งผลการวัดให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
-               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
-        _drop_mega("ส่งผลการวัด")
-        return False
+               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่", show_toast=False)
+            _drop_mega("ส่งผลการวัด")
+            while is_running:
+                if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
+                    return False
+                if open_mega():
+                    break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
+    return False
 
-def send_package_size_to_mcu(package_size) -> bool:
+def send_package_size_to_mcu(package_size, session_id,piece,target_count) -> bool:
     global mega_ser              # ⚠ เหตุผลเดียวกับ send_result_to_mcu ข้างบน
 
     if _trigger_mode != "auto":
         log.info("   🔀 (manual) ไม่ได้บอกขนาดชิ้นงานให้ MCU: %s", package_size)
         return True
-    try:
-        ack_msg = f"<PKG:{package_size}>\n"
-        mega_ser.write(ack_msg.encode("utf-8"))
-        log.info(f"   [TX → Mega] {ack_msg.strip()}")
-        return True   
-    except Exception as exc:
-        log.error("   ❌ ส่ง Package Size ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
-        report("MCU_WRITE_FAILED",
+    while is_running:
+        try:
+            ack_msg = f"<PKG:{package_size}>\n"
+            mega_ser.write(ack_msg.encode("utf-8"))
+            log.info(f"   [TX → Mega] {ack_msg.strip()}")
+            return True
+        except Exception as exc:
+            log.error("   ❌ ส่ง Package Size ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+            report("MCU_WRITE_FAILED",
                f"ส่งค่า Package Size ให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
-               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
-        _drop_mega("ส่งขนาดชิ้นงาน")
-        return False
+               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่", show_toast=False)
+            _drop_mega("ส่งขนาดชิ้นงาน")
+            while is_running:
+                if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
+                    return False
+                if open_mega():
+                    break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
+    return False
 
 def wait_for_measurement(session_id, count_before, timeout=MEASURE_TIMEOUT):
 
@@ -759,12 +782,13 @@ def wait_for_measurement(session_id, count_before, timeout=MEASURE_TIMEOUT):
     return False
 
 
-def report(event: str, detail: str, *, persist: bool = True):
+def report(event: str, detail: str, *, persist: bool = True, show_toast: bool = True, type: str = "error"):
+    """รายงานเหตุการณ์ โดยเลือกบันทึก last_event และแสดง toast แยกกันได้"""
     log.info("   📣 %s: %s", event, detail)
     try:
         resp = httpx.post(
             f"{BACKEND_URL}/api/session/event",
-            json={"event": event, "detail": detail, "persist": persist},
+            json={"event": event, "detail": detail, "persist": persist, "show_toast": show_toast, "type": type},
             timeout=2,
         )
         if resp.status_code != 200:
@@ -844,16 +868,47 @@ def ask_tray_clear(session_id, piece, target) -> str:
     log.info("   ⏹ ได้รับคำสั่ง Stop ระหว่างรอเคลียร์ถาด")
     return "stop"
 
-def handle_error(kind, session_id, piece, target, detail, rounds) -> bool:
-    report(f"{kind}_FAILED",
-           f"ชิ้นที่ {piece}/{target} (ครั้งที่ {rounds}/{MAX_ASK_USER_ROUNDS-1}): {detail}")
-    if rounds >= MAX_ASK_USER_ROUNDS:
-        report(f"{kind}_GAVE_UP", f"ชิ้นที่ {piece}/{target}: ครบ {MAX_ASK_USER_ROUNDS-1} ครั้งแล้ว — หยุดการวัด")
-        return False
 
+def ask_for_mcu_connection(session_id: int, piece: int | None = None, target: int | None = None) -> str:
+    """รอคำตอบเมื่อ MCU หลุด; ไม่จำเป็นต้องระบุชิ้นงาน แต่ต้องมี session_id"""
+    if session_id is None:
+        raise ValueError("session_id must not be None")
+    global _answer_action
+    with _answer_lock:
+        _answer_action = None
+        _answer_event.clear()
+
+    payload = {"session_id": session_id}
+    if piece is not None:
+        payload["piece"] = piece
+    if target is not None:
+        payload["target"] = target
+    try:
+        resp = httpx.post(
+            f"{BACKEND_URL}/api/mcu-disconnected",
+            json=payload,
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            log.info("   ⚠️ Backend ไม่รับคำถาม (HTTP %s) — ถือว่าหยุด", resp.status_code)
+            return "stop"
+    except Exception as exc:
+        log.info("   ⚠️ ถามผู้ใช้ไม่ได้: %s — ถือว่าหยุด", exc)
+        return "stop"
+
+    log.info(" MCU Disconected — รอผู้ใช้กด 'เชื่อมต่อ ")
+    while is_running:
+        if _answer_event.wait(1.0):
+            with _answer_lock:
+                return _answer_action or "stop"
+    log.info("   ⏹ ได้รับคำสั่ง Stop ระหว่างรอดารเชื่อมต่อจาก MCU")
+    return "stop"
+
+def handle_error(kind, session_id, piece, target,detail) -> bool:
+    report(f"{kind}_FAILED",
+           f"ชิ้นที่ {piece}/{target} ({detail}", show_toast=False)
     if not is_running:          # กด Stop จากเว็บระหว่างนี้
         return False
-
     return ask_user(session_id, piece, target) == "retry"
 
 def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_right, vertical_top, vertical_bottom,
@@ -890,7 +945,7 @@ def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_righ
     try:
         resp = httpx.post(f"{BACKEND_URL}/api/measurements", json=body, timeout=10)
     except Exception as exc:
-        report("PI_POST_FAILED", f"ชิ้นที่ {piece}: POST ค่าจาก Pi ไม่สำเร็จ — {exc}")
+        report("PI_POST_FAILED", f"ชิ้นที่ {piece}: ระบบรับค่าจาก Pi ไม่สำเร็จ จะทำการหยุดการวัด — {exc}")
         return False
 
     if resp.status_code != 200:
@@ -900,19 +955,17 @@ def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_righ
         except Exception:
             detail = resp.text[:200]
         report("PI_POST_FAILED",
-               f"ชิ้นที่ {piece}: backend ปฏิเสธค่าจาก Pi (HTTP {resp.status_code}): {detail}")
+               f"ชิ้นที่ {piece}: backend ปฏิเสธค่าจาก Pi จะทำการหยุดการวัด (HTTP {resp.status_code}): {detail}")
         return False
 
     mid = resp.json().get("measurement_id")
     log.info("   ✅ บันทึกค่าจาก Pi แล้ว (measurement_id=%s)", mid)
 
-    # ปักธงว่า "ไม่มีรูปถาวร" — ล้มก็ไม่ถือว่างานหลักพัง แถวลง DB ไปแล้ว
     try:
         httpx.patch(f"{BACKEND_URL}/api/measurements/{mid}/image",
                     json={"image_path": None, "upload_failed": True}, timeout=5)
     except Exception as exc:
-        report("PI_POST_FAILED", f"ชิ้นที่ {piece}: ปักธงไม่มีรูปไม่สำเร็จ — {exc}",
-               persist=False)   # ← ค่าลง DB แล้ว ห้ามทับสาเหตุที่ Pi กำลังรอ
+        pass
     return True
 
 def pi_values_problem(x, y, hl, hr, vt, vb, ox, oy):
@@ -992,16 +1045,24 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
         if trigger_mode =="auto":
             global mega_ser
             start_msg ="<START>\n"
-            try:
-                mega_ser.write(start_msg.encode("utf-8"))
-                log.info(f" [TX -> Mega] {start_msg.strip()}")
-            except Exception as exc:
-                log.error("   ❌ ส่ง Start ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
-                report("MCU_WRITE_FAILED",
-                f"ส่ง Start ให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
-                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
-                stop_reason = ("ไม่สามารถส่ง Start ไปที่ MCU ได้")
-                _drop_mega("ส่ง Start")
+            while is_running:
+                try:
+                    mega_ser.write(start_msg.encode("utf-8"))
+                    log.info(f" [TX -> Mega] {start_msg.strip()}")
+                    break
+                except Exception as exc:
+                    log.error("ส่ง Start ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+                    _drop_mega("ส่ง Start")
+                    while is_running:
+                        # ยังไม่ได้เริ่มวัด จึงไม่แนบข้อมูลชิ้นงาน
+                        if ask_for_mcu_connection(session_id) != "retry":
+                            stop_reason = "หยุดระหว่างรอเชื่อมต่อ MCU ก่อนเริ่มวัด"
+                            return
+                        if not is_running:
+                            return
+                        if open_mega():
+                            break  # กลับไปส่ง START อีกครั้งด้วยพอร์ตใหม่
+            if not is_running:
                 return
 
 
@@ -1067,7 +1128,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # แล้วตั้งฟิกซ์เจอร์ผิดขนาดต่อไปเงียบ ๆ จนจบกลุ่ม — ส่งซ้ำทุกชิ้น
             # ราคาถูกกว่ามาก (ข้อความเดียวต่อชิ้น) และกู้ตัวเองได้
             pkg = groups[group_of[piece - 1]].package_size
-            if not send_package_size_to_mcu(pkg):
+            if not send_package_size_to_mcu(pkg, session_id,piece,target_count):
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: "
                                f"บอกขนาดชิ้นงาน ({pkg}) ให้ MCU ไม่สำเร็จ "
                                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
@@ -1077,7 +1138,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             #    auto   → <TRIGGER_TMX> จาก MCU ผ่าน Serial
             #    manual → ปุ่ม ⚡ บนหน้าเว็บ (หรือ curl /trigger)
             log.info("\nชิ้นที่ %s/%s — รอสัญญาณ trigger ...", piece, target_count)
-            if not wait_for_trigger():
+            if not wait_for_trigger(session_id,piece,target_count):
                 log.info("⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
                 break
 
@@ -1087,24 +1148,22 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             count_before = get_measured_count(session_id)
 
             # ── ② MRS ล้างค่าเก่า แล้วยิง T1 และ GM ────────────────────────────────
-            rounds = 0
             result = "UNKNOWN"          # ← ① ต้องมี กัน NameError รอบแรก
-            while True:
+            while is_running:
                 ok, t1_resp = trigger_tmx(client_socket)
                 if ok:
                     result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits)
                     if result != "UNKNOWN":
                         break
-                else:
-                    rounds += 1
                 if not ok:
                     if not handle_error("T1", session_id, piece, target_count,
-                        f"TM-X ปฏิเสธคำสั่ง T1 — {t1_resp}", rounds):
-                        stop_reason = f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ ({t1_resp})"
+                    f"TM-X ปฏิเสธคำสั่ง T1 — {t1_resp}"):
+                        stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ ({t1_resp})")
                         break
-                elif result == "UNKNOWN":                   # ← ② else ไม่ใช่ if — รอบนึงถามครั้งเดียว
+                    continue
+                if result == "UNKNOWN":               
                     if not handle_error("GM", session_id, piece, target_count,
-                        f"รอ {GM_MAX_WAIT:.0f} วิแล้ว GM ไม่คืนค่าใหม่", rounds):
+                        f"รอ {GM_MAX_WAIT:.0f} วิแล้ว GM ไม่คืนค่าใหม่"):
                         stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด"
                         break
 
@@ -1119,15 +1178,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                 break
 
             # ── ④ ส่งผลให้ MCU ไปคัดแยก ───────────────────────────────────
-            #
-            # ⚠ **ไม่ได้ส่ง UNKNOWN** ต่างจากเจตนาเดิมของดีไซน์ (ดู docstring
-            #   ของ `get_measurement_tmx` ที่บอกว่าห้ามเดา UNKNOWN เป็น NG) —
-            #   เพราะฝั่ง Mega ยังไม่มี token สำหรับ "ไม่รู้ผล" ชิ้นที่วัดไม่ติด
-            #   จึงจบด้วยการหยุด session ที่บรรทัดข้างบนแทน แล้วให้คนมาจัดการเอง
-            #   ถ้าวันหลังตกลงกับคนเขียน sketch ได้ว่าจะใช้ <MEASURE_UNKNOWN>
-            #   ให้เอา `if result == "UNKNOWN": break` ข้างบนออก แล้วแก้สาขา
-            #   `else` ใน `send_result_to_mcu` ให้ส่ง token นั้นจริง
-            if not send_result_to_mcu(result):
+            if not send_result_to_mcu(result,session_id,piece,target_count):
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ส่งผลการวัด ({result}) "
                                f"ให้ MCU ไม่สำเร็จ — ตรวจสาย USB ของ Arduino")
                 break
@@ -1145,37 +1196,29 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # ── ค่าไม่ถึง DB — วัดสำเร็จแล้ว แต่ Recieve ส่งไม่ถึง ────────────
             # ⚠ ไม่มี retry ในเคสนี้ ชิ้นงานถูก MCU คัดแยกไปแล้ว ไม่มีอะไรให้วัดใหม่
             #   Pi ถือค่าอยู่ในมือครบ → ถามผู้ใช้ว่าจะรับค่านั้นโดยไม่มีรูปไหม
+
             report("NO_DB_ROW",
                    f"ชิ้นที่ {piece}/{target_count}: วัดได้แล้วแต่ค่าไม่ถึงฐานข้อมูลใน "
-                   f"{MEASURE_TIMEOUT:.0f} วิ — ตรวจว่า Recieve_tm-x.py รันอยู่ไหม")
+                   f"{MEASURE_TIMEOUT:.0f} วิ — ตรวจว่า Recieve_tm-x.py รันอยู่ไหม", show_toast=False)
 
             problem = pi_values_problem(x, y, horizon_left, horizon_right,
                                         vertical_top, vertical_bottom, offset_x, offset_y)
             preview = (f"X={_f3(x)} · Y={_f3(y)} · "
                        f"OffX={_f3(offset_x)} · OffY={_f3(offset_y)}")
+            
 
             if problem:
                 report("PI_VALUE_BAD",
-                       f"ชิ้นที่ {piece}/{target_count}: ค่าไม่ถึงฐานข้อมูล และค่าที่ Pi "
-                       f"ถืออยู่ก็ใช้ไม่ได้ ({problem}) — {preview}")
+                       f"ชิ้นที่ {piece}/{target_count}: ไม่ได้รับค่าจาก TM-X จะทำการหยุดการวัดและต้องแก้ไขระบบวัดหรือตรวจสอบการเชื่อมต่อของ TM-X"
+                       f" ({problem}) — {preview}")
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ค่าไม่ถึงฐานข้อมูล "
                                f"และค่าที่ Pi ถืออยู่ไม่สมบูรณ์ ({problem}) — วัดชิ้นนี้ใหม่")
                 break
-
 
             if ask_user(session_id, piece, target_count) != "accept":
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ค่าไม่ถึงฐานข้อมูล "
                                f"— ผู้ใช้เลือกหยุด")
                 break
-
-            # ⚠ เช็คอีกครั้งก่อน POST — ระหว่างที่ modal เปิดรอคน (นานได้ถึง
-            #   ASK_USER_TIMEOUT) FTP อาจส่งมาช้าแต่มาถึงแล้ว ถ้าไม่เช็คจะได้
-            #   2 แถวสำหรับชิ้นเดียว → position ขยับ 2 → ALPL เลื่อนทั้งคิว
-            #   ⚠ การเช็คตรงนี้เป็น **ด่านเดียวที่กันแถวซ้ำ** — ระบบไม่มี client_uuid
-            #     หรือกลไกกันซ้ำฝั่ง backend อีกแล้ว ห้ามถอดออก
-            if get_measured_count(session_id) != count_before:
-                log.info("   ℹ️ ค่ามาถึงระหว่างรอคำตอบ — ไม่ต้องบันทึกซ้ำ")
-                continue
 
             if not post_measurement_from_pi(session_id, piece, x, y,
                                             horizon_left, horizon_right, vertical_top, vertical_bottom,
@@ -1183,8 +1226,9 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                 stop_reason = f"ชิ้นที่ {piece}/{target_count}: บันทึกค่าจาก Pi ไม่สำเร็จ"
                 break
     except Exception as exc:
-        log.info("\n❌ session พังกลางทาง — %s: %s", type(exc).__name__, exc)
-        stop_reason = f"session พังกลางทาง — {type(exc).__name__}: {exc}" 
+        log.info("\n❌ session พังะหว่างวัด — %s: %s", type(exc).__name__, exc)
+        report("SESSION_CRASHED", f"Session พังระหว่างวัด: {exc}")
+        stop_reason = f"session พังะหว่างวัด — {type(exc).__name__}: {exc}" 
     finally:
         # บอก MCU ว่าจบรอบแล้ว — best effort เท่านั้น
         #
@@ -1196,15 +1240,14 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
         #
         #   `mega_ser` เป็น None ได้จริงใน 2 กรณี: โหมด manual (ไม่เคยเปิดพอร์ต)
         #   และหลัง `send_*_to_mcu` ล้าง handle ทิ้งเพราะสาย USB หลุด
-        if trigger_mode == "auto" and mega_ser is not None:
-            global mega_ser            
+        if trigger_mode == "auto" and mega_ser is not None:         
             try:
                 mega_ser.write(b"<STOP>\n")
                 log.info(" [TX → Mega] <STOP>")
             except Exception as exc:
-                report("MCU_STOP_FAILED", f"ส่ง <STOP> ให้ MCU ไม่สำเร็จ: {exc}")
                 log.warning(" ⚠️ บอก <STOP> ให้ MCU ไม่สำเร็จ: %s", exc)
                 _drop_mega("ส่ง Stop")
+                report("MCU_STOP_FAILED", f"ส่ง <STOP> ให้ MCU ไม่สำเร็จกรุฯากดหยุดที่ตัวเครื่อง: {exc}",type="warning") 
                 
         if client_socket is not None:
             try:

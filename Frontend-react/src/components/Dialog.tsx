@@ -97,7 +97,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           // คลิกในกล่องแล้วเมาส์ขยับออกมาปล่อยข้างนอกจะปิดกล่องทิ้ง
           onClick={(e) => { if (e.target === e.currentTarget) done(state.kind === "alert"); }}
         >
-          <div className="ui-dialog-box">
+          <div className={`ui-dialog-box${state.danger ? " danger" : ""}`}>
             <div className="ui-dialog-title">
               {state.title ?? (state.kind === "alert" ? "แจ้งเตือน" : "ยืนยันการดำเนินการ")}
             </div>

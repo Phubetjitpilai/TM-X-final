@@ -440,6 +440,7 @@ async def _fail_start(session_id: int, msg: str, *, notify_stop: bool = False) -
     session_queues.pop(session_id, None)
     measure_timeouts.pop(session_id, None)
     tray_pending.pop(session_id, None)
+    mcu_disconnected_pending.pop(session_id, None)  # เหตุผลเดียวกัน — MCU ที่หลุดค้างของ session ที่ถูกเคลียร์แล้ว
     try:
         db = get_db()
         try:
@@ -755,6 +756,7 @@ async def start_session(request: Request):
         session_queues[session_id] = queue_state
         measure_timeouts.pop(session_id, None)  # session ใหม่ต้องไม่มีคำถามค้างจากรอบก่อน
         tray_pending.pop(session_id, None)      # เหตุผลเดียวกัน — ถาดเต็มของรอบก่อน
+        mcu_disconnected_pending.pop(session_id, None)  # เหตุผลเดียวกัน — MCU ที่หลุดค้างของ session ที่ถูกเคลียร์แล้ว
 
         # เขียนสำเนา queue_state ลง DB ด้วย (คอลัมน์ sessions.queue_state) — ถ้า
         # backend restart กลาง session นี้ จะโหลดกลับเข้า memory ได้ตอน boot
@@ -830,6 +832,7 @@ async def stop_session(req: StopSessionRequest):
         session_queues.pop(req.session_id, None)  # กดหยุดเองก่อนคิวหมด ก็เคลียร์ memory ทิ้งด้วย
         measure_timeouts.pop(req.session_id, None)  # กันคำถามค้างจาก session ที่จบไปแล้ว
         tray_pending.pop(req.session_id, None)      # เหตุผลเดียวกัน — ถาดเต็มที่ไม่มีใครตอบแล้ว
+        mcu_disconnected_pending.pop(req.session_id, None)  # เหตุผลเดียวกัน — MCU ที่หลุดค้างของ session ที่ถูกเคลียร์แล้ว
 
         # ⚠ สั่ง Pi ไม่สำเร็จ = **เครื่องอาจยังวัดอยู่จริง** ทั้งที่ DB ปิดไปแล้ว
         #   ไม่ raise (DB หยุดไปเรียบร้อยแล้ว กดซ้ำไม่ช่วยอะไร) แต่ต้องบอกให้คน
@@ -918,7 +921,8 @@ async def session_event(body: SessionEventRequest):
             db.close()
 
     log.warning("Station event: %s — %s", body.event, body.detail)
-    await push_event("station_event", {"event": body.event, "detail": body.detail})
+    if body.show_toast:
+        await push_event("station_event", {"event": body.event, "detail": body.detail, "type": body.type})
     return {"ok": True}
 
 @router.post("/api/measure-timeout")
@@ -1034,17 +1038,6 @@ async def retry_session(body: SessionContinueRequest):
 
 @router.post("/api/tray-full")
 async def report_tray_full(req: TrayFullRequest):
-    """Pi แจ้งว่าถาดรับชิ้นงานเต็มแล้ว — รอผู้ใช้มาเคลียร์ก่อนวัดต่อ
-    ต่างจาก `report_measure_timeout` ตรงที่นี่ **ไม่ใช่ความผิดพลาด** — เป็นจุดพัก
-    ตามแผนที่ตั้งไว้ใน `TRAY_CAPACITY` จึงไม่ต้องไปขุด `last_event` มาอธิบายสาเหตุ
-    และไม่ต้องเติม `number_alpl` เพราะไม่มีชิ้นไหนค้างอยู่ (ชิ้นที่ `piece`
-    บันทึกลง DB ไปเรียบร้อยแล้วฝั่ง Pi ถึงจะถามมา)
-
-    ⚠ **ห้ามใส่ตัวนับถอยหลังทั้งฝั่งนี้และฝั่งหน้าเว็บ** — คนต้องเดินไปเคลียร์ถาด
-      จริง ๆ ใช้เวลาไม่แน่นอน ถ้าตั้งเพดานเวลาไว้ จะมีวันที่ session ตายกลางคัน
-      เพราะคนเดินช้าไปนิดเดียว (measure_timeout มีเพดาน 60 วิเพราะมันคือการวัด
-      ที่พังไปแล้ว ปล่อยค้างไม่ได้ — คนละเรื่องกัน)
-    """
     tray_pending[req.session_id] = {"piece": req.piece, "target": req.target}
     log.info("Session %s: ถาดเต็มที่ชิ้น %s/%s — รอผู้ใช้เคลียร์ถาด",
              req.session_id, req.piece, req.target)
@@ -1090,6 +1083,39 @@ async def resume_session(body: SessionContinueRequest):
 
     log.info("Session %s: ผู้ใช้เคลียร์ถาดแล้ว — วัดต่อ", session_id)
     return {"ok": True}
+
+@router.post("/api/mcu-disconnected")
+async def report_mcu_disconnected(req: McuDisconnectedRequest):
+    mcu_disconnected_pending[req.session_id] = {"piece": req.piece, "target": req.target}
+    log.info("Session %s: MCU ขาดการเชื่อมต่อระหว่างวัดชิ้นที่ %s/%s",
+             req.session_id, req.piece, req.target)
+    await push_event(
+        "mcu_disconnected",
+        {"session_id": req.session_id, "piece": req.piece, "target": req.target},
+    )
+    return {"ok": True}
+
+
+@router.post("/api/session/mcu-retry")
+async def mcu_retry_session(body: SessionContinueRequest):
+    """ผู้ใช้กด "ลองใหม่" หลัง MCU เชื่อมต่อกลับมา — เหมือน /api/session/retry
+    ทุกประการ แต่เช็ค/ล้าง mcu_disconnected_pending แทน measure_timeouts
+    (คนละ state กัน ห้ามใช้ dict ร่วมกัน — เหตุผลเดียวกับที่ tray_pending
+    แยกจาก measure_timeouts)
+    """
+    session_id = body.session_id
+    if mcu_disconnected_pending.get(session_id) is None:
+        raise HTTPException(404, "ไม่พบคำถามค้างของ session นี้ (อาจหมดอายุไปแล้ว)")
+    pending = mcu_disconnected_pending.pop(session_id)
+
+    agent_err = await _notify_agent_action("retry", session_id)
+    if agent_err:
+        mcu_disconnected_pending[session_id] = pending
+        raise HTTPException(502, f"สั่งให้ Pi ลองใหม่ไม่สำเร็จ — {agent_err}")
+
+    log.info("Session %s: ผู้ใช้เลือกลองใหม่หลัง MCU เชื่อมต่อกลับมา", session_id)
+    return {"ok": True}
+
 
 
 @router.post("/api/session/trigger")

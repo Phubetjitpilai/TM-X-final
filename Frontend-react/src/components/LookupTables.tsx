@@ -251,7 +251,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
     setBusy(true);
     try {
       await apiPost(cfg.basePath, lookupToApiBody(kind, values));
-      toast.show(`เพิ่ม ${cfg.label} สำเร็จ`);
+      toast.show(`เพิ่ม ${cfg.label} สำเร็จ`, undefined, "success");
       await load();
       await loadSupportData();
       onChanged?.();
@@ -308,7 +308,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
         await loadSupportData();
         onDeleted?.();
         onChanged?.();
-        toast.show(`ลบ ${cfg.label} สำเร็จ`);
+        toast.show(`ลบ ${cfg.label} สำเร็จ`, undefined, "success");
       } catch (e: any) {
         // 409 = ยังมี Part/Measurement/ตารางอื่นอ้างอิง id นี้อยู่จริง
         // (ดู _delete_lookup ใน main.py) — โชว์เป็น popup เด่นๆ ไม่ใช่ toast เล็กๆ

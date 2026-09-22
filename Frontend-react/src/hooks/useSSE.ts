@@ -18,6 +18,7 @@ export type SSEEventName =
   | "image_updated"
   | "measure_timeout"
   | "tray_full"
+  | "mcu_disconnected"   // ← เพิ่มบรรทัดนี้
   | "station_event"
   | "station_online"
   | "pi_status"
@@ -34,6 +35,7 @@ const EVENT_NAMES: SSEEventName[] = [
   // ⚠ เพิ่มชื่อใน type อย่างเดียวไม่พอ ต้องใส่ใน array นี้ด้วย — EventSource
   //   ผูก listener จาก array นี้ ถ้าลืมใส่ event จะมาไม่ถึงโดยไม่มี error ใด ๆ
   "tray_full",
+  "mcu_disconnected",
   "station_event",
   "station_online",
   "pi_status",
