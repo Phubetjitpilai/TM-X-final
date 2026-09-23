@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from shared import *  # noqa: F401,F403
-from routers import session, measurements, parts_register, lookups, export, deleted
+from routers import session, measurements, parts_register, lookups, export, deleted, review
 
 app = FastAPI(title="TM-X Backend Server", lifespan=lifespan)
 
@@ -31,7 +31,7 @@ app.add_middleware(
 #   ถ้าลงทะเบียน router ทีหลัง ทุก /api/* จะโดน static กลืนแล้วตอบ 404
 #   (ใน main.py เดิมไม่เจอปัญหานี้เพราะ decorator ทำงานตอน import ซึ่งอยู่ก่อน
 #    บรรทัด mount ท้ายไฟล์อยู่แล้ว — พอแยกไฟล์ ลำดับนี้ต้องเขียนเองให้ถูก)
-for _m in (session, measurements, parts_register, lookups, export, deleted):
+for _m in (session, measurements, parts_register, lookups, export, deleted, review):
     app.include_router(_m.router)
 
 os.makedirs(ALPL_IMAGE_DIR, exist_ok=True)
@@ -112,4 +112,3 @@ if __name__ == "__main__":
     print("=" * 62)
 
     uvicorn.run(app, host=_host, port=_port,access_log=False)
-

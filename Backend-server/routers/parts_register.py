@@ -33,8 +33,8 @@ def check_parts(body: PartsCheckRequest):
     แค่ว่าสนใจฝั่งไหนของคำตอบ (ดู PLAN_criteria_and_multigroup.md ข้อ D5/D6)
 
         IPM     ดู missing → ถามยืนยันว่าจะลงทะเบียนให้แล้ววัดต่อไหม
-        Rework  ดู missing → บล็อก (Rework ต้องเคยวัดมาก่อนเท่านั้น)
-        New     ดู exists  → บล็อก (ปล่อยผ่านจะเขียนทับ config เดิมที่มีประวัติ)
+        Rework  ดู missing → ยืนยันลงทะเบียนแล้ววัดต่อ
+        New     ดู exists  → ยืนยันใช้ Part เดิมแล้ววัดต่อ
 
     ทำไมต้องมี endpoint นี้: ของเดิมหน้าเว็บโหลด Part **ทั้งตาราง** มาไว้ใน
     หน่วยความจำแล้วเทียบเอง (วนดึงทีละ 1000 จนหมด) — ยิ่ง Part เยอะยิ่งช้า
@@ -94,7 +94,7 @@ def check_parts(body: PartsCheckRequest):
             cur.execute(
                 "SELECT p.number_alpl, pn.part_number_name, ps.package_size, "
                 "       h.handler_name, "
-                "       v.vendor_name, o.owner_name, p.po_number, p.description "
+                "       v.vendor_name, o.owner_name, p.po_number, p.description, p.recieve_date "
                 "FROM parts_specifications p "
                 "LEFT JOIN part_number pn ON p.part_number_id = pn.part_number_id "
                 "LEFT JOIN package_size ps "
@@ -124,6 +124,7 @@ def check_parts(body: PartsCheckRequest):
             "owner":        r["owner_name"],
             "po_number":    r["po_number"],
             "description":  r["description"],
+            "receive_date": str(r["recieve_date"])[:10] if r["recieve_date"] else None,
         }
         for r in rows
     }

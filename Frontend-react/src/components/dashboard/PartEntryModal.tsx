@@ -28,6 +28,7 @@ export interface EntryQueue {
   /** `undefined` ได้ — คิวที่ถูกเซฟลง localStorage ไว้ก่อนมีฟีเจอร์นี้จะไม่มี
    *  ผู้อ่านต้อง `?? "auto"` เสมอ (ดู DashboardPage ตอนประกอบ body) */
   triggerMode?: TriggerMode;
+  trayCapacity?: number | null;
   groups: PayloadGroup[];
   /** ALPL ทั้งหมดคลี่เรียงตามลำดับที่จะวัด — ใช้โชว์จำนวนและวาดแถบคิว */
   list: number[];
@@ -78,6 +79,7 @@ interface Props {
    *  ส่ง package_size ของกลุ่มที่ ALPL นั้นอยู่ไปด้วย — ผู้ใช้ต้องเห็นว่ากำลังจะ
    *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข ALPL แล้วกดตกลงไปโดยไม่รู้ */
   confirmRegister: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
+  confirmExisting: (alpls: number[]) => Promise<boolean>;
   /** แจ้งเตือนทั่วไป (toast) — ใช้ตอน autofill เขียนทับค่าที่ผู้ใช้พิมพ์เอง */
   onNotify: (message: string, detail?: string, type?: "warning" | "error") => void;
   /** ถามยืนยันก่อนสลับโหมดตอนฟอร์มมีข้อมูลค้าง — คืน false = ยกเลิก อยู่โหมดเดิม
@@ -120,7 +122,7 @@ function toFormGroups(q: EntryQueue): GroupValues[] {
 export default function PartEntryModal({
   lookupFailed,
   operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, handlerOfPartNumber,
-  onSave, onClose, confirmRegister, confirmSwitch, onNotify, initial,
+  onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onNotify, initial,
 }: Props) {
   /* ตั้งค่าเริ่มต้นจาก `initial` ครั้งเดียวตอน mount — พอเพียงเพราะหน้าแม่วาด
      modal นี้แบบ `{peModalOpen && <PartEntryModal .../>}` ทุกครั้งที่เปิดใหม่
@@ -134,6 +136,8 @@ export default function PartEntryModal({
   /* default เป็น "auto" ให้ตรงกับฝั่ง Pi — ถ้าเผลอไม่เลือก จะได้พฤติกรรม
      เดียวกับตอนที่ยังไม่มีฟีเจอร์นี้ ไม่ใช่เปลี่ยนไปเป็นอย่างอื่นเงียบ ๆ */
   const [triggerMode, setTriggerMode] = useState<TriggerMode>(initial?.triggerMode ?? "auto");
+  const [trayCapacity, setTrayCapacity] = useState(initial?.trayCapacity == null ? "" : String(initial.trayCapacity));
+  const [trayCapacityError, setTrayCapacityError] = useState("");
   const [groups, setGroups] = useState<GroupValues[]>(() =>
     initial ? toFormGroups(initial) : [emptyGroup("IPM")],
   );
@@ -204,6 +208,10 @@ export default function PartEntryModal({
 
   async function handleSave() {
     const errs: Record<number, Record<string, string>> = {};
+    const capacity = triggerMode === "auto" && trayCapacity.trim() !== "" ? Number(trayCapacity) : null;
+    const capacityError = capacity !== null && (!Number.isSafeInteger(capacity) || capacity < 0)
+      ? "กรอกจำนวนเต็มตั้งแต่ 0 ขึ้นไป หรือเว้นว่างเพื่อใช้ 8" : "";
+    setTrayCapacityError(capacityError);
     let opErr = "";
     if (!operator.trim()) opErr = "เลือก Operator";
 
@@ -240,7 +248,7 @@ export default function PartEntryModal({
 
     setErrors(errs);
     setOperatorError(opErr);
-    if (opErr || Object.keys(errs).length) {
+    if (opErr || capacityError || Object.keys(errs).length) {
       focusFirstInvalid();
       return;
     }
@@ -249,24 +257,16 @@ export default function PartEntryModal({
 
     // ── เช็คกับ DB ว่า ALPL มี/ไม่มี ตามเงื่อนไขของโหมด ────────────────────
     // IPM    ยังไม่มี → ถามยืนยันแล้วลงทะเบียนให้ตอนวัดจริง
-    // New    มีอยู่แล้ว → บล็อก (กันเขียนทับ config เดิมที่มีประวัติ)
-    // Rework ยังไม่มี → บล็อก (Rework ต้องเคยวัดมาก่อนเท่านั้น)
+    // New มีอยู่แล้ว → ยืนยันใช้ Part เดิม · Rework ยังไม่มี → ยืนยันลงทะเบียน
     setBusy(true);
     try {
       const res = await apiPost<{ exists: number[]; missing: number[] }>(
         "/api/parts/check", { alpl: all },
       );
       if (mode === "New" && res.exists.length) {
-        setErrors({ 0: { number_alpl: `ALPL ${res.exists.join(", ")} ลงทะเบียนไปแล้ว` } });
-        setBusy(false);
-        return;
+        if (!await confirmExisting(res.exists)) { setBusy(false); return; }
       }
-      if (mode === "Rework" && res.missing.length) {
-        setErrors({ 0: { number_alpl: `ALPL ${res.missing.join(", ")} ยังไม่ได้ลงทะเบียน — ไปลงที่แท็บ New ก่อน` } });
-        setBusy(false);
-        return;
-      }
-      if (mode === "IPM" && res.missing.length) {
+      if ((mode === "IPM" || mode === "Rework") && res.missing.length) {
         // หา package_size จากกลุ่มที่ ALPL ตัวนั้นอยู่ (ไม่ใช่กลุ่มแรกเสมอไป)
         const pkgOf = (a: number) => {
           const gi = perGroupLists.findIndex((list) => list.includes(a));
@@ -276,8 +276,9 @@ export default function PartEntryModal({
         if (!ok) { setBusy(false); return; }
       }
     } catch {
-      // ถามไม่สำเร็จ (DB มีปัญหา) — ปล่อยผ่านให้ start_session เป็นคนตัดสินแทน
-      // ดีกว่าบล็อกผู้ใช้ด้วยข้อมูลที่เราเองก็ไม่มี
+      onNotify("ตรวจสอบ ALPL ไม่สำเร็จ กรุณาลองบันทึกอีกครั้ง");
+      setBusy(false);
+      return;
     }
     setBusy(false);
 
@@ -285,8 +286,9 @@ export default function PartEntryModal({
       mode,
       operator: operator.trim(),
       triggerMode,
+      trayCapacity: capacity,
       // ส่ง number_alpl เป็น "ลิสต์ตัวเลข" ให้ backend ตรง ๆ ไม่ใช่ string ดิบ
-      groups: groups.map((g, gi) => ({ ...g, number_alpl: perGroupLists[gi] })),
+      groups: groups.map((g, gi) => ({ ...g, recieve_date: g.receive_date ?? "", number_alpl: perGroupLists[gi] })),
       list: all,
     });
   }
@@ -384,6 +386,20 @@ export default function PartEntryModal({
               : "ต้องกดปุ่ม ⚡ Trigger เองทุกชิ้น — เลือกได้ตอนยังไม่ได้ต่อ MCU · เปลี่ยนโหมดกลางรอบไม่ได้"}
           </div>
         </div>
+
+        {triggerMode === "auto" && (
+          <div className="form-group" style={{ marginBottom: "1rem" }}>
+            <label htmlFor="pe-tray-capacity">Tray Capacity</label>
+            <input id="pe-tray-capacity" type="number" min="0" step="1"
+              className={trayCapacityError ? "invalid" : undefined}
+              value={trayCapacity} placeholder="เว้นว่างเพื่อใช้ 8"
+              aria-invalid={!!trayCapacityError} aria-describedby="pe-tray-capacity-hint"
+              onChange={e => { setTrayCapacity(e.target.value); setTrayCapacityError(""); }} />
+            <div id="pe-tray-capacity-hint" className="entry-session-hint" style={{ marginTop: ".4rem" }}>
+              {trayCapacityError || "จำนวนชิ้นต่อถาด · เว้นว่างใช้ 8 · 0 = ไม่ตรวจถาดเต็ม"}
+            </div>
+          </div>
+        )}
 
         <EntryGroups
           /* ⚠ key ผูกกับ mode — บังคับให้ component เกิดใหม่ทั้งตัวเมื่อสลับโหมด

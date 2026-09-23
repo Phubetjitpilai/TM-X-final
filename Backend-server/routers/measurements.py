@@ -7,6 +7,7 @@
 from fastapi import APIRouter
 
 from shared import *  # noqa: F401,F403
+from routers import review
 
 router = APIRouter()
 
@@ -241,6 +242,11 @@ _MEAS_HISTORY_SQL = """
 
 @router.post("/api/measurements")
 async def create_measurement(req: MeasurementCreate):
+    capture = review.resolve_capture(req)
+    if capture and capture.get("response"):
+        return capture["response"]
+    if capture and capture["measurement_id"] is not None:
+        return await replace_measurement(req, capture)
     if req.session_id is None:
         raise HTTPException(
             400,
@@ -355,7 +361,13 @@ async def create_measurement(req: MeasurementCreate):
                     (json.dumps(qstate), session_id),
                 )
 
-        status = "continue"
+        status = "complete" if measured >= target else "continue"
+        response = {"measurement_id": measurement_id, "result": result,
+                    "offset_pos_op": offset_pos_op, "status": status,
+                    "measured": measured, "target": target}
+        if capture:
+            capture.update(saved=True, response=response, saved_measurement_id=measurement_id)
+            review.latest_image_capture[measurement_id] = req.capture_id
         if measured >= target:
             with db.cursor() as cur:
                 cur.execute(
@@ -393,14 +405,82 @@ async def create_measurement(req: MeasurementCreate):
                 "target":         target,
             },
         )
-        return {
-            "measurement_id": measurement_id,
-            "result":        result,
-            "offset_pos_op": offset_pos_op,
-            "status":        status,
-            "measured":      measured,
-            "target":        target,
-        }
+        return response
+    finally:
+        db.close()
+
+
+async def replace_measurement(req, capture):
+    """Update the original row. A standalone review completes its execution session;
+    an in-session review leaves the normal queue and its counters untouched.
+    """
+    mid = capture["measurement_id"]
+    single_review = capture.get("single_review", False)
+    source_sid = capture.get("measurement_session_id", req.session_id)
+    completed_queue = None
+    db = get_db()
+    try:
+        db.begin()
+        with db.cursor() as cur:
+            cur.execute("SELECT state, measured_count, target_count FROM sessions WHERE session_id=%s FOR UPDATE", (req.session_id,))
+            session = cur.fetchone()
+            if not session or session["state"] != "running":
+                raise HTTPException(409, "Session ไม่ได้ Running")
+            if single_review:
+                q = session_queues.get(req.session_id)
+                source = (q or {}).get("review_source") or {}
+                if (not source.get("update_existing") or source.get("measurement_id") != mid
+                        or source.get("session_id") != source_sid or q.get("position") != 0
+                        or session["measured_count"] != 0 or session["target_count"] != 1):
+                    raise HTTPException(409, "รอบวัดซ้ำไม่ตรงกับรายการเดิม หรือบันทึกไปแล้ว")
+                completed_queue = {**q, "position": 1}
+            elif source_sid != req.session_id:
+                raise HTTPException(409, "ไม่สามารถวัดซ้ำข้าม Session โดยไม่มีคำสั่ง Start วัดซ้ำ")
+            cur.execute("SELECT * FROM measurements WHERE measurement_id=%s AND session_id=%s FOR UPDATE", (mid, source_sid))
+            before = cur.fetchone()
+            if not before:
+                raise HTTPException(404, "ไม่พบผลวัดเดิม")
+            if single_review and completed_queue["queue"] != [before["number_alpl"]]:
+                raise HTTPException(409, "ALPL ไม่ตรงกับรายการวัดซ้ำ")
+            crit = _load_criteria(cur, before["number_alpl"])
+            verdict = _judge(value_x=req.value_x, value_y=req.value_y,
+                             offset_opx=req.offset_opx, offset_opy=req.offset_opy,
+                             crit=crit, measure_type=before["measure_type"])
+            pos = _get_position_label(req.horizon_left, req.horizon_right, req.vertical_top, req.vertical_bottom)
+            # Preserve the previous image on disk and its path in edit history.
+            cur.execute("UPDATE measurements SET value_x=%s,value_y=%s,offset_opx=%s,offset_opy=%s,offset_pos_op=%s,result=%s,image_path=NULL,image_upload_failed=0,timestamp=NOW() WHERE measurement_id=%s",
+                        (req.value_x, req.value_y, req.offset_opx, req.offset_opy, pos, verdict["result"], mid))
+            response = {"measurement_id": mid, "result": verdict["result"], "offset_pos_op": pos,
+                        "status": "complete" if single_review else "remeasured",
+                        "measured": 1 if single_review else session["measured_count"], "target": session["target_count"]}
+            if single_review:
+                cur.execute("UPDATE sessions SET measured_count=1, state='stopped', ended_at=NOW(), queue_state=%s WHERE session_id=%s",
+                            (json.dumps(completed_queue), req.session_id))
+            cur.execute("SELECT * FROM measurements WHERE measurement_id=%s", (mid,))
+            after = cur.fetchone()
+        db.commit()
+        capture.update(saved=True, response=response, saved_measurement_id=mid)
+        review.latest_image_capture[mid] = req.capture_id
+        if single_review:
+            q["position"] = 1
+            session_queues.pop(req.session_id, None)
+            measure_timeouts.pop(req.session_id, None)
+        log_edit("measurements", "edit", f"วัดซ้ำ ID {mid}", before=before, after=after)
+        await push_event("measurement_replaced", {
+            **response, "session_id": req.session_id, "piece": capture["piece"],
+            "measurement_session_id": source_sid,
+            "number_alpl": before["number_alpl"], "measure_type": before["measure_type"],
+            "value_x": req.value_x, "value_y": req.value_y,
+            "offset_opx": req.offset_opx, "offset_opy": req.offset_opy,
+            **{k: verdict[k] for k in ("ok_x", "ok_y", "ok_offset", "offset_counts", "offset_tol")},
+            **{k: crit[k] for k in ("nominal_x", "nominal_y", "upper_tol", "lower_tol")},
+        })
+        if single_review:
+            await push_event("session_complete", {"session_id": req.session_id, "measured": 1, "target": 1})
+        return response
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -485,7 +565,8 @@ def update_measurement(measurement_id: int, data: Dict[str, Any] = Body(...)):
 
 
 @router.patch("/api/measurements/{measurement_id}/image")
-async def update_image(measurement_id: int, req: ImageUpdate):
+async def update_image(measurement_id: int, req: ImageUpdate, capture_id: Optional[str] = None):
+    capture = review.check_image(measurement_id, capture_id)
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -496,6 +577,8 @@ async def update_image(measurement_id: int, req: ImageUpdate):
             )
             if cur.rowcount == 0:
                 raise HTTPException(404, "Measurement not found")
+        if capture:
+            capture["image_done"] = True
         await push_event(
             "image_updated",
             {
@@ -510,7 +593,8 @@ async def update_image(measurement_id: int, req: ImageUpdate):
 
 
 @router.post("/api/measurements/{measurement_id}/image-upload")
-async def upload_measurement_image(measurement_id: int, file: UploadFile = File(...)):
+async def upload_measurement_image(measurement_id: int, file: UploadFile = File(...), capture_id: Optional[str] = None):
+    capture = review.check_image(measurement_id, capture_id)
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -535,10 +619,13 @@ async def upload_measurement_image(measurement_id: int, file: UploadFile = File(
 
             try:
                 image_bytes = await file.read()
+                review.check_image(measurement_id, capture_id)
                 img = Image.open(BytesIO(image_bytes))
                 if img.mode != "RGB":
                     img = img.convert("RGB")
                 img.save(dest_path_abs, "JPEG", quality=90)
+            except HTTPException:
+                raise
             except Exception as exc:
                 raise HTTPException(500, f"บันทึก/แปลงไฟล์รูปเป็น .jpg ไม่สำเร็จ: {exc}")
             finally:
@@ -552,6 +639,8 @@ async def upload_measurement_image(measurement_id: int, file: UploadFile = File(
 
             if old_image_path and old_image_path != image_path_rel:
                 _delete_image_file(old_image_path)
+        if capture:
+            capture["image_done"] = True
         await push_event(
             "image_updated",
             {

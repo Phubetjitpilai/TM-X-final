@@ -196,7 +196,7 @@ def post_to_backend(
     session_id,
     value_x, value_y,
     horizon_left, horizon_right, vertical_bottom, vertical_top,
-    offset_opx, offset_opy
+    offset_opx, offset_opy, capture_id=None
 ):
     """POST ค่าเข้า backend — format ตรงตาม MeasurementCreate ใน main.py
 
@@ -208,6 +208,7 @@ def post_to_backend(
         f"{BACKEND_URL}/api/measurements",
         json={
             "session_id":  session_id,
+            "capture_id": capture_id,
             "value_x":     value_x,
             "value_y":     value_y,
 
@@ -251,15 +252,18 @@ def report(event: str, detail: str, *, persist: bool = True, show_toast: bool = 
     except Exception as exc:
         log.warning(f"   ⚠️ แจ้ง Backend ไม่สำเร็จ: {exc}")
 
-def upload_image_to_backend(measurement_id, image_path):
+def upload_image_to_backend(measurement_id, image_path, capture_id=None):
+    uploaded = False
     try:
         with open(image_path, "rb") as f:
             resp = httpx.post(
                 f"{BACKEND_URL}/api/measurements/{measurement_id}/image-upload",
+                params={"capture_id": capture_id} if capture_id else {},
                 files={"file": (os.path.basename(image_path), f, "image/bmp")},
                 timeout=60,
             )
         if resp.status_code == 200:
+            uploaded = True
             log.info(f"   🖼 อัปโหลดรูปสำเร็จ (measurement_id={measurement_id})")
         else:
             log.info(f"   🖼 อัปโหลดรูปไม่สำเร็จ (measurement_id={measurement_id})")
@@ -273,6 +277,13 @@ def upload_image_to_backend(measurement_id, image_path):
                f"รูปของ measurement {measurement_id} อัปโหลดไม่สำเร็จ: {exc}",
                persist=False, type="warning")
     finally:
+        if not uploaded and capture_id:
+            try:
+                httpx.patch(f"{BACKEND_URL}/api/measurements/{measurement_id}/image",
+                            params={"capture_id": capture_id},
+                            json={"image_path": None, "upload_failed": True}, timeout=5)
+            except Exception:
+                log.exception("แจ้งสถานะรูปไม่สำเร็จ")
         _remove_quietly(image_path)
 
 def _remove_quietly(path):
@@ -351,13 +362,13 @@ def session_watcher():
             clear_temp_dir()
             last_running_sid = None
         
-def _handle_capture(image_path):
+def _handle_capture(image_path, session_id, capture_id):
     try:
-        _handle_capture_inner(image_path)
+        _handle_capture_inner(image_path, session_id, capture_id)
     finally:
         _job_end()   # ต้องลดตัวนับเสมอ ไม่ว่าจะจบทางไหน ไม่งั้น clear_temp_dir รอค้างตลอด
 
-def _handle_capture_inner(image_path):
+def _handle_capture_inner(image_path, session_id, capture_id):
     name = os.path.basename(image_path)
     try:
         size_mb = os.path.getsize(image_path) / 1_048_576
@@ -377,7 +388,7 @@ def _handle_capture_inner(image_path):
     ) = pair
 
     # ── ด่าน 2: ต้องมี session ที่ running อยู่ ─────────────────────────
-    session_id = get_current_session()
+    # session/capture ถูกตรึงตอนรับไฟล์ ห้ามอ่านใหม่หลังวาดรูปหรือรอ TXT
     if session_id is None:
         report("NO_SESSION", # show false
                f"ได้ค่า/รูป {name} มาแต่ไม่มี session ที่ running อยู่ — ทิ้งไป", show_toast=False)
@@ -419,7 +430,7 @@ def _handle_capture_inner(image_path):
         session_id,
         value_x, value_y,
         horizon_left, horizon_right, vertical_bottom, vertical_top,
-        offset_opx, offset_opy
+        offset_opx, offset_opy, capture_id=capture_id
         )
     except Exception as exc:
         report("BACKEND_REJECT",  #Show False
@@ -439,7 +450,7 @@ def _handle_capture_inner(image_path):
 
     data = resp.json()
     log.info(f"   → บันทึกแล้ว: result={data.get('result')}  ({data.get('measured')}/{data.get('target')})")
-    upload_image_to_backend(data["measurement_id"], image_path)
+    upload_image_to_backend(data["measurement_id"], image_path, capture_id)
 
 # ทำงานเมื่อ FORWARD_TO_BACKEND = 0 ใช้สำหรับการ Debug
 
@@ -487,6 +498,28 @@ class ReceiverFTPHandler(FTPHandler):
     ไม่มีแนวคิด "armed" ต่อชิ้นเหมือน agent.py เดิม เพราะสคริปต์นี้ไม่รู้จัก
     session/trigger ของตัวเอง (Pi เป็นคนสั่ง trigger ตรงนี้แค่รับของที่เข้ามา)
     """
+    def ftp_STOR(self, file, mode="w"):
+        # Bind at upload START, not after the worker waits for TXT/image processing.
+        # An in-flight transfer must retain its old identity even if the UI changes.
+        if (FORWARD_TO_BACKEND and os.path.splitext(file)[1].lower() in _IMAGE_EXTS
+                and os.path.basename(os.path.dirname(file)).lower() == _IMAGE_DIR_NAME):
+            try:
+                session_id = get_current_session()
+                if session_id is None:
+                    raise RuntimeError("ไม่มี Session ที่กำลังวัด")
+                response = httpx.get(f"{BACKEND_URL}/api/review/capture",
+                                     params={"session_id": session_id}, timeout=5)
+                response.raise_for_status()
+                context = (session_id, response.json().get("capture_id"))
+            except Exception:
+                log.exception("อ่านรหัสรอบวัดไม่ได้ — ไม่รับไฟล์โดยเดารายการเป้าหมาย")
+                self.respond("451 Measurement context unavailable; retry later.")
+                return
+            if not hasattr(self, "_capture_contexts"):
+                self._capture_contexts = {}
+            self._capture_contexts[file] = context
+        return super().ftp_STOR(file, mode)
+
     def on_file_received(self, file):
         ext = os.path.splitext(file)[1].lower()
 
@@ -520,9 +553,14 @@ class ReceiverFTPHandler(FTPHandler):
         # HTTP รอ Backend ตรงนี้เลย FTP จะค้าง รับไฟล์ชิ้นถัดไปไม่ได้
         # ⚠ ต้อง _job_begin() "ก่อน" แตกเธรด ไม่ใช่ข้างในเธรด — ไม่งั้นมีช่องว่าง
         #   ที่ clear_temp_dir มองว่าไม่มีงานค้างทั้งที่เธรดกำลังจะเริ่มทำงานพอดี
+        context = getattr(self, "_capture_contexts", {}).pop(file, None)
+        if context is None:
+            log.warning("ไม่มีรหัสรอบวัดที่ผูกไว้กับไฟล์ %s — ไม่ส่งต่อ", file)
+            return
+        session_id, capture_id = context
         _job_begin()
         # ส่งเวลาที่ไฟล์มาถึงไปด้วย เพื่อจับเวลาแต่ละขั้นตอน (ดู _handle_capture_inner)
-        threading.Thread(target=_handle_capture, args=(file,), daemon=True).start()
+        threading.Thread(target=_handle_capture, args=(file, session_id, capture_id), daemon=True).start()
 
 def start_ftp_server():
     handler = ReceiverFTPHandler

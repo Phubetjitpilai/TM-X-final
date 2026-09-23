@@ -12,6 +12,7 @@ export type SSEStatus = "connecting" | "online" | "offline";
 export type SSEEventName =
   | "session_started"
   | "measurement"
+  | "measurement_replaced"
   | "session_stopped"
   | "session_complete"
   | "session_timeout"
@@ -27,6 +28,7 @@ export type SSEEventName =
 const EVENT_NAMES: SSEEventName[] = [
   "session_started",
   "measurement",
+  "measurement_replaced",
   "session_stopped",
   "session_complete",
   "session_timeout",

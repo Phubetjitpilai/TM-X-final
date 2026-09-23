@@ -1246,6 +1246,7 @@ MEASUREMENTS_SELECT = """
 # main.py
 
 class MeasurementCreate(BaseModel):
+    capture_id: Optional[str] = None
     session_id:  Optional[int] = None
     number_alpl: Optional[int] = None
     value_x:     float

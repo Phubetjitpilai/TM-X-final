@@ -11,7 +11,8 @@ import { axisValue, offsetValue, xyPair, DP_MM } from "../components/measurement
 import { ReportAxis } from "../components/dashboard/ReportAxis";
 import OffsetMap from "../components/dashboard/OffsetMap";
 import IpmSummaryModal, { type IpmSummaryRow } from "../components/dashboard/IpmSummaryModal";
-import PartEntryModal, { type EntryQueue } from "../components/dashboard/PartEntryModal";
+import PartEntryModal, { type EntryQueue, type TriggerMode } from "../components/dashboard/PartEntryModal";
+import RemeasureStartOptions from "../components/dashboard/RemeasureStartOptions";
 import { formatAlplRanges } from "../utils/formatAlplRanges";
 
 // DashboardPage — พอร์ตจาก Frontend/index.html (TM-X Dashboard) แบบยึด
@@ -28,6 +29,7 @@ interface SessionState {
   session_id: number | null;
   measured_count: number;
   target_count: number;
+  queue_state?: any;
 }
 
 interface Part {
@@ -213,6 +215,80 @@ export default function DashboardPage() {
   const selectedQueueRef = useRef<number | null>(null);
   const telemetryRequestRef = useRef(0);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
+  const [reviewPhase, setReviewPhase] = useState("running");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const reviewBusyRef = useRef(false);
+
+  async function resumeLatestTelemetry() {
+    if (reviewBusyRef.current) return;
+    reviewBusyRef.current = true;
+    setReviewBusy(true);
+    try {
+      if (sessionRef.current.state === "running") {
+        await apiPost("/api/review/command", { action: "resume_queue", session_id: sessionRef.current.session_id });
+      }
+      setReviewPhase("running");
+      followLatestTelemetry();
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : "สั่งวัดต่อไม่สำเร็จ");
+    } finally {
+      reviewBusyRef.current = false;
+      setReviewBusy(false);
+    }
+  }
+
+  async function remeasureSelected() {
+    const selected = telemetryRef.current;
+    const sid = sessionRef.current.session_id;
+    if (reviewBusyRef.current || !selected?.measurement_id) return;
+    reviewBusyRef.current = true;
+    setReviewBusy(true);
+    const previousReview = reviewDisplayRef.current;
+    try {
+      const running = sessionRef.current.state === "running";
+      let triggerMode: TriggerMode = parsedQueue?.trigger_mode === "manual" ? "manual" : "auto";
+      if (!await dialog.confirm(
+        running
+          ? `วางชิ้นงาน ALPL ${selected.number_alpl} ให้พร้อม แล้วเริ่มวัดใหม่ ผลและรูปใหม่จะแทนที่รายการเดิม`
+          : <RemeasureStartOptions alpl={selected.number_alpl} initialMode={triggerMode}
+              onModeChange={mode => { triggerMode = mode; }} />,
+        { title: "วัดชิ้นงานใหม่", okLabel: running ? "เริ่มวัดใหม่" : "▶ Start" },
+      )) return;
+      if (sid !== sessionRef.current.session_id || running !== (sessionRef.current.state === "running")) {
+        showToast("สถานะ Session เปลี่ยนแล้ว กรุณาเลือกชิ้นงานอีกครั้ง", undefined, "warning");
+        return;
+      }
+      if (running) {
+        await apiPost("/api/review/command", { action: "remeasure", session_id: sid, measurement_id: selected.measurement_id });
+        setReviewPhase("remeasuring");
+      } else {
+        const originIndex = selectedQueueIndex;
+        if (originIndex == null) {
+          showToast("กรุณาเลือก Queue ที่ต้องการวัดซ้ำก่อน", undefined, "warning");
+          return;
+        }
+        reviewDisplayRef.current = {
+          sessionId: null,
+          originSessionId: sid,
+          queueIndex: originIndex,
+          measurementId: selected.measurement_id,
+          pendingStart: true,
+          completed: false,
+        };
+        const data = await apiPost<SessionState>(`/api/review/start/${selected.measurement_id}`, { trigger_mode: triggerMode });
+        onSessionStarted(data);
+        savePartEntryState();
+      }
+    } catch (err) {
+      // Failed Start must leave the previous queue and its session associations intact.
+      if (reviewDisplayRef.current?.pendingStart) reviewDisplayRef.current = previousReview;
+      savePartEntryState();
+      showToast(err instanceof ApiError ? err.message : "เริ่มวัดใหม่ไม่สำเร็จ");
+    } finally {
+      reviewBusyRef.current = false;
+      setReviewBusy(false);
+    }
+  }
 
   function followLatestTelemetry() {
     telemetryRequestRef.current += 1;
@@ -231,9 +307,15 @@ export default function DashboardPage() {
     setTelemetryLoading(true);
     applyTelemetry(null);
     try {
-      const data = await apiGet<{ items: Telemetry[] }>("/api/measurements", {
-        session_id: sid, number_alpl: alpl, limit: 1,
-      });
+      if (sessionRef.current.state === "running" && !reviewDisplayRef.current) {
+        setReviewPhase("pausing");
+        const status = await apiPost<{ phase: string }>("/api/review/command", { action: "pause_queue", session_id: sid });
+        if (request !== telemetryRequestRef.current) return;
+        setReviewPhase(status.phase);
+      }
+      const params = { number_alpl: alpl, limit: 1,
+        session_id: displayQueueRef.current[index]?.sessionId ?? sid };
+      const data = await apiGet<{ items: Telemetry[] }>("/api/measurements", params);
       if (request !== telemetryRequestRef.current || sessionRef.current.session_id !== sid) return;
       if (!data.items[0]) {
         showToast("ยังไม่พบผลวัดของชิ้นนี้", undefined, "warning");
@@ -363,9 +445,27 @@ export default function DashboardPage() {
    *  ซ่อนทั้งแถบเมื่อคิวมีตัวเดียว (เช่น IPM ชิ้นเดียว) เพราะไม่มีอะไรให้ดู
    *
    *  ⚠ `done` มีไว้เพื่อ **ห้ามเดาผลเป็นเขียว** — ดู chipStateFor() ข้างล่าง */
-  const [queueStrip, setQueueStrip] = useState<
-    { alpl: number; state: "ok" | "ng" | "done" | "now" | "wait" }[]
-  >([]);
+  type QueueItem = { alpl: number; state: "ok" | "ng" | "done" | "now" | "wait"; sessionId: number };
+  const [queueStrip, setQueueStripState] = useState<QueueItem[]>([]);
+  const displayQueueRef = useRef<QueueItem[]>([]);
+  const displaySessionIdRef = useRef<number | null>(null);
+  const statsRequestRef = useRef(0);
+  function setQueueStrip(value: QueueItem[] | ((prev: QueueItem[]) => QueueItem[])) {
+    const next = typeof value === "function" ? value(displayQueueRef.current) : value;
+    displayQueueRef.current = next;
+    setQueueStripState(next);
+  }
+  type ReviewDisplay = {
+    sessionId: number | null;
+    originSessionId: number | null;
+    queueIndex: number;
+    measurementId: number;
+    pendingStart: boolean;
+    completed: boolean;
+    updateExisting?: boolean;
+  };
+  // Session วัดซ้ำแบบชิ้นเดียวต้องไม่เอา queue_state ของมันมาแทน Queue เดิม
+  const reviewDisplayRef = useRef<ReviewDisplay | null>(null);
   const queueStripRef = useRef<HTMLDivElement>(null);
   const queueNowIndex = queueStrip.findIndex((item) => item.state === "now");
   const queueFollowIndex = queueNowIndex >= 0 ? queueNowIndex
@@ -458,6 +558,7 @@ export default function DashboardPage() {
   const stationStatus = useSSE({
     session_started: (d) => onSessionStarted(d),
     measurement: (d) => onNewMeasurement(d),
+    measurement_replaced: (d) => onMeasurementReplaced(d),
     session_stopped: (d) => onSessionStopped(d),
     session_complete: (d) => onSessionComplete(d),
     session_timeout: () => onSessionTimeout(),
@@ -476,6 +577,22 @@ export default function DashboardPage() {
   const { data: polledSession, piStatus, dbOffline: dbDown, triggerReady, manualTrigger } = useSessionState();
   const piOnline = piStatus === true;
   const dbOffline = !!dbDown;
+  useEffect(() => {
+    if (session.state !== "running") { setReviewPhase("running"); return; }
+    let cancelled = false;
+    let timer: number;
+    const poll = async () => {
+      try {
+        const status = await apiGet<{ session_id: number; phase: string }>("/api/review/state");
+        if (!cancelled && status.session_id === session.session_id) setReviewPhase(status.phase);
+      } catch {
+        if (!cancelled) setReviewPhase("unknown");
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 1000);
+    };
+    void poll();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [session.state, session.session_id]);
 
   /** ลายเซ็นของ "สิ่งที่หน้านี้สนใจจริง ๆ" ในผล poll
    *
@@ -526,6 +643,9 @@ export default function DashboardPage() {
           // กับตัวเลขของ session เดิมกลับมาทันที เหมือนไม่เคยกดล้าง
           // เก็บเป็น session_id ไม่ใช่ boolean จะได้ปลดตัวเองเมื่อขึ้น session ใหม่
           clearedSid: clearedSidRef.current,
+          displayQueue: displayQueueRef.current,
+          displaySessionId: displaySessionIdRef.current,
+          reviewDisplay: reviewDisplayRef.current?.pendingStart ? null : reviewDisplayRef.current,
         }),
       );
     } catch {
@@ -584,12 +704,43 @@ export default function DashboardPage() {
   }
 
   async function updateStats(sid: number | null) {
+    const request = ++statsRequestRef.current;
     if (isTelemetryCleared()) { setStats({ total: 0, ok: 0, ng: 0 }); return; }
     if (sid == null) {
       setStats({ total: 0, ok: 0, ng: 0 });
       return;
     }
     try {
+      const review = reviewDisplayRef.current;
+      if (review) {
+        const queue = displayQueueRef.current;
+        const sessionIds = [...new Set([...queue.map(q => q.sessionId), review.sessionId].filter((id): id is number => id != null))];
+        const rows = await Promise.all(sessionIds.map(async sessionId => ({ sessionId,
+          items: (await apiGet<{ items: Telemetry[] }>("/api/measurements", { session_id: sessionId, limit: 1000 })).items,
+        })));
+        if (request !== statsRequestRef.current || reviewDisplayRef.current !== review || isTelemetryCleared()) return;
+        // Every chip is scoped to its own session; never use a global ALPL search.
+        setQueueStrip(queue.map((q, index) => {
+          const replacement = index !== review.queueIndex ? undefined : review.updateExisting
+            ? (review.completed || sessionRef.current.measured_count >= 1
+                ? rows.find(r => r.sessionId === review.originSessionId)?.items.find(m => m.measurement_id === review.measurementId)
+                : undefined)
+            : rows.find(r => r.sessionId === review.sessionId)?.items.find(m => m.number_alpl === q.alpl);
+          const measurement = replacement ?? rows.find(r => r.sessionId === q.sessionId)?.items.find(m => m.number_alpl === q.alpl);
+          if (!measurement) return q;
+          resultsRef.current[index] = measurement.result;
+          if (replacement && JSON.stringify(latestTelemetryRef.current) !== JSON.stringify(replacement)) {
+            latestTelemetryRef.current = replacement;
+            if (selectedQueueRef.current === null || selectedQueueRef.current === index) applyTelemetry(replacement);
+          }
+          return { ...q, sessionId: replacement && !review.updateExisting ? review.sessionId! : q.sessionId, state: chipStateFor(index) };
+        }));
+        const items = displayQueueRef.current;
+        setStats({ total: items.filter(q => ["ok", "ng", "done"].includes(q.state)).length,
+          ok: items.filter(q => q.state === "ok").length, ng: items.filter(q => q.state === "ng").length });
+        savePartEntryState();
+        return;
+      }
       const [totalD, okD, ngD] = await Promise.all([
         apiGet<{ total: number }>("/api/measurements", { session_id: sid, limit: 1 }).catch(() => ({ total: 0 })),
         apiGet<{ total: number }>("/api/measurements", { session_id: sid, result: "OK", limit: 1 }).catch(() => ({ total: 0 })),
@@ -597,6 +748,7 @@ export default function DashboardPage() {
       ]);
       // เช็คธงอีกรอบ "หลัง await" — ผู้ใช้อาจกด Clear ระหว่างที่ fetch ยังค้างอยู่
       // ถ้าไม่เช็ค response ที่มาถึงทีหลังจะเขียนทับของที่เพิ่งล้าง
+      if (request !== statsRequestRef.current) return;
       if (isTelemetryCleared()) { setStats({ total: 0, ok: 0, ng: 0 }); return; }
       setStats({ total: totalD.total ?? 0, ok: okD.total ?? 0, ng: ngD.total ?? 0 });
     } catch (e) {
@@ -666,13 +818,6 @@ export default function DashboardPage() {
 
      ตอนนี้เหลือทางเดียว และดีกว่าเดิมตรงที่ **ทำงานเมื่อข้อมูลเปลี่ยนจริงเท่านั้น**
      ไม่ใช่ทำตามนาฬิกา (ดู sessionSig ว่าอะไรนับว่า "เปลี่ยน")                */
-  useEffect(() => {
-    if (!polledSession) return;
-    updateSession(polledSession);
-    syncQueueStrip(polledSession);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSig]);
-
   // updateSession: merge ค่าใหม่เข้ากับ session เดิม + เช็คว่าคิว Part Entry
   // ที่ค้างอยู่ "หมดอายุ" ไปแล้วหรือยัง (ผูกกับ session_id ที่จบไปแล้ว) —
   // เทียบ session_id ตรงๆ แทนการเช็คแค่ transition สด เพื่อครอบคลุมเคส
@@ -716,6 +861,9 @@ export default function DashboardPage() {
    *  พร้อมกัน ไม่ใช่ล้างครึ่งเดียวแล้วเหลือของค้างดูสับสน
    */
   function clearTelemetry() {
+    reviewDisplayRef.current = null;
+    displaySessionIdRef.current = sessionRef.current.session_id;
+    statsRequestRef.current += 1;
     resetTelemetry();
     resultsRef.current = [];
     setQueueStrip([]);
@@ -755,15 +903,13 @@ export default function DashboardPage() {
    *    คิวของตัวเอง ดู session_queues ใน main.py)
    */
   function syncQueueStrip(st: any) {
+    // Session วัดซ้ำแบบชิ้นเดียวใช้ Queue เดิมของหน้าจอเป็นหลัก
+    if (reviewDisplayRef.current) return;
     // ผู้ใช้กด 🧹 Clear ไว้ — ต้องค้างว่างไว้ ไม่ใช่โหลดกลับมาใหม่
     if (isTelemetryCleared()) { setQueueStrip([]); return; }
 
-    // เก็บคิวของรอบที่วัดครบไว้ให้เลือกดูผลย้อนหลัง รวมถึงหลัง refresh
-    // ใช้ queue_state จาก backend; clearedSid ด้านบนกันการคืนคิวที่กด Clear ไปแล้ว
-    const completed = st?.state === "stopped"
-      && st.target_count > 0 && st.measured_count >= st.target_count;
-    if (st?.state !== "running" && !completed) { setQueueStrip([]); return; }
-
+    // Keep measured entries after completion, Stop, or timeout. Only a new
+    // normal Start (or explicit Clear) replaces the display queue.
     const raw = st?.queue_state;
     if (!raw) { setQueueStrip([]); return; }
     let q: any = null;
@@ -774,6 +920,7 @@ export default function DashboardPage() {
     setQueueStrip(
       list.map((alpl, i) => ({
         alpl,
+        sessionId: st.session_id,
         // ผลของชิ้นที่วัดไปแล้วมาจาก resultsRef ที่สะสมจาก SSE (+ กู้จาก
         // localStorage ตอน mount) — ถ้ายังไม่รู้ผลจริงๆ chipStateFor คืน "done"
         state: i < done ? chipStateFor(i)
@@ -781,13 +928,69 @@ export default function DashboardPage() {
              : "wait",
       })),
     );
+    savePartEntryState();
+  }
+
+  function prepareDisplaySession(st: any) {
+    if (st.session_id == null) return;
+    let q = st.queue_state;
+    try { if (typeof q === "string") q = JSON.parse(q); } catch { q = null; }
+    // A session row exists before Pi accepts Start. Failed Starts must not
+    // replace the previous display queue just because polling saw that row.
+    if (q?.start_confirmed === false) return false;
+    const source = q?.review_source;
+    const review = reviewDisplayRef.current;
+    if (review?.sessionId === st.session_id) return;
+    if (source) {
+      const index = review?.pendingStart && review.measurementId === source.measurement_id
+        ? review.queueIndex
+        : displayQueueRef.current.findIndex(item => item.alpl === source.number_alpl && item.sessionId === source.session_id);
+      if (index >= 0) {
+        reviewDisplayRef.current = { sessionId: st.session_id, originSessionId: source.session_id,
+          queueIndex: index, measurementId: source.measurement_id, pendingStart: false, completed: false,
+          updateExisting: !!source.update_existing };
+        savePartEntryState();
+        return;
+      }
+    }
+    if (displaySessionIdRef.current === st.session_id) return;
+    // One reset per successful normal Start, regardless of whether SSE, polling,
+    // or the POST response arrives first. A late response cannot erase new results.
+    reviewDisplayRef.current = null;
+    displaySessionIdRef.current = st.session_id;
+    resultsRef.current = [];
+    setQueueStrip([]);
+    clearedSidRef.current = null;
+    setStats({ total: 0, ok: 0, ng: 0 });
+    resetTelemetry();
   }
 
   function onSessionStarted(d: any) {
-    resetTelemetry();
-    updateSession({ state: "running", session_id: d.session_id, measured_count: 0, target_count: d.target_count });
+    if (prepareDisplaySession(d) === false) return;
+    if (sessionRef.current.session_id === d.session_id) return;
+    setReviewPhase("running");
+    const started = { ...d, state: "running", measured_count: 0 };
+    syncQueueStrip(started);
+    updateSession(started);
+  }
+  async function ensureMeasurementSession(d: any) {
+    if (d.session_id !== sessionRef.current.session_id) {
+      // The agent can publish its first result before Start's HTTP response/SSE.
+      // Fetch its queue metadata before mapping the result to the display queue.
+      const current = await apiGet<SessionState>("/api/session/state");
+      if (current.session_id !== d.session_id) return false;
+      // A saved measurement itself confirms that the agent started, even if
+      // its Start acknowledgement has not reached the backend yet.
+      const q = typeof current.queue_state === "string" ? JSON.parse(current.queue_state) : current.queue_state;
+      prepareDisplaySession({ ...current, queue_state: { ...q, start_confirmed: true } });
+      syncQueueStrip(current);
+      updateSession(current);
+    }
+    return true;
   }
   async function onNewMeasurement(d: any) {
+    if (!await ensureMeasurementSession(d)) return;
+    const review = reviewDisplayRef.current;
     // มีของใหม่จริงแล้ว → ปลดธง "ล้างจอไว้" ให้จอกลับมาแสดงตามปกติเอง
     clearedSidRef.current = null;
 
@@ -809,6 +1012,17 @@ export default function DashboardPage() {
       setMtModal(null);
     }
 
+    if (review && review.sessionId === d.session_id) {
+      resultsRef.current[review.queueIndex] = d.result;
+      setQueueStrip(prev => prev.map((q, i) => i === review.queueIndex
+        ? { ...q, sessionId: d.session_id, state: chipStateFor(i) } : q));
+      latestTelemetryRef.current = d;
+      if (selectedQueueRef.current === null || selectedQueueRef.current === review.queueIndex) applyTelemetry(d);
+      updateSession({ measured_count: d.measured, target_count: d.target });
+      savePartEntryState();
+      await loadMeasurementsPage();
+      return;
+    }
     updateSession({ measured_count: d.measured, target_count: d.target });
     latestTelemetryRef.current = d;
     if (selectedQueueRef.current === null) applyTelemetry(d);
@@ -828,6 +1042,21 @@ export default function DashboardPage() {
       setHighlightId(d.measurement_id);
       window.setTimeout(() => setHighlightId((h) => (h === d.measurement_id ? null : h)), 2600);
     }
+  }
+  async function onMeasurementReplaced(d: any) {
+    if (!await ensureMeasurementSession(d)) return;
+    const review = reviewDisplayRef.current;
+    const index = review?.queueIndex ?? d.piece - 1;
+    resultsRef.current[index] = d.result;
+    setQueueStrip(prev => prev.map((q, i) => i === index ? { ...q, state: chipStateFor(i) } : q));
+    if (review || latestTelemetryRef.current?.measurement_id === d.measurement_id) latestTelemetryRef.current = d;
+    if (telemetryRef.current?.measurement_id === d.measurement_id || (review && selectedQueueRef.current === null)) applyTelemetry(d);
+    if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
+    setMtModal(null);
+    if (review) updateSession({ measured_count: d.measured, target_count: d.target });
+    savePartEntryState();
+    updateStats(d.session_id);
+    await loadMeasurementsPage();
   }
   function onMeasureTimeout(d: any) {
     setMtModal(d);
@@ -987,14 +1216,20 @@ export default function DashboardPage() {
   }
 
   function onSessionStopped(d?: { agent_error?: string | null }) {
-    resetTelemetry();
-    resultsRef.current = [];
+    const review = reviewDisplayRef.current;
+    if (review && review.sessionId === sessionRef.current.session_id) {
+      review.completed = true;
+      setReviewPhase("complete");
+    }
     updateSession({ state: "stopped" });
     clearAllQueuesAndForms();
     // session จบแล้ว ไม่มีใครรอคำตอบอีก — ถ้าไม่ปิด modal จะค้างบนจอโดยที่
     // กดปุ่มไหนก็ได้ 404 (backend ล้าง tray_pending ไปพร้อมกับ session แล้ว)
     setTrayModal(null);
     setMcuModal(null);   // ← เพิ่ม เหตุผลเดียวกัน
+    setMtModal(null);
+    if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
+    savePartEntryState();
 
     // แท็บที่ **ไม่ได้เป็นคนกด Stop** ก็ต้องรู้ด้วยว่าเครื่องอาจยังวัดต่ออยู่
     // (คนกดได้เห็นจาก response ของตัวเองไปแล้วใน doStopSession)
@@ -1007,12 +1242,21 @@ export default function DashboardPage() {
     }
   }
   function onSessionComplete(d: any) {
+    const review = reviewDisplayRef.current;
+    if (review && review.sessionId === d.session_id) {
+      review.completed = true;
+      setReviewPhase("complete");
+    }
     // เก็บ session_id ไว้ "ก่อน" clearAllQueuesAndForms() — ตัวนั้นล้าง state ทิ้ง
     const sid = d.session_id ?? sessionRef.current.session_id;
     setTrayModal(null);      // เหตุผลเดียวกับ onSessionStopped
+    setMcuModal(null);
+    setMtModal(null);
+    if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
     updateSession({ state: "stopped", measured_count: d.measured, target_count: d.target });
     clearAllQueuesAndForms();
-    showIpmSummary(sid);
+    savePartEntryState();
+    if (!review) showIpmSummary(sid);
   }
 
   /** เด้งสรุปผลตอนวัดครบ — เฉพาะโหมด IPM
@@ -1036,9 +1280,18 @@ export default function DashboardPage() {
     }
   }
   function onSessionTimeout() {
-    resetTelemetry();
+    const review = reviewDisplayRef.current;
+    if (review && review.sessionId === sessionRef.current.session_id) {
+      review.completed = true;
+      setReviewPhase("complete");
+    }
     updateSession({ state: "timeout" });
     clearAllQueuesAndForms();
+    setTrayModal(null);
+    setMcuModal(null);
+    setMtModal(null);
+    if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
+    savePartEntryState();
   }
   async function onImageUpdated(d: any) {
     setMeasurements((prev) => prev.map((m) => (m.measurement_id === d.measurement_id ? { ...m, image_path: d.image_path, image_upload_failed: !!d.upload_failed } : m)));
@@ -1094,6 +1347,9 @@ export default function DashboardPage() {
         //   (effect ของ mount ทำงานแบบ synchronous จึงเสร็จก่อน response แน่นอน)
         if (Array.isArray(d.results)) resultsRef.current = d.results;
         clearedSidRef.current = d.clearedSid ?? null;
+        displaySessionIdRef.current = d.displaySessionId ?? d.lastTelemetry?.session_id ?? d.clearedSid ?? null;
+        if (Array.isArray(d.displayQueue)) setQueueStrip(d.displayQueue);
+        if (d.reviewDisplay && !d.reviewDisplay.pendingStart) reviewDisplayRef.current = d.reviewDisplay;
       }
     } catch (e) {
       console.warn("loadPartEntryState:", e);
@@ -1116,6 +1372,15 @@ export default function DashboardPage() {
     return () => dropdownAbort.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Restore persisted display references above before handling cached poll data.
+  useEffect(() => {
+    if (!polledSession) return;
+    if (prepareDisplaySession(polledSession) === false) return;
+    syncQueueStrip(polledSession);
+    updateSession(polledSession);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionSig]);
 
   // ── Measurements filter/pagination handlers ───────────────────────────
   function onMeasSearchChange(value: string) {
@@ -1160,7 +1425,7 @@ export default function DashboardPage() {
   // ที่ "ยังไม่วัด" เหลือเป็นพื้นเทาให้เห็น (ถ้าหารด้วยที่วัดแล้วแถบจะเต็ม 100%
   // ตั้งแต่ชิ้นแรก แล้วมองไม่ออกว่าเหลืออีกกี่ชิ้น)
   // ถูกสั่งล้างไว้ → แถบต้องว่างด้วย ไม่งั้นแถบเขียวยังเต็มอยู่ทั้งที่ตัวเลขเป็นขีด
-  const barTotal = isTelemetryCleared() ? 0 : (session.target_count || stats.total || 0);
+  const barTotal = isTelemetryCleared() ? 0 : (reviewDisplayRef.current ? queueStrip.length : session.target_count || stats.total || 0);
   const barOkPct = barTotal ? (stats.ok / barTotal) * 100 : 0;
   const barNgPct = barTotal ? (stats.ng / barTotal) * 100 : 0;
 
@@ -1182,6 +1447,13 @@ export default function DashboardPage() {
      มายืนยันซ้ำ (กติกาเดียวกับป้ายสถานะใน Layout.tsx ที่แก้ไปแล้ว)          */
   const canStart =
     session.state !== "running" && stationStatus !== "offline" && !dbOffline && piOnline && hasQueue;
+  const reviewUnavailable = dbOffline ? "DB Offline"
+    : stationStatus === "offline" ? "Server Offline"
+    : !piOnline ? "Pi Offline / Waiting for Pi"
+    : reviewBusy || telemetryLoading ? "กำลังประมวลผล"
+    : session.state === "running" && !!reviewDisplayRef.current ? "รอรอบวัดซ้ำนี้เสร็จก่อนเลือกวัดชิ้นอื่น"
+    : session.state === "running" && reviewPhase !== "paused" ? "รอ Pi พักคิวและรับผล/รูปให้เรียบร้อยก่อน"
+    : "";
 
   // ปุ่มต้องบอก "ติดอะไรอยู่" ไม่ใช่แค่กดไม่ได้เฉยๆ — ไม่งั้นผู้ใช้จะนึกว่าระบบพัง
   // แล้วไปไล่หาที่ฟอร์ม Part Entry ทั้งที่ปัญหาอยู่ที่เครื่อง
@@ -1264,11 +1536,12 @@ export default function DashboardPage() {
       Measure_Type: q.mode,
       Operator: q.operator,
       Trigger_Mode: q.triggerMode ?? "auto",
+      Tray_Capacity: q.triggerMode === "manual" ? null : q.trayCapacity ?? null,
       groups: q.groups,
     };
 
     try {
-      const data = await apiPost<{ session_id: number; target_count: number }>("/api/session/start", body);
+      const data = await apiPost<SessionState>("/api/session/start", body);
       // ⚠ ผูก session_id กับคิว "ก่อน" เรียก updateSession() — ไม่งั้นการเช็คว่า
       //   คิวเก่าค้างอยู่ไหม (queueIsStale) จะเห็น session_id ไม่ตรงแล้วล้างคิว
       //   ที่เพิ่ง start ทิ้งทันที
@@ -1276,7 +1549,8 @@ export default function DashboardPage() {
       setEntryQueue(bound);
       entryQueueRef.current = bound;
       savePartEntryState();
-      updateSession({ state: "running", session_id: data.session_id, measured_count: 0, target_count: data.target_count });
+      onSessionStarted(data);
+      if (sessionRef.current.state !== "running") clearAllQueuesAndForms();
       refreshParts();
     } catch (e) {
       dialog.alert(e instanceof ApiError ? e.message : "เริ่ม session ไม่สำเร็จ", { title: "เริ่มการวัดไม่สำเร็จ", danger: true });
@@ -1360,6 +1634,38 @@ export default function DashboardPage() {
   }
 
   const isRunning = session.state === "running";
+  function partEntryForSession(st: SessionState, queued: EntryQueue | null): EntryQueue | null {
+    if (st.state !== "running") return queued;
+    let q = st.queue_state;
+    try { if (typeof q === "string") q = JSON.parse(q); } catch { q = null; }
+    if (!Array.isArray(q?.groups) || !Array.isArray(q?.queue)) {
+      return queued?.session_id === st.session_id ? queued : null;
+    }
+    const mode = q.measure_mode ?? q.entry_mode;
+    return {
+      mode: mode === "New" || mode === "Rework" ? mode : "IPM",
+      operator: q.operator ?? "",
+      triggerMode: q.trigger_mode === "manual" ? "manual" : "auto",
+      trayCapacity: q.tray_capacity ?? null,
+      groups: q.groups, list: q.queue, session_id: st.session_id,
+    };
+  }
+  // Show the execution session, including a single-item review, independently
+  // of the saved entry form and the retained Live Telemetry queue.
+  const partEntryQueue = partEntryForSession(session, entryQueue);
+  const activeTriggerMode = parsedQueue?.trigger_mode ?? partEntryQueue?.triggerMode;
+  const showManualTrigger = activeTriggerMode ? activeTriggerMode === "manual" : manualTrigger;
+  const triggerControlReady = triggerReady && manualTrigger && piOnline && !dbOffline
+    && stationStatus !== "offline" && polledSession?.session_id === session.session_id;
+  const runningControls = <>
+    {isRunning && showManualTrigger && (
+      <button className="btn-trigger" disabled={!triggerControlReady}
+        title={triggerControlReady ? "ส่งสัญญาณให้เริ่มวัดชิ้นนี้ (แทน MCU ชั่วคราว)"
+          : "ยังไม่ถึงจังหวะ — ระบบกำลังโหลดโปรแกรมวัด หรือกำลังรอผลของชิ้นก่อนหน้าอยู่"}
+        onClick={sendManualTrigger}>⚡ Trigger</button>
+    )}
+    {isRunning && <button className="btn-stop" onClick={stopSession}>■ Stop</button>}
+  </>;
   const canEditQueue = session.state !== "running";
 
   return (
@@ -1413,28 +1719,38 @@ export default function DashboardPage() {
                 มีคิวแล้ว   → หัวข้อ + โหมด + Clear บรรทัดบน
                               แถวล่าง: dropdown สรุป (ซ้าย) · Start (ขวา)      */}
           <div className="card pe-card">
-            {!entryQueue ? (
+            {!partEntryQueue ? (
               <>
                 <div className="card-title">Part Entry</div>
                 {/* จัดกึ่งกลางทั้งแนวตั้งและแนวนอน — ตอนนี้มีอย่างเดียวที่ทำได้
                     ไม่ต้องให้ตาไปหาปุ่มที่มุมไหน */}
-                <div className="pe-card-empty">
+                {isRunning ? <>
+                  <span className="session-entry-hint">กำลังโหลดข้อมูลชิ้นงานที่กำลังวัด…</span>
+                  <div className="session-btns">
+                    <button className="btn-start" disabled>▶ Start</button>
+                    {runningControls}
+                  </div>
+                </> : <div className="pe-card-empty">
                   <button className="btn-pe-action" onClick={openPeModal}>
                     + New Entry
                   </button>
                   <span className="session-entry-hint">กด "New Entry" เพื่อเตรียมคิว</span>
-                </div>
+                </div>}
               </>
             ) : (
               <div className="session-entry-filled">
                 {/* หัวข้อ + โหมด + Clear อยู่บรรทัดบน ให้แถวล่างเหลือแค่
                     dropdown กับปุ่ม — ถ้ายัด badge เข้าไปในตัว toggle ด้วย
                     ชื่อ ALPL ที่ยาวจะถูกบีบจนอ่านไม่ออกก่อนใครเพื่อน */}
-                <div className="session-entry-head">
+                <div className="session-entry-head" style={{ flexWrap: "wrap" }}>
                   <span className="session-entry-title">Part Entry</span>
-                  <span className={`pe-mode-badge-lg ${entryQueue.mode.toLowerCase()}`}>
-                    {entryQueue.mode}
+                  <span className={`pe-mode-badge-lg ${partEntryQueue.mode.toLowerCase()}`}>
+                    {partEntryQueue.mode}
                   </span>
+                  {isRunning && <span className="session-entry-hint" style={{ flexBasis: "100%", order: 1 }}>
+                    {parsedQueue?.review_source ? "วัดซ้ำ · " : ""}
+                    {showManualTrigger ? "Manual (ปุ่มบนเว็บ)" : "Auto (MCU)"}
+                  </span>}
                   {/* ล้างคิวที่กรอกไว้ทั้งหมด — ล็อกตอน running เพราะคิวระหว่างวัด
                       คือของที่ backend ถืออยู่จริง ล้างฝั่งหน้าเว็บอย่างเดียวจะทำให้
                       สองฝั่งไม่ตรงกัน แล้วผลวัดที่ตามมาจะไปแปะกับ ALPL ผิดตัว */}
@@ -1456,7 +1772,7 @@ export default function DashboardPage() {
                   <div className="pe-summary-dropdown session-entry-summary">
                     <button type="button" className="pe-summary-toggle" onClick={() => setPeSummaryOpen((v) => !v)}>
                       <span className="pe-summary-toggle-left">
-                        <span>ALPL: {formatAlplRanges(entryQueue.list)}</span>
+                        <span>ALPL: {formatAlplRanges(partEntryQueue.list)}</span>
                       </span>
                       <span className={`pe-summary-arrow${peSummaryOpen ? " open" : ""}`}>▼</span>
                     </button>
@@ -1466,9 +1782,9 @@ export default function DashboardPage() {
                     <div className={`pe-summary-body${peSummaryOpen ? " open" : ""}`}>
                       <div className="pe-summary-grid">
                         <span className="pg-label">Operator</span>
-                        <span className="pg-value">{entryQueue.operator}</span>
+                        <span className="pg-value">{partEntryQueue.operator}</span>
                       </div>
-                      {entryQueue.groups.map((g, gi) => (
+                      {partEntryQueue.groups.map((g, gi) => (
                         <div key={gi} className="pe-summary-grid" style={{ marginTop: "0.6rem" }}>
                           <span className="pg-label">กลุ่มที่ {gi + 1}</span>
                           <span className="pg-value">{formatAlplRanges(g.number_alpl as number[])}</span>
@@ -1497,25 +1813,7 @@ export default function DashboardPage() {
                     <button className="btn-start" disabled={!canStart} title={startTitle} onClick={startFromQueue}>
                       {startLabel}
                     </button>
-                    {isRunning && manualTrigger && (
-                      <button
-                        className="btn-trigger"
-                        disabled={!triggerReady}
-                        title={
-                          triggerReady
-                            ? "ส่งสัญญาณให้เริ่มวัดชิ้นนี้ (แทน MCU ชั่วคราว)"
-                            : "ยังไม่ถึงจังหวะ — ระบบกำลังโหลดโปรแกรมวัด หรือกำลังรอผลของชิ้นก่อนหน้าอยู่"
-                        }
-                        onClick={sendManualTrigger}
-                      >
-                        ⚡ Trigger
-                      </button>
-                    )}
-                    {isRunning && (
-                      <button className="btn-stop" onClick={stopSession}>
-                        ■ Stop
-                      </button>
-                    )}
+                    {runningControls}
                   </div>
               </div>
             )}
@@ -1533,9 +1831,10 @@ export default function DashboardPage() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span className="telemetry-alpl-badge">ALPL {telemetry?.number_alpl ?? "—"}</span>
-                  {selectedQueueIndex !== null && (
-                    <button type="button" className="btn-clear" onClick={followLatestTelemetry}>
-                      กลับไปค่าล่าสุด
+                  {(selectedQueueIndex !== null || (isRunning && reviewPhase !== "running")) && (
+                    <button type="button" className="btn-clear" onClick={resumeLatestTelemetry}
+                      disabled={reviewBusy || (isRunning && (reviewPhase === "remeasuring" || reviewPhase === "unknown"))}>
+                      {isRunning ? "กลับไปค่าล่าสุดและวัดต่อ" : "กลับไปค่าล่าสุด"}
                     </button>
                   )}
                   {/* ล้างเฉพาะสิ่งที่แสดงบนจอ ไม่แตะฐานข้อมูล — ผลวัดที่บันทึกไปแล้ว
@@ -1554,6 +1853,19 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+              {selectedQueueIndex !== null && (
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <span title={reviewUnavailable} style={{ display: "inline-block" }}>
+                    <button type="button" className="btn-start" disabled={!!reviewUnavailable || !telemetry?.measurement_id}
+                      onClick={remeasureSelected}>วัดใหม่</button>
+                  </span>
+                  {isRunning && <span role="status" style={{ marginLeft: "0.5rem" }}>
+                    {reviewPhase === "paused" ? "พักคิวแล้ว — วางชิ้นงานที่เลือกก่อนวัดใหม่"
+                      : reviewPhase === "remeasuring" ? "กำลังวัดซ้ำ — รอ Trigger / ผลและรูป"
+                      : reviewPhase === "unknown" ? "กำลังตรวจสอบสถานะ Pi" : "กำลังรอพักคิว"}
+                  </span>}
+                </div>
+              )}
               {selectedQueueIndex !== null && (
                 <div role="status" style={{ marginBottom: "0.5rem", color: "var(--muted)" }}>
                   {telemetryLoading ? "กำลังโหลดผลวัด…" : `กำลังดูผล ALPL ${telemetry?.number_alpl ?? "—"}`}
@@ -1682,7 +1994,7 @@ export default function DashboardPage() {
                   <strong>
                     {isTelemetryCleared() || session.state === "idle" || !session.session_id
                       ? "— / — measured"
-                      : `${session.measured_count} / ${session.target_count} measured`}
+                      : `${reviewDisplayRef.current ? stats.total : session.measured_count} / ${barTotal} measured`}
                   </strong>
                 </span>
               </div>
@@ -2150,6 +2462,13 @@ export default function DashboardPage() {
               { title: "มี ALPL ที่ยังไม่ลงทะเบียน", okLabel: "ลงทะเบียนแล้ววัดต่อ" },
             )
           }
+          confirmExisting={alpls => dialog.confirm(
+            <>
+              <strong>ALPL {formatAlplRanges(alpls)} มีอยู่ในระบบแล้ว</strong>
+              <p>ใช้ข้อมูล Part ที่ลงทะเบียนไว้และบันทึกผลการวัดใหม่ ต้องการวัดต่อหรือไม่?</p>
+            </>,
+            { title: "มี ALPL ที่ลงทะเบียนแล้ว", okLabel: "วัดต่อ" },
+          )}
           onSave={(q) => {
             setEntryQueue(q);
             entryQueueRef.current = q;

@@ -232,7 +232,7 @@ def _criteria_from_config(cur, gi: int, group: Dict[str, Any], entry_mode: str):
         raise HTTPException(400, f"กลุ่มที่ {gi + 1}: หาเกณฑ์ตัดสินของกลุ่มนี้ไม่เจอ")
     return row
 
-def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str):
+def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str, *, preserve_part=False):
     """สร้างฟิลด์ `groups` ที่แนบไปกับ `POST /command` ให้ Pi
 
     Pi เอาไปทำ 2 อย่าง: รู้ว่าถึง ALPL ตัวไหนต้องสลับ `PW` เป็น template อะไร
@@ -259,7 +259,7 @@ def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str):
         # New: ยังไม่มีแถว Part เลย (validate แล้ว) ไม่มีอะไรให้ชน
         # Rework: `_update_part_row` จะเขียนทับ config เดิมด้วยค่าจากฟอร์มอยู่แล้ว
         #         "ไม่ตรง" คือเจตนาของผู้ใช้ ไม่ใช่ความผิดพลาด
-        if entry_mode == "IPM":
+        if entry_mode == "IPM" or preserve_part:
             want = _limits_of(crit, entry_mode)
             for a in alpl:
                 cur.execute("SELECT 1 FROM parts_specifications WHERE number_alpl = %s", (a,))
@@ -288,6 +288,7 @@ async def _notify_agent_start(
     target_count: int,
     groups: List[Dict[str, Any]],
     trigger_mode: str = "auto",
+    tray_capacity: Optional[int] = None,
 ) -> None:
     """ยิง POST ไปที่ Agent (`send_command.py` บน Pi / `mockup.py`) ให้เริ่มวัด
 
@@ -344,6 +345,7 @@ async def _notify_agent_start(
         # ⚠ Pi รุ่นเก่าที่ไม่รู้จักคีย์นี้จะเมินมันไป (pydantic ignore extra) —
         #   ปลอดภัยที่จะส่งไปเสมอ ไม่ต้องเช็คเวอร์ชันฝั่ง Pi
         "trigger_mode": trigger_mode,
+        "tray_capacity": tray_capacity,
         "groups": groups,
     }
     # log ก่อนยิงเสมอ — เป็นจุดเดียวที่เห็น "สิ่งที่ backend ส่งให้ Agent" ได้จริง
@@ -523,7 +525,7 @@ def _flatten_groups(groups: List[Dict[str, Any]]) -> tuple:
     return queue, group_of
 
 def _validate_group(cur, gi: int, group: Dict[str, Any], measure_type: str,
-                    alpls: List[int]) -> str:
+                    alpls: List[int], *, remeasure=False) -> str:
     """ตรวจกลุ่มหนึ่งให้ครบ **โดยไม่เขียนอะไรลง DB เลย** แล้วคืน template_name
 
     เจตนา: ให้ผู้ใช้รู้ทุกปัญหา "ตั้งแต่กด Start" ไม่ใช่ไปรู้ตอนวัดชิ้นแรกเสร็จ
@@ -560,21 +562,10 @@ def _validate_group(cur, gi: int, group: Dict[str, Any], measure_type: str,
     )
     found = {r["number_alpl"] for r in cur.fetchall()}
     missing = [a for a in alpls if a not in found]
-    existing = [a for a in alpls if a in found]
 
-    if measure_type == "New" and existing:
-        raise HTTPException(
-            409,
-            f"{label}: ALPL {', '.join(map(str, existing))} มีอยู่ในระบบแล้ว — "
-            f"ถ้าจะวัดซ้ำใช้โหมด IPM · ถ้าเป็นงานแก้จาก vendor ใช้ Rework",
-        )
-    if measure_type == "Rework" and missing:
-        raise HTTPException(
-            404,
-            f"{label}: ALPL {', '.join(map(str, missing))} ไม่มีในระบบ — "
-            f"Rework ต้องเป็นชิ้นที่เคยวัดมาก่อนเท่านั้น ถ้าเป็นชิ้นใหม่ให้ใช้โหมด New",
-        )
-    # IPM: ตัวที่ยังไม่มีจะถูกลงทะเบียนให้ตอนวัดจริง (ผู้ใช้ยืนยันมาแล้วจากหน้าเว็บ)
+    if remeasure and missing:
+        raise HTTPException(404, f"{label}: ไม่พบ Part เดิมสำหรับวัดซ้ำ")
+    # ทุกโหมดลงทะเบียนตัวที่ยังไม่มีตอนวัดจริง; Frontend ถามยืนยันก่อน Save
     # จึงไม่บล็อกที่นี่ — แต่ต้องมี Package Size ในกลุ่ม ซึ่งเช็คไปแล้วข้างบน
 
     # template ผูกกับ package_size ของกลุ่ม (ไม่ต้องพึ่ง Part ที่อาจยังไม่มี)
@@ -637,6 +628,9 @@ async def start_session(request: Request):
     # ⚠ ตรวจที่นี่ด้วยแม้ Pi จะตรวจซ้ำอยู่แล้ว — ผู้ใช้ต้องเห็น error ตั้งแต่กด
     #   Start ไม่ใช่ไปรู้ตอน backend สั่ง Pi ไม่ผ่านแล้วได้ 502 ที่ชี้ผิดสาเหตุ
     trigger_mode = data.get("Trigger_Mode", "auto")
+    tray_capacity = data.get("Tray_Capacity")
+    if tray_capacity is not None and (type(tray_capacity) is not int or tray_capacity < 0):
+        raise HTTPException(400, "Tray Capacity ต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป หรือ null")
     if trigger_mode not in ("manual", "auto"):
         raise HTTPException(
             400,
@@ -656,6 +650,8 @@ async def start_session(request: Request):
     alpl_queue, group_of = _flatten_groups(groups)
     first_alpl = alpl_queue[0]
     target_count = len(alpl_queue)
+    review_source = getattr(request.state, "review_source", None)
+    remeasure = bool(review_source and review_source.get("update_existing"))
 
     # **การ map โหมดที่เลือกหน้าเว็บ → ค่าที่บันทึกลง measurements**
     # (ตามที่ตกลงกันไว้ — Rework ไม่ใช่ measure_type ของตัวเอง แต่ถือเป็นการวัด
@@ -686,6 +682,12 @@ async def start_session(request: Request):
                 cur.execute("SELECT session_id FROM sessions WHERE state = 'running'")
                 if cur.fetchone():
                     raise HTTPException(400, "A session is already running")
+                if remeasure:
+                    cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s",
+                                (review_source["measurement_id"], review_source["session_id"]))
+                    original = cur.fetchone()
+                    if not original or alpl_queue != [original["number_alpl"]]:
+                        raise HTTPException(409, "รายการวัดซ้ำไม่ตรงกับ Measurement เดิม")
 
                 # 1) ตรวจทุกกลุ่มให้ครบก่อน — **ยังไม่เขียนอะไรลง DB**
                 #    ตรวจให้จบทุกกลุ่มแล้วค่อยตัดสิน ไม่ใช่เจอกลุ่มแรกผิดแล้วหยุด
@@ -695,7 +697,7 @@ async def start_session(request: Request):
                 templates: List[str] = []
                 for gi, g in enumerate(groups):
                     alpls_of_group = [a for a, gg in zip(alpl_queue, group_of) if gg == gi]
-                    templates.append(_validate_group(cur, gi, g, measure_type, alpls_of_group))
+                    templates.append(_validate_group(cur, gi, g, measure_type, alpls_of_group, remeasure=remeasure))
 
                 # ── หลาย template ในรอบเดียวกันได้แล้ว (แผน E) ─────────────────
                 # Pi สลับ `PW` เองเมื่อข้ามรอยต่อกลุ่ม โดยดูจาก `groups[].template_name`
@@ -715,7 +717,7 @@ async def start_session(request: Request):
                 #      ทำ "ก่อน" insert sessions โดยตั้งใจ — ถ้าเกณฑ์ 2 ฝั่งไม่ตรงกัน
                 #      (ดู _build_groups) จะ raise ตรงนี้แล้วไม่มี session ค้างใน DB
                 agent_groups = _build_groups(
-                    cur, groups, group_of, alpl_queue, templates, entry_mode
+                    cur, groups, group_of, alpl_queue, templates, entry_mode, preserve_part=remeasure or measure_type == "New"
                 )
 
                 # 2) Insert sessions row — ไม่มี number_alpl แล้ว (ถอดออกพร้อม FK
@@ -735,6 +737,10 @@ async def start_session(request: Request):
         # ค่อยผูก กัน insert fail แล้วมี state ค้างอยู่ใน session_queues)
         # entry_mode / entry_note ถูก map ไว้ตั้งแต่ต้นฟังก์ชันแล้ว
         queue_state = {
+            "start_confirmed": False,
+            "review_source": getattr(request.state, "review_source", None),
+            "trigger_mode": trigger_mode,
+            "tray_capacity": tray_capacity,
             "entry_mode": entry_mode,
             "measure_mode": measure_type,   # โหมดดิบที่ผู้ใช้เลือก (แยก New/Rework ออกจากกัน)
             "queue": alpl_queue,
@@ -771,7 +777,12 @@ async def start_session(request: Request):
         # 4) Notify Agent ให้เริ่มวัด — ส่ง groups (template + ขอบเขต OK/NG
         #    รายกลุ่ม) ไปทั้งก้อน เพื่อให้ Pi สลับ PW ได้เองและตัดสิน OK/NG เอง
         #    แล้วสั่ง MCU ได้โดยไม่ต้องถาม backend กลับ (ดู _build_groups / PLAN ข้อ F)
-        await _notify_agent_start(session_id, target_count, agent_groups, trigger_mode)
+        await _notify_agent_start(session_id, target_count, agent_groups, trigger_mode, tray_capacity)
+
+        queue_state["start_confirmed"] = True
+        with db.cursor() as cur:
+            cur.execute("UPDATE sessions SET queue_state = %s WHERE session_id = %s",
+                        (json.dumps(queue_state), session_id))
 
         await push_event(
             "session_started",
@@ -780,9 +791,11 @@ async def start_session(request: Request):
                 "number_alpl": first_alpl,
                 "template_name": template_name,
                 "target_count": target_count,
+                "queue_state": queue_state,
             },
         )
-        return {"session_id": session_id, "template_name": template_name, "target_count": target_count}
+        return {"session_id": session_id, "template_name": template_name, "target_count": target_count,
+                "queue_state": queue_state}
     finally:
         db.close()
 

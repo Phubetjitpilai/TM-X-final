@@ -1036,6 +1036,16 @@ button.topbar-link {
 .empty-row td { text-align: center; color: var(--muted); padding: 2rem; }
 .pagination-bar { display: flex; justify-content: flex-end; align-items: center; gap: 1rem; margin-top: 1rem; }
 
+/* ช่องเลขยังคงรับเฉพาะตัวเลข แต่ไม่แสดงปุ่มเพิ่ม/ลดของเบราว์เซอร์ */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
 /* ── Section 1 — Session Control ───────────────────────────────────── */
 .session-row {
   display: flex;

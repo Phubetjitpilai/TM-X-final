@@ -4,10 +4,11 @@ import threading
 import time
 
 import httpx
+from queue_review import QueueReview
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ── ตั้ง logging ─────────────────────────────────────────────────────────
 # ทุกบรรทัดจะมี timestamp นำหน้า จำเป็นตอนรันเป็น service แบบไม่มีหน้าต่าง
@@ -94,6 +95,7 @@ def _drop_mega(where: str) -> None:
 TRIGGER_COMMAND = "T1\r"
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+queue_review = QueueReview(BACKEND_URL)
 AGENT_PORT = int(os.getenv("AGENT_PORT", 9998))
 
 HB_INTERVAL     = float(os.getenv("HEARTBEAT_INTERVAL", 5))
@@ -208,18 +210,27 @@ class Group(BaseModel):
     package_size: str | None = None      # เผื่อ backend รุ่นเก่าไม่ส่งมา
 
 class CommandRequest(BaseModel):
+    review_job: dict | None = None
     action: str
     session_id: int | None = None
     target_count: int | None = None
     # "manual" = รอปุ่ม ⚡ บนหน้าเว็บ · "auto" = รอ <TRIGGER_TMX> จาก MCU
     # default เป็น auto เพื่อให้ backend รุ่นที่ยังไม่ส่งฟิลด์นี้ทำงานเหมือนเดิม
     trigger_mode: str = "auto"
+    tray_capacity: int | None = Field(default=None, ge=0, strict=True)
     groups: list[Group] | None = None
 
 @http_app.post("/command")
 async def command(req: CommandRequest):
-    global is_running, _answer_action
+    global is_running, _answer_action, TRAY_CAPACITY
+    if req.action in ("pause_queue", "resume_queue", "remeasure"):
+        if not is_running:
+            raise HTTPException(409, "ไม่มี Session กำลังทำงาน")
+        return queue_review.command(req.action, req.session_id, req.review_job)
+
     if req.action == "start":
+        if is_running:
+            raise HTTPException(409, "Pi กำลังทำงานอยู่")
         try:
             httpx.post(f"{BACKEND_URL}/api/heartbeat",
                 json={"session_id": current_session_id},
@@ -266,6 +277,10 @@ async def command(req: CommandRequest):
             _answer_action = None
             _answer_event.clear()
 
+        queue_review.reset(req.session_id)
+        TRAY_CAPACITY = 8 if req.tray_capacity is None else req.tray_capacity
+        log.info("   Tray Capacity: %s", TRAY_CAPACITY)
+        is_running = True
         threading.Thread(
             target=command_flow,
             args=(req.session_id, groups, req.target_count, req.trigger_mode),
@@ -418,6 +433,8 @@ def wait_for_trigger_serial(session_id,piece,target_count):
     """โหมด auto — รอ `<TRIGGER_TMX>` จาก MCU ผ่าน Serial"""
     log.info("   ⏳ รอสัญญาณจาก MCU ... (กด Stop เพื่อยกเลิก)")
     while is_running:
+        if queue_review.interrupt_wait():
+            return False
         try:
             if mega_ser.in_waiting > 0:
                 line = mega_ser.readline().decode("utf-8").strip()
@@ -463,6 +480,8 @@ def wait_for_trigger_web():
         pass
     try:
         while is_running:
+            if queue_review.interrupt_wait():
+                return False
             if _trigger.wait(0.1):
                 return True
         return False
@@ -775,6 +794,14 @@ def wait_for_measurement(session_id, count_before, timeout=MEASURE_TIMEOUT):
     while time.time() < deadline:
         if not is_running: #ถ้า Stop
             return True
+        if queue_review.capture_id:
+            try:
+                if queue_review.saved():
+                    return True
+            except Exception:
+                pass
+            time.sleep(MEASURE_POLL_INTERVAL)
+            continue
         count_after = get_measured_count(session_id) 
         if count_after is not None and count_before is not None and count_after > count_before:
             return True
@@ -932,6 +959,7 @@ def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_righ
     """
     body = {
         "session_id":  session_id,
+        "capture_id": queue_review.capture_id,
         "value_x":     x,
         "value_y":     y,
         "horizon_left":       horizon_left,
@@ -963,7 +991,8 @@ def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_righ
 
     try:
         httpx.patch(f"{BACKEND_URL}/api/measurements/{mid}/image",
-                    json={"image_path": None, "upload_failed": True}, timeout=5)
+                    json={"image_path": None, "upload_failed": True},
+                    params={"capture_id": queue_review.capture_id}, timeout=5)
     except Exception as exc:
         pass
     return True
@@ -1073,7 +1102,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
         # `PW` ย้ายเข้าไปในลูปแล้ว (ดูข้างล่าง) เพราะแต่ละกลุ่มใช้ template คนละตัวได้
         current_tmpl = None      # template ที่โหลดค้างอยู่ใน TM-X ตอนนี้
 
-        for piece in range(1, target_count + 1):
+        for piece in queue_review.pieces(target_count, lambda: is_running):
             if not is_running:
                 log.info("⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
                 break
@@ -1090,7 +1119,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # **ไม่มีทางถามหลังชิ้นสุดท้าย** โดยอัตโนมัติ (ไม่มีรอบถัดไปให้เช็ค)
             # เช่น TRAY_CAPACITY=8 · target=16 → ถามครั้งเดียวก่อนชิ้นที่ 9
             if trigger_mode == "auto":
-                if TRAY_CAPACITY and piece > 1 and (piece - 1) % TRAY_CAPACITY == 0:
+                if not queue_review.job and TRAY_CAPACITY and piece > 1 and (piece - 1) % TRAY_CAPACITY == 0:
                     log.info("\n🧺 วัดครบ %s ชิ้นแล้ว (%s/%s) — ถาดเต็ม",
                             TRAY_CAPACITY, piece - 1, target_count)
                     if ask_tray_clear(session_id, piece - 1, target_count) != "resume":
@@ -1139,12 +1168,15 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             #    manual → ปุ่ม ⚡ บนหน้าเว็บ (หรือ curl /trigger)
             log.info("\nชิ้นที่ %s/%s — รอสัญญาณ trigger ...", piece, target_count)
             if not wait_for_trigger(session_id,piece,target_count):
+                if queue_review.interrupted:
+                    continue
                 log.info("⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
                 break
 
             # อ่านให้ชิดกับ T1 ที่สุด — ช่วงรอสัญญาณข้างบนกินเวลาเป็นนาทีได้
             # ถ้าอ่านก่อนรอ แล้วค่าของชิ้นก่อนที่มาช้าหลุดเข้ามาระหว่างนั้น
             # measured_count จะขยับตั้งแต่ยังไม่ได้ยิง T1 ของชิ้นนี้
+            queue_review.prepare(piece)
             count_before = get_measured_count(session_id)
 
             # ── ② MRS ล้างค่าเก่า แล้วยิง T1 และ GM ────────────────────────────────
@@ -1287,6 +1319,16 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # reason กำลังจะหายไปทั้งก้อน — เทอร์มินัลคือหลักฐานเดียวที่เหลือ
             if stop_reason:
                 log.info("   เหตุผลที่จะหายไป: %s", stop_reason)
+
+
+
+@http_app.get("/queue-review")
+def get_queue_review():
+    state = queue_review.status()
+    if not is_running:
+        state["phase"] = "stopped"
+    return state
+
 
 if __name__ == "__main__":
     # heartbeat ต้องเริ่ม "ก่อน" เปิด server และรันตลอดอายุโปรแกรมใน daemon thread

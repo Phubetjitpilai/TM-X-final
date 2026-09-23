@@ -25,10 +25,11 @@ import mimetypes
 from pathlib import Path
 
 import httpx
+from queue_review import QueueReview
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -42,6 +43,7 @@ DEMO_MODE = "--faults" not in sys.argv
 
 # ── Config ──────────────────────────────────────────────────────────────────
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+queue_review = QueueReview(BACKEND_URL)
 MOCK_IMAGE_DIR = Path(__file__).resolve().parent / "image"
 AGENT_PORT  = int(os.getenv("AGENT_PORT", 9998))
 # ⚠ เดิม hardcode เป็น 5 ไว้เฉยๆ ทั้งที่ .env มี HEARTBEAT_INTERVAL อยู่แล้ว —
@@ -94,7 +96,7 @@ MOCK_FAIL_ROUNDS = int(os.getenv("MOCK_FAIL_ROUNDS", 1))
 # รอคำตอบจากคนได้นานสุดกี่วิ — ต้อง **มากกว่า** ตัวนับถอยหลังในหน้าเว็บ (60 วิ)
 ASK_USER_TIMEOUT    = float(os.getenv("ASK_USER_TIMEOUT", 70))
 # ⚠ ต้องอ่านจากคีย์เดียวกับ Pi — ถ้าตั้งคนละค่ากันจะเทสต์ไม่ตรงกับเครื่องจริง
-TRAY_CAPACITY       = int(os.getenv("TRAY_CAPACITY", 0))
+TRAY_CAPACITY       = 8  # Per-session JSON overrides this; null uses 8, zero disables the check.
 MAX_ASK_USER_ROUNDS = int(os.getenv("MAX_ASK_USER_ROUNDS", 3))
 
 # ── State ───────────────────────────────────────────────────────────────────
@@ -125,7 +127,6 @@ MOCK_WAIT_TRIGGER = os.getenv("MOCK_WAIT_TRIGGER", "0") == "1"
 if DEMO_MODE:
     MOCK_MODE = "default"
     MOCK_WAIT_TRIGGER = False
-    TRAY_CAPACITY = 0
 MEASURE_INTERVAL = max(0.2, MEASURE_INTERVAL)
 HB_INTERVAL = max(0.2, min(HB_INTERVAL, HB_TIMEOUT_HINT / 3))
 
@@ -238,6 +239,7 @@ def upload_random_image(measurement_id):
         with image_path.open("rb") as image_file:
             response = httpx.post(
                 f"{BACKEND_URL}/api/measurements/{measurement_id}/image-upload",
+                params={"capture_id": queue_review.capture_id},
                 files={"file": (image_path.name, image_file,
                                 mimetypes.guess_type(image_path.name)[0] or "application/octet-stream")},
                 timeout=60,
@@ -267,6 +269,7 @@ def post_measurement(session_id, number_alpl, value_x, value_y,
     """
     payload = {
         "session_id":  session_id,
+        "capture_id": queue_review.capture_id,
         "number_alpl": number_alpl,
         "value_x":     value_x,
         "value_y":     value_y,
@@ -525,6 +528,8 @@ def wait_for_trigger_mock(piece, target_count):
         pass
     try:
         while is_running:
+            if queue_review.interrupt_wait():
+                return False
             if _trigger.wait(0.1):
                 return True
         return False
@@ -580,95 +585,112 @@ def measurement_flow(session_id, groups, target_count):
         # ไม่หยุดการทำงาน แต่ต้องเห็นทันที — แปลว่าคิวกับเกณฑ์เหลื่อมกัน
         print(f"⚠ จำนวน ALPL ใน groups ({len(plan)}) ไม่เท่ากับ target_count ({target_count})")
 
-    prev_template = None
-    for piece, (alpl, template_name, limits) in enumerate(plan[:target_count], start=1):
-        if not is_running:
-            print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
-            break
-
-        # ── ถาดเต็มหรือยัง — ต้องตรงกับ Pi ทุกประการ (เงื่อนไข + ตำแหน่ง) ──
-        # เช็คที่หัวลูปเหมือนกัน จึงไม่มีทางถามหลังชิ้นสุดท้ายโดยอัตโนมัติ
-        if TRAY_CAPACITY and piece > 1 and (piece - 1) % TRAY_CAPACITY == 0:
-            print(f"\n🧺 วัดครบ {TRAY_CAPACITY} ชิ้นแล้ว ({piece-1}/{target_count}) — ถาดเต็ม")
-            if ask_tray_clear(session_id, piece - 1, target_count) != "resume":
-                stop_reason = (f"ผู้ใช้หยุดการวัดตอนเคลียร์ถาด "
-                               f"(วัดไปแล้ว {piece-1}/{target_count} ชิ้น)")
+    try:
+        prev_template = None
+        for piece in queue_review.pieces(target_count, lambda: is_running):
+            alpl, template_name, limits = plan[piece - 1]
+            if not is_running:
+                print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
                 break
-            print(f"   ▶ เคลียร์ถาดแล้ว — วัดต่อชิ้นที่ {piece}")
 
-        if template_name != prev_template:
-            print(f"\n🔄 สลับโปรแกรมวัด → PW,1,{template_name}  (Pi จริงยิงคำสั่งนี้ตรงนี้)")
-            prev_template = template_name
+            # ── ถาดเต็มหรือยัง — ต้องตรงกับ Pi ทุกประการ (เงื่อนไข + ตำแหน่ง) ──
+            # เช็คที่หัวลูปเหมือนกัน จึงไม่มีทางถามหลังชิ้นสุดท้ายโดยอัตโนมัติ
+            if _trigger_mode == "auto" and not queue_review.job and TRAY_CAPACITY and piece > 1 and (piece - 1) % TRAY_CAPACITY == 0:
+                print(f"\n🧺 วัดครบ {TRAY_CAPACITY} ชิ้นแล้ว ({piece-1}/{target_count}) — ถาดเต็ม")
+                if ask_tray_clear(session_id, piece - 1, target_count) != "resume":
+                    stop_reason = (f"ผู้ใช้หยุดการวัดตอนเคลียร์ถาด "
+                                   f"(วัดไปแล้ว {piece-1}/{target_count} ชิ้น)")
+                    break
+                print(f"   ▶ เคลียร์ถาดแล้ว — วัดต่อชิ้นที่ {piece}")
 
-        # ── รอสัญญาณทริกเกอร์ ─────────────────────────────────────────────
-        # โหมด manual ต้องรอปุ่ม Trigger เสมอ แม้ DEMO_MODE จะปิด
-        # MOCK_WAIT_TRIGGER ไว้เพื่อให้โหมด auto ของ mock เดินเองได้ก็ตาม
-        # โหมด auto ของ mock จึงยังวัดต่อเองได้เมื่อไม่มี MCU จริง
-        if _trigger_wait_enabled() and not wait_for_trigger_mock(piece, target_count):
-            print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
-            break
+            if template_name != prev_template:
+                print(f"\n🔄 สลับโปรแกรมวัด → PW,1,{template_name}  (Pi จริงยิงคำสั่งนี้ตรงนี้)")
+                prev_template = template_name
 
-        time.sleep(MEASURE_INTERVAL)  # จำลองเวลาที่เครื่องใช้วัด 1 ชิ้น
-
-        # เช็คซ้ำหลังหน่วงเวลา — เผื่อ Stop มาถึงระหว่างที่กำลังวัดชิ้นนี้อยู่
-        if not is_running:
-            print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
-            break
-
-        # ── ② จำลอง T1 ไม่ผ่าน — ของยังอยู่ในเครื่อง ลองใหม่ได้ ───────────
-        if not _mock_stage("t1", "T1_FAILED",
-                           f"TM-X ปฏิเสธคำสั่ง T1 — ER,T1,05 (จำลองจาก MOCK_MODE=t1)",
-                           session_id, piece, target_count):
-            stop_reason = f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ (จำลอง)"
-            break
-
-        # ── ③ จำลอง GM ไม่คืนค่า — TM-X วัดไม่ติด ─────────────────────────
-        if not _mock_stage("gm", "GM_NO_VALUE",
-                           f"รอ 8 วิแล้ว GM ยังไม่คืนค่าใหม่ (จำลองจาก MOCK_MODE=gm)",
-                           session_id, piece, target_count):
-            stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด (จำลอง)"
-            break
-
-        force_ng = piece % 2 == 0 if DEMO_MODE else random.random() < NG_RATE
-        value_x = random_value(limits["x_lo"], limits["x_hi"], force_ng)
-        value_y = random_value(limits["y_lo"], limits["y_hi"], force_ng)
-        offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top = \
-            random_offsets(limits.get("offset_max"), force_ok=DEMO_MODE)
-        verdict = judge(value_x, value_y, offset_opx, offset_opy, limits)
-
-        print(f"\n🔍 ชิ้นที่ {piece}/{target_count} (ALPL {alpl}) — "
-              f"X={value_x}  Y={value_y}  offset=({offset_opx}, {offset_opy})"
-              f"  มุม tr/tl/bl/br=({horizon_left}, {horizon_right}, {vertical_bottom}, {vertical_top})"
-              f"  → Pi ตัดสิน: {verdict}"
-              f"{'  (จงใจให้ NG)' if force_ng else ''}")
-
-        # ── จำลองค่าไม่ถึง DB — **วัดสำเร็จแล้ว** แต่ Recieve ส่งไม่ถึง ─────
-        # ⚠ เคสนี้ไม่มี "ลองใหม่" โดยตั้งใจ — ของถูกวัดและคัดแยกไปแล้ว
-        #   ทางเดียวคือรับค่าที่ถืออยู่ (ไม่มีรูป) หรือหยุด
-        if MOCK_MODE == "recieve" and piece == MOCK_FAIL_PIECE:
-            print("   🚫 (จำลอง) ไม่ POST ค่าเข้า Backend — เหมือน Recieve ส่งไม่ถึง")
-            report("NO_DB_ROW",
-                   f"ชิ้นที่ {piece}/{target_count}: วัดได้แล้วแต่ค่าไม่ถึงฐานข้อมูล "
-                   f"— ตรวจว่า Recieve_tm-x.py รันอยู่ไหม (จำลองจาก MOCK_MODE=recieve)")
-            if ask_user(session_id, piece, target_count) != "accept":
-                print("   ⏹ ผู้ใช้เลือกหยุดการวัด")
-                stop_reason = f"ชิ้นที่ {piece}/{target_count}: ค่าไม่ถึงฐานข้อมูล (จำลอง)"
+            # ── รอสัญญาณทริกเกอร์ ─────────────────────────────────────────────
+            # โหมด manual ต้องรอปุ่ม Trigger เสมอ แม้ DEMO_MODE จะปิด
+            # MOCK_WAIT_TRIGGER ไว้เพื่อให้โหมด auto ของ mock เดินเองได้ก็ตาม
+            # โหมด auto ของ mock จึงยังวัดต่อเองได้เมื่อไม่มี MCU จริง
+            if queue_review.interrupt_wait():
+                continue
+            if _trigger_wait_enabled() and not wait_for_trigger_mock(piece, target_count):
+                if queue_review.interrupted:
+                    continue
+                print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
                 break
-            print("   📥 ผู้ใช้เลือกรับค่าจาก Pi — บันทึกโดยไม่มีรูป")
 
-        d = post_measurement(session_id, alpl, value_x, value_y,
-                             offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top)
-        if not d:
-            stop_reason = f"Mock could not save piece {piece}; check Backend/DB connection"
-            break  # Never advance the simulated queue after an unsuccessful POST.
-        # fault recieve จำลองการรับค่าจาก Pi โดยไม่มีรูปตามเดิม
-        if not (MOCK_MODE == "recieve" and piece == MOCK_FAIL_PIECE):
-            upload_random_image(d["measurement_id"])
-        # ⚠ จุดที่ควรจับตา: ถ้า Pi กับ Backend ตัดสินไม่ตรงกัน แปลว่า `limits`
-        #   ที่ส่งมากับเกณฑ์ที่ backend ใช้ query ตอนบันทึกไม่ใช่ชุดเดียวกัน
-        #   (เคสนี้คือสิ่งที่ _build_groups พยายามกันไว้ — เห็นตรงนี้ถือว่าหลุด)
-        if d and d.get("result") and d["result"] != verdict:
-            print(f"   ⚠⚠ ไม่ตรงกัน! Pi={verdict} แต่ Backend บันทึก {d['result']}")
+            queue_review.prepare(piece)
+            time.sleep(MEASURE_INTERVAL)  # จำลองเวลาที่เครื่องใช้วัด 1 ชิ้น
+
+            # เช็คซ้ำหลังหน่วงเวลา — เผื่อ Stop มาถึงระหว่างที่กำลังวัดชิ้นนี้อยู่
+            if not is_running:
+                print("\n⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
+                break
+
+            # ── ② จำลอง T1 ไม่ผ่าน — ของยังอยู่ในเครื่อง ลองใหม่ได้ ───────────
+            if not _mock_stage("t1", "T1_FAILED",
+                               f"TM-X ปฏิเสธคำสั่ง T1 — ER,T1,05 (จำลองจาก MOCK_MODE=t1)",
+                               session_id, piece, target_count):
+                stop_reason = f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ (จำลอง)"
+                break
+
+            # ── ③ จำลอง GM ไม่คืนค่า — TM-X วัดไม่ติด ─────────────────────────
+            if not _mock_stage("gm", "GM_NO_VALUE",
+                               f"รอ 8 วิแล้ว GM ยังไม่คืนค่าใหม่ (จำลองจาก MOCK_MODE=gm)",
+                               session_id, piece, target_count):
+                stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด (จำลอง)"
+                break
+
+            force_ng = piece % 2 == 0 if DEMO_MODE else random.random() < NG_RATE
+            value_x = random_value(limits["x_lo"], limits["x_hi"], force_ng)
+            value_y = random_value(limits["y_lo"], limits["y_hi"], force_ng)
+            offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top = \
+                random_offsets(limits.get("offset_max"), force_ok=DEMO_MODE)
+            verdict = judge(value_x, value_y, offset_opx, offset_opy, limits)
+
+            print(f"\n🔍 ชิ้นที่ {piece}/{target_count} (ALPL {alpl}) — "
+                  f"X={value_x}  Y={value_y}  offset=({offset_opx}, {offset_opy})"
+                  f"  มุม tr/tl/bl/br=({horizon_left}, {horizon_right}, {vertical_bottom}, {vertical_top})"
+                  f"  → Pi ตัดสิน: {verdict}"
+                  f"{'  (จงใจให้ NG)' if force_ng else ''}")
+
+            # ── จำลองค่าไม่ถึง DB — **วัดสำเร็จแล้ว** แต่ Recieve ส่งไม่ถึง ─────
+            # ⚠ เคสนี้ไม่มี "ลองใหม่" โดยตั้งใจ — ของถูกวัดและคัดแยกไปแล้ว
+            #   ทางเดียวคือรับค่าที่ถืออยู่ (ไม่มีรูป) หรือหยุด
+            if MOCK_MODE == "recieve" and piece == MOCK_FAIL_PIECE:
+                print("   🚫 (จำลอง) ไม่ POST ค่าเข้า Backend — เหมือน Recieve ส่งไม่ถึง")
+                report("NO_DB_ROW",
+                       f"ชิ้นที่ {piece}/{target_count}: วัดได้แล้วแต่ค่าไม่ถึงฐานข้อมูล "
+                       f"— ตรวจว่า Recieve_tm-x.py รันอยู่ไหม (จำลองจาก MOCK_MODE=recieve)")
+                if ask_user(session_id, piece, target_count) != "accept":
+                    print("   ⏹ ผู้ใช้เลือกหยุดการวัด")
+                    stop_reason = f"ชิ้นที่ {piece}/{target_count}: ค่าไม่ถึงฐานข้อมูล (จำลอง)"
+                    break
+                print("   📥 ผู้ใช้เลือกรับค่าจาก Pi — บันทึกโดยไม่มีรูป")
+
+            d = post_measurement(session_id, alpl, value_x, value_y,
+                                 offset_opx, offset_opy, horizon_left, horizon_right, vertical_bottom, vertical_top)
+            if not d:
+                stop_reason = f"Mock could not save piece {piece}; check Backend/DB connection"
+                break  # Never advance the simulated queue after an unsuccessful POST.
+            # fault recieve จำลองการรับค่าจาก Pi โดยไม่มีรูปตามเดิม
+            if not (MOCK_MODE == "recieve" and piece == MOCK_FAIL_PIECE):
+                image_ok = upload_random_image(d["measurement_id"])
+            else:
+                image_ok = False
+            if not image_ok:
+                httpx.patch(f"{BACKEND_URL}/api/measurements/{d['measurement_id']}/image",
+                            params={"capture_id": queue_review.capture_id},
+                            json={"image_path": None, "upload_failed": True}, timeout=10).raise_for_status()
+            # ⚠ จุดที่ควรจับตา: ถ้า Pi กับ Backend ตัดสินไม่ตรงกัน แปลว่า `limits`
+            #   ที่ส่งมากับเกณฑ์ที่ backend ใช้ query ตอนบันทึกไม่ใช่ชุดเดียวกัน
+            #   (เคสนี้คือสิ่งที่ _build_groups พยายามกันไว้ — เห็นตรงนี้ถือว่าหลุด)
+            if d and d.get("result") and d["result"] != verdict:
+                print(f"   ⚠⚠ ไม่ตรงกัน! Pi={verdict} แต่ Backend บันทึก {d['result']}")
+
+    except Exception as exc:
+        stop_reason = f"Mock measurement failed: {exc}"
+        print(stop_reason)
 
     # ⚠ ล้างธงเฉพาะเมื่อเรายังเป็น "เจ้าของ" อยู่จริง — ถ้ามี session ใหม่เริ่มไป
     #   แล้วระหว่างที่เรากำลังเก็บกวาด (เช่นเราค้างอยู่ใน ask_user 90 วิ) การเซ็ต
@@ -731,12 +753,14 @@ class EntryGroup(BaseModel):
 
 
 class CommandRequest(BaseModel):
+    review_job: dict | None = None
     action: str
     session_id: int | None = None
     target_count: int | None = None
     # "manual" = รอปุ่ม Trigger บนเว็บ · "auto" = mock เดินเองเหมือน MCU
     # ค่าเริ่มต้น auto เพื่อรองรับ Backend รุ่นเก่าที่ยังไม่ส่งฟิลด์นี้
     trigger_mode: str = "auto"
+    tray_capacity: int | None = Field(default=None, ge=0, strict=True)
     # groups = แหล่งความจริงเดียวของ "วัดอะไร ด้วยโปรแกรมไหน เกณฑ์เท่าไหร่"
     # (Backend เลิกส่ง template_name/number_alpl ระดับบนสุดแล้ว — ทั้งคู่เป็นของ
     #  กลุ่มแรกซึ่งอยู่ใน groups[0] อยู่ดี ส่งซ้ำจะมีแหล่งความจริง 2 ที่)
@@ -754,7 +778,12 @@ async def command(req: CommandRequest):
       backend ขยับคิวไปแล้วแต่สั่ง Pi ไม่ผ่าน → คิวเหลื่อมถาวร · ที่นี่เคยรองรับ
       อยู่ฝ่ายเดียวจึงเป็นกับดักซ้ำรอย pause พอดี
     """
-    global is_running, _answer_action, _trigger_mode
+    global is_running, _answer_action, _trigger_mode, TRAY_CAPACITY
+
+    if req.action in ("pause_queue", "resume_queue", "remeasure"):
+        if not is_running:
+            raise HTTPException(409, "ไม่มี Session กำลังทำงาน")
+        return queue_review.command(req.action, req.session_id, req.review_job)
 
     if req.action == "start":
         if is_running:
@@ -776,6 +805,9 @@ async def command(req: CommandRequest):
         # ตั้งโหมดก่อนเปิด is_running เพื่อให้ heartbeat รอบแรกส่งค่าถูกต้อง
         # และ Backend เปิดปุ่ม Trigger ได้ทันทีเมื่อผู้ใช้เลือก manual
         _trigger_mode = req.trigger_mode
+        TRAY_CAPACITY = 8 if req.tray_capacity is None else req.tray_capacity
+        print(f"   Tray Capacity: {TRAY_CAPACITY}")
+        queue_review.reset(req.session_id)
         is_running = True
         threading.Thread(
             target=measurement_flow,
@@ -862,6 +894,16 @@ async def trigger():
     _trigger.set()
     print("\n⚡ ได้รับสัญญาณ trigger")
     return {"ok": True}
+
+
+
+
+@http_app.get("/queue-review")
+def get_queue_review():
+    state = queue_review.status()
+    if not is_running:
+        state["phase"] = "stopped"
+    return state
 
 
 if __name__ == "__main__":

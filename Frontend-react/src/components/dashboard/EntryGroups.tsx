@@ -74,7 +74,7 @@ const GROUP_LAYOUT: Record<EntryMode, { cols: number; span: Record<string, numbe
  *  Rework ล็อกแค่ Package Size + Part Number — 2 ตัวนี้กำหนดเกณฑ์ OK/NG กับ
  *         template ของ TM-X ห้ามพิมพ์ผิด ส่วน Vendor/Owner/PO/Description ยังต้อง
  *         แก้ได้ เพราะนั่นคือสิ่งที่ฟอร์ม Rework มีไว้ทำ
- *  New    ไม่ล็อกอะไร — ALPL ต้องยังไม่มีในระบบอยู่แล้ว ไม่มีอะไรให้เติม
+ *  New    ใช้ข้อมูล Part เดิมสำหรับ ALPL ที่ลงทะเบียนไว้แล้ว
  */
 const LOCKED_FIELDS: Record<EntryMode, string[]> = {
   // IPM ล็อก handler ด้วย **เฉพาะตอนที่ ALPL นั้นลงทะเบียนไว้แล้ว** (prefill เติมให้)
@@ -84,7 +84,7 @@ const LOCKED_FIELDS: Record<EntryMode, string[]> = {
   //   `setField` ยังเติมค่าให้เบื้องหลังอยู่ แต่ผู้ใช้ไม่เห็นและแตะไม่ได้ตั้งแต่ต้น
   //   ถ้าใส่ไว้จะเป็นรายการที่ไม่มีผลอะไรเลย แล้วคนอ่านต่อจะเข้าใจผิดว่ามีช่องอยู่
   Rework: ["package_size", "part_number"],
-  New: [],
+  New: ["package_size", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"],
 };
 
 /** field ที่เว้นว่างได้ — นอกจากนี้บังคับกรอกหมด
@@ -179,7 +179,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
    *     "ระบบยืนยันแล้วว่าถูก" ซึ่งอันตรายกว่า)
    */
   async function prefillGroup(gi: number, alplRaw: string) {
-    if (disabled || mode === "New") return;   // New: ALPL ต้องยังไม่มีอยู่แล้ว
+    if (disabled) return;
     const nums = alplRaw
       .split(",").flatMap((p) => {
         const t = p.trim();
@@ -212,6 +212,8 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
       detail = res.detail ?? {};
     } catch { return; }
 
+    if (groupsRef.current[gi]?.number_alpl !== alplRaw) return;
+
     const known = exists.map((a) => detail[String(a)]).filter(Boolean);
     if (!known.length) {
       if (auto.size) {
@@ -236,8 +238,8 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
     const overwritten: string[] = [];
     const nextAuto = new Set(auto);
 
-    for (const f of ["package_size", "part_number", "vendor", "owner", "po_number", "description", "handler"]) {
-      if (!fields.includes(f)) continue;        // โหมดนี้ไม่มีช่องนั้น
+    for (const f of ["package_size", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"]) {
+      if (!fields.includes(f) && f !== "handler") continue;
       const v = agreed(f);
       const wasAuto = auto.has(f);
 
