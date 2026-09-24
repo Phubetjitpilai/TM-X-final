@@ -27,6 +27,11 @@ class CaptureRequest(BaseModel):
     measurement_id: int | None = None
 
 
+class CaptureCancelRequest(BaseModel):
+    session_id: int
+    capture_id: str
+
+
 class SingleReviewStartRequest(BaseModel):
     trigger_mode: Literal["auto", "manual"] | None = None
 
@@ -119,6 +124,22 @@ async def prepare(req: CaptureRequest):
                               "measurement_session_id": measurement_session_id,
                               "single_review": single_review, "saved": False, "image_done": False}
     active[req.session_id] = req.capture_id
+    return {"ok": True}
+
+
+@router.post("/api/review/capture/cancel")
+def cancel_capture(req: CaptureCancelRequest):
+    capture = captures.get(req.capture_id)
+    if not capture or capture["session_id"] != req.session_id:
+        raise HTTPException(409, "ไม่พบรอบวัดที่จะยกเลิก")
+    if capture.get("cancelled"):
+        return {"ok": True}
+    if active.get(req.session_id) != req.capture_id:
+        raise HTTPException(409, "รอบวัดนี้ไม่ใช่รอบปัจจุบัน")
+    if capture.get("saved"):
+        raise HTTPException(409, "ผลวัดถูกบันทึกแล้ว — ยกเลิกรอบนี้ไม่ได้")
+    capture["cancelled"] = True
+    active.pop(req.session_id, None)
     return {"ok": True}
 
 

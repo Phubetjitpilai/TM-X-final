@@ -107,7 +107,7 @@ MEASURE_POLL_INTERVAL = float(os.getenv("MEASURE_POLL_INTERVAL", 0.4))
 SOCKET_TIMEOUT   = float(os.getenv("SOCKET_TIMEOUT", 5))
 # ── GM: ดึงค่าที่วัดได้จาก TM-X โดยตรง ──────────────────────────────────────
 GM_POLL_INTERVAL = 0.02                                  # 20 ms
-GM_MAX_WAIT      = float(os.getenv("GM_MAX_WAIT", 8))    # รอค่าสูงสุดต่อชิ้น
+GM_MAX_WAIT      = float(os.getenv("GM_MAX_WAIT", 2))    # รอค่าสูงสุดต่อชิ้น
 NO_VALUE_ABS     = 9999.0        # |ค่า| >= นี้ = TM-X ยังวัดไม่เสร็จ/วัดไม่ติด
 # T1 ที่โดน ER,...,03 (READY ยังไม่กลับมาหลัง RESET ที่พ่วงมากับ PW) ยิงซ้ำได้
 
@@ -567,7 +567,7 @@ def parse_gm(resp):
 
 def has_real_value(tools):
     """ค่าครบ 8 ตัวและใช้ได้จริงทุกตัวหรือยัง"""
-    return sum(1 for m, _, _ in tools or [] if m is not None and abs(m) < NO_VALUE_ABS) >= 8
+    return sum(1 for m, i, _ in tools or [] if m is not None and abs(m) < NO_VALUE_ABS and i == 1) >= 8
 
 
 def clear_measurement(sock):
@@ -965,6 +965,13 @@ def handle_error(kind, session_id, piece, target_count,detail) -> bool:
         # GM Retry ต้องให้ Mega กลับไปรอ Trigger; T1 Retry ใช้ Trigger เดิม
         if kind == "GM":
             if not send_measure_error_to_mcu(session_id,piece,target_count):
+                return False
+            try:
+                queue_review.cancel_capture()
+            except httpx.HTTPError as exc:
+                report("CAPTURE_CANCEL_FAILED",
+                       f"ชิ้นที่ {piece}/{target_count}: ยกเลิกรอบ GM ที่ล้มเหลวไม่สำเร็จ ({exc})",
+                       show_toast=False)
                 return False
         return True
     return False

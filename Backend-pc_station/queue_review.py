@@ -95,6 +95,14 @@ class QueueReview:
         response.raise_for_status()
         self.capture_id = token
 
+    def cancel_capture(self):
+        if not self.capture_id:
+            return
+        response = httpx.post(f"{self.backend}/api/review/capture/cancel", json={
+            "session_id": self.session_id, "capture_id": self.capture_id}, timeout=10)
+        response.raise_for_status()
+        self.capture_id = None
+
     def saved(self):
         if not self.capture_id:
             return False
