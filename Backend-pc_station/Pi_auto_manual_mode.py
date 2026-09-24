@@ -1,4 +1,6 @@
 import os
+import math
+import re
 import socket
 import threading
 import time
@@ -659,19 +661,53 @@ def judge(x, y, offset_x, offset_y, limits):
             reasons.append(f"offset_y {_f3(offset_y)} เกิน {_f3(limits.offset_max)}")
     return ("NG" if reasons else "OK"), reasons
 
-def clean_tools(tools):
-    if not tools:
+def clean_tools(tools, package_size):
+    """จัด GM เป็น X, Y, ค่าอื่น 4 ตัว, Offset X, Offset Y โดยไม่ใช้ค่าซ้ำ"""
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*",
+                         str(package_size or ""), re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Package Size ไม่อยู่ในรูปแบบ กว้างxสูง: {package_size!r}")
+    nominal_x, nominal_y = map(float, match.groups())
+    candidates = [(index, item) for index, item in enumerate(tools or [])
+                  if item[0] is not None and math.isfinite(item[0])
+                  and abs(item[0]) < NO_VALUE_ABS and item[1] == 1]
+    if len(candidates) < 8:
         return []
-    return [item for item in tools if item[0] is not None and item[0] >= 0]
+
+    # เลือกคู่ X/Y ที่มีความคลาดเคลื่อนรวมจาก Package Size น้อยสุด
+    # โดยบังคับให้เป็นคนละ Tool แม้ขนาดสองแกนจะเท่ากัน เช่น 4x4
+    x_index, y_index = min(
+        ((x[0], y[0]) for x in candidates for y in candidates if x[0] != y[0]),
+        key=lambda pair: (abs(tools[pair[0]][0] - nominal_x)
+                          + abs(tools[pair[1]][0] - nominal_y), pair),
+    )
+    remaining = [(index, item) for index, item in candidates
+                 if index not in (x_index, y_index)]
+    offset_indices = [index for index, _ in sorted(
+        remaining, key=lambda entry: (abs(entry[1][0]), entry[0]))[:2]]
+    middle = [item for index, item in remaining if index not in offset_indices][:4]
+    log.info("GM จัดค่าจาก Package Size %s: X=#%s Y=#%s Offset X=#%s Offset Y=#%s",
+             package_size, x_index + 1, y_index + 1,
+             offset_indices[0] + 1, offset_indices[1] + 1)
+    values = [tools[x_index], tools[y_index], *middle,
+              tools[offset_indices[0]], tools[offset_indices[1]]]
+    positions = [GM_IDX_X, GM_IDX_Y, GM_IDX_HORIZON_LEFT, GM_IDX_HORIZON_RIGHT,
+                 GM_IDX_VERTICAL_TOP, GM_IDX_VERTICAL_BOTTOM,
+                 GM_IDX_OFFSET_X, GM_IDX_OFFSET_Y]
+    tools_new = [None] * (max((index for index in positions if index is not None), default=-1) + 1)
+    for index, item in zip(positions, values):
+        if index is not None:
+            tools_new[index] = item
+    return tools_new
 
             # ── ดึงค่าออกมาตาม index ที่ตั้งไว้ ────────────────────────────
 def _val(idx,tools):
     if idx is None or idx >= len(tools):
         return None
-    return tools[idx][0]
+    return None if tools[idx] is None else tools[idx][0]
             
 
-def get_measurement_tmx(sock, limits, timeout=GM_MAX_WAIT):
+def get_measurement_tmx(sock, limits, package_size, timeout=GM_MAX_WAIT):
     """วน GM จนได้ค่าใหม่ → ตัดสิน OK/NG → พิมพ์ผล
 
     คืน `(result, x, y, offset)` โดย result เป็น "OK" / "NG" / "UNKNOWN"
@@ -697,7 +733,7 @@ def get_measurement_tmx(sock, limits, timeout=GM_MAX_WAIT):
         tools = parse_gm(resp) if ok else None
         log.info(tools)
         if tools and has_real_value(tools):
-            tools_new = clean_tools(tools)
+            tools_new = clean_tools(tools, package_size)
             log.info(tools_new)
         
             x, y, horizon_left, horizon_right, vertical_top, vertical_bottom, offset_x, offset_y = (
@@ -1232,7 +1268,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                     break
                 ok, t1_resp = trigger_tmx(client_socket)
                 if ok:
-                    result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits)
+                    result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits, pkg)
                     if result != "UNKNOWN":
                         break
                 if not ok:
