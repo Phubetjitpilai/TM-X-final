@@ -957,12 +957,12 @@ def ask_for_mcu_connection(session_id: int, piece: int | None = None, target: in
     return "stop"
 
 def handle_error(kind, session_id, piece, target_count,detail) -> bool:
-    global stop_reason
     report(f"{kind}_FAILED",
-           f"ชิ้นที่ {piece}/{target_count} ({detail}", show_toast=False)
+           f"ชิ้นที่ {piece}/{target_count} ({detail})", show_toast=False)
     if not is_running:          # กด Stop จากเว็บระหว่างนี้
         return False
     if ask_user(session_id, piece, target_count) == "retry":
+        # GM Retry ต้องให้ Mega กลับไปรอ Trigger; T1 Retry ใช้ Trigger เดิม
         if kind == "GM":
             if not send_measure_error_to_mcu(session_id,piece,target_count):
                 return False
@@ -1196,25 +1196,33 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
                 break
 
-            # ── ① รอสัญญาณว่าชิ้นงานเข้าที่แล้ว ──────────────────────────
-            #    auto   → <TRIGGER_TMX> จาก MCU ผ่าน Serial
-            #    manual → ปุ่ม ⚡ บนหน้าเว็บ (หรือ curl /trigger)
-            log.info("\nชิ้นที่ %s/%s — รอสัญญาณ trigger ...", piece, target_count)
-            if not wait_for_trigger(session_id,piece,target_count):
-                if queue_review.interrupted:
-                    continue
-                log.info("⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
-                break
-
-            # อ่านให้ชิดกับ T1 ที่สุด — ช่วงรอสัญญาณข้างบนกินเวลาเป็นนาทีได้
-            # ถ้าอ่านก่อนรอ แล้วค่าของชิ้นก่อนที่มาช้าหลุดเข้ามาระหว่างนั้น
-            # measured_count จะขยับตั้งแต่ยังไม่ได้ยิง T1 ของชิ้นนี้
-            queue_review.prepare(piece)
-            count_before = get_measured_count(session_id)
-
-            # ── ② MRS ล้างค่าเก่า แล้วยิง T1 และ GM ────────────────────────────────
+            # ── รอ Trigger รอบแรก/GM Retry; T1 Retry ยิงซ้ำจาก Trigger เดิม ──────
             result = "UNKNOWN"          # ← ① ต้องมี กัน NameError รอบแรก
+            need_trigger = True
             while is_running:
+                if queue_review.interrupt_wait():
+                    log.info("⏸ พักคิวก่อนวัดชิ้นที่ %s — กลับไปให้คิวจัดการ", piece)
+                    break
+                # ── ① รอสัญญาณว่าชิ้นงานเข้าที่แล้ว ──────────────────────────
+                #    auto   → <TRIGGER_TMX> จาก MCU ผ่าน Serial
+                #    manual → ปุ่ม ⚡ บนหน้าเว็บ (หรือ curl /trigger)
+                if need_trigger:
+                    log.info("\nชิ้นที่ %s/%s — รอสัญญาณ trigger ...", piece, target_count)
+                    if not wait_for_trigger(session_id,piece,target_count):
+                        if queue_review.interrupted:
+                            log.info("⏸ พักคิวก่อนวัดชิ้นที่ %s — กลับไปให้คิวจัดการ", piece)
+                        else:
+                            log.info("⏹ ได้รับคำสั่ง Stop — หยุดการวัด")
+                        break
+                    if not is_running or queue_review.interrupt_wait():
+                        break
+
+                    # ผูก capture และอ่านตัวนับหลัง Trigger ของรอบนี้เสมอ
+                    # GM Retry มี Trigger ใหม่ จึงใช้ token/ตัวนับใหม่ด้วย
+                    queue_review.prepare(piece)
+                    count_before = get_measured_count(session_id)
+                if not is_running or queue_review.interrupt_wait():
+                    break
                 ok, t1_resp = trigger_tmx(client_socket)
                 if ok:
                     result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits)
@@ -1225,12 +1233,19 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                     f"TM-X ปฏิเสธคำสั่ง T1 — {t1_resp}"):
                         stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ ({t1_resp})")
                         break
+                    need_trigger = False
                     continue
                 if result == "UNKNOWN":
                     if not handle_error("GM", session_id, piece, target_count,
                         f"รอ {GM_MAX_WAIT:.0f} วิแล้ว GM ไม่คืนค่าใหม่"):
                         stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด"
                         break
+                    need_trigger = True
+
+            # พักคิวต้องคืนการควบคุมให้ queue_review.pieces() เพื่อรอคำสั่ง
+            # วัดซ้ำ/วัดต่อ โดยไม่ตีความ UNKNOWN ว่าเป็นความล้มเหลวของ TM-X
+            if queue_review.interrupted:
+                continue
 
             # ── ③ ยอมแพ้ทั้ง T1 และ GM แล้ว — ออกจากคิวเลย ────────────────
             #
