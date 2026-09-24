@@ -80,6 +80,7 @@ interface Props {
    *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข ALPL แล้วกดตกลงไปโดยไม่รู้ */
   confirmRegister: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
   confirmExisting: (alpls: number[]) => Promise<boolean>;
+  onGroupConflict: (messages: string[]) => Promise<void>;
   /** แจ้งเตือนทั่วไป (toast) — ใช้ตอน autofill เขียนทับค่าที่ผู้ใช้พิมพ์เอง */
   onNotify: (message: string, detail?: string, type?: "warning" | "error") => void;
   /** ถามยืนยันก่อนสลับโหมดตอนฟอร์มมีข้อมูลค้าง — คืน false = ยกเลิก อยู่โหมดเดิม
@@ -122,7 +123,7 @@ function toFormGroups(q: EntryQueue): GroupValues[] {
 export default function PartEntryModal({
   lookupFailed,
   operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, handlerOfPartNumber,
-  onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onNotify, initial,
+  onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onGroupConflict, onNotify, initial,
 }: Props) {
   /* ตั้งค่าเริ่มต้นจาก `initial` ครั้งเดียวตอน mount — พอเพียงเพราะหน้าแม่วาด
      modal นี้แบบ `{peModalOpen && <PartEntryModal .../>}` ทุกครั้งที่เปิดใหม่
@@ -248,7 +249,9 @@ export default function PartEntryModal({
 
     setErrors(errs);
     setOperatorError(opErr);
-    if (opErr || capacityError || Object.keys(errs).length) {
+    // ตรวจเลข ALPL ก่อนเรียก API แต่ปล่อยช่องที่ยังว่างไว้ชั่วคราว เพื่อให้
+    // ข้อความ "ข้อมูลในกลุ่มไม่ตรงกัน" ปรากฏก่อน error กรอกไม่ครบ
+    if (opErr || capacityError || Object.values(errs).some((ge) => !!ge.number_alpl)) {
       focusFirstInvalid();
       return;
     }
@@ -260,9 +263,31 @@ export default function PartEntryModal({
     // New มีอยู่แล้ว → ยืนยันใช้ Part เดิม · Rework ยังไม่มี → ยืนยันลงทะเบียน
     setBusy(true);
     try {
-      const res = await apiPost<{ exists: number[]; missing: number[] }>(
-        "/api/parts/check", { alpl: all },
+      const res = await apiPost<{ exists: number[]; missing: number[]; conflicts: { group: number; message: string }[] }>(
+        "/api/parts/check", {
+          alpl: all,
+          groups: perGroupLists.map((list) => ({ alpl: list })),
+          mode,
+        },
       );
+      if (res.conflicts?.length) {
+        const conflictErrors = { ...errs };
+        for (const conflict of res.conflicts) {
+          conflictErrors[conflict.group] = {
+            ...conflictErrors[conflict.group], number_alpl: "ALPL ในกลุ่มนี้มีข้อมูลไม่ตรงกัน",
+          };
+        }
+        setErrors(conflictErrors);
+        await onGroupConflict(res.conflicts.map((conflict) => conflict.message));
+        setBusy(false);
+        focusFirstInvalid();
+        return;
+      }
+      if (Object.keys(errs).length) {
+        setBusy(false);
+        focusFirstInvalid();
+        return;
+      }
       if (mode === "New" && res.exists.length) {
         if (!await confirmExisting(res.exists)) { setBusy(false); return; }
       }
@@ -407,9 +432,7 @@ export default function PartEntryModal({
                autoRef   ช่องไหนถูกระบบเติมค่าให้แล้วล็อกไว้
                collapsed กลุ่มไหนถูกย่อ
                timers    debounce ของ prefill
-             ถ้าไม่ใส่ ช่องที่ล็อกไว้ตอน IPM จะยังล็อกอยู่ในโหมด New ทั้งที่ค่าว่าง
-             → กรอกไม่ได้ → Save ไม่ผ่าน และไม่มีอะไรมาปลดล็อกให้ด้วย เพราะ
-             prefillGroup ออกตั้งแต่บรรทัดแรกเมื่อ mode === "New" */
+             ถ้าไม่ใส่ สถานะล็อกช่องที่ autofill จากโหมดก่อนอาจค้างข้ามโหมด */
           key={mode}
           mode={mode}
           groups={groups}

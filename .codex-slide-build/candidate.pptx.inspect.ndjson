@@ -1,0 +1,195 @@
+{"kind":"deck","id":"pr/c9930l","name":"Deck"}
+{"kind":"layout","layoutId":"de99c060-f5ad-4a95-a243-e1c09d654207","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"3ca25135-1bed-4b9b-99e6-a9302395f639","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/kauewm","slide":1,"title":"คู่มือการใช้งานเว็บ","textShapes":4}
+{"kind":"shape","id":"sh/g3mx4ba9","slide":1,"bbox":[0,0,18,720]}
+{"kind":"textbox","id":"sh/f2dwv6t4","slide":1,"text":"คู่มือการใช้งานเว็บ","textPreview":"คู่มือการใช้งานเว็บ","textChars":19,"textLines":1,"bbox":[72,180,1080,80]}
+{"kind":"textbox","id":"sh/e14v21sj","slide":1,"text":"TM-X Control System","textPreview":"TM-X Control System","textChars":19,"textLines":1,"bbox":[72,272,1070,70]}
+{"kind":"shape","id":"sh/t0vetwby","slide":1,"bbox":[73,378,175,5]}
+{"kind":"textbox","id":"sh/sfmd0bad","slide":1,"text":"[ ชื่อหน่วยงาน / แผนก ]","textPreview":"[ ชื่อหน่วยงาน / แผนก ]","textChars":23,"textLines":1,"bbox":[72,424,900,46]}
+{"kind":"textbox","id":"sh/redwr6ts","slide":1,"text":"เวอร์ชัน [ระบุ]    วันที่ [ระบุ]","textPreview":"เวอร์ชัน [ระบุ]    วันที่ [ระบุ]","textChars":32,"textLines":1,"bbox":[72,612,900,42]}
+{"kind":"notes","id":"nt/kauewm","slide":1,"text":""}
+{"kind":"slide","id":"sl/doje3u","slide":2,"title":"ภาพรวมการใช้งาน","textShapes":19}
+{"kind":"shape","id":"sh/ih07apcv","slide":2,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/5kbq54b6","slide":2,"text":"ภาพรวมการใช้งาน","textPreview":"ภาพรวมการใช้งาน","textChars":15,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/kj2pczu1","slide":2,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/7mt87utc","slide":2,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/6lk7e9cr","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/tobq94bi","slide":2,"text":"ลำดับงานหลัก","textPreview":"ลำดับงานหลัก","textChars":12,"textLines":1,"bbox":[70,163,430,46]}
+{"kind":"textbox","id":"sh/sn2pgzax","slide":2,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,227,60,44]}
+{"kind":"textbox","id":"sh/nqpovat8","slide":2,"text":"ตรวจสอบความพร้อม","textPreview":"ตรวจสอบความพร้อม","textChars":16,"textLines":1,"bbox":[145,227,390,44]}
+{"kind":"textbox","id":"sh/mpg725cn","slide":2,"text":"สถานะเว็บและ Raspberry Pi","textPreview":"สถานะเว็บและ Raspberry Pi","textChars":25,"textLines":1,"bbox":[585,227,570,44]}
+{"kind":"shape","id":"sh/8nudcfix","slide":2,"bbox":[70,285,1138,1]}
+{"kind":"textbox","id":"sh/9o3ulkzi","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[72,305,60,44]}
+{"kind":"textbox","id":"sh/mlcva50r","slide":2,"text":"เตรียมข้อมูลชิ้นงาน","textPreview":"เตรียมข้อมูลชิ้นงาน","textChars":19,"textLines":1,"bbox":[145,305,390,44]}
+{"kind":"textbox","id":"sh/7mlcjahc","slide":2,"text":"Part Entry และคิวการวัด","textPreview":"Part Entry และคิวการวัด","textChars":23,"textLines":1,"bbox":[585,305,570,44]}
+{"kind":"shape","id":"sh/wrudgfit","slide":2,"bbox":[70,363,1138,1]}
+{"kind":"textbox","id":"sh/hs3upkze","slide":2,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[72,383,60,44]}
+{"kind":"textbox","id":"sh/upcvep0n","slide":2,"text":"เริ่มวัดและดูผล","textPreview":"เริ่มวัดและดูผล","textChars":15,"textLines":1,"bbox":[145,383,390,44]}
+{"kind":"textbox","id":"sh/vqlcnuh8","slide":2,"text":"Session Control และ Live View","textPreview":"Session Control และ Live View","textChars":29,"textLines":1,"bbox":[585,383,570,44]}
+{"kind":"shape","id":"sh/cvat4vip","slide":2,"bbox":[70,441,1138,1]}
+{"kind":"textbox","id":"sh/xwjud0za","slide":2,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[72,461,60,44]}
+{"kind":"textbox","id":"sh/dsbahwby","slide":2,"text":"ตรวจสอบข้อมูลย้อนหลัง","textPreview":"ตรวจสอบข้อมูลย้อนหลัง","textChars":21,"textLines":1,"bbox":[145,461,390,44]}
+{"kind":"textbox","id":"sh/sr298rad","slide":2,"text":"Measurements และรายงาน","textPreview":"Measurements และรายงาน","textChars":22,"textLines":1,"bbox":[585,461,570,44]}
+{"kind":"shape","id":"sh/rqtsfmts","slide":2,"bbox":[70,519,1138,1]}
+{"kind":"textbox","id":"sh/qp0r6hs7","slide":2,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[72,539,60,44]}
+{"kind":"textbox","id":"sh/1gbalwra","slide":2,"text":"แก้ไขและส่งออก","textPreview":"แก้ไขและส่งออก","textChars":14,"textLines":1,"bbox":[145,539,390,44]}
+{"kind":"textbox","id":"sh/0f2tcrap","slide":2,"text":"Edit และ Export","textPreview":"Edit และ Export","textChars":15,"textLines":1,"bbox":[585,539,570,44]}
+{"kind":"notes","id":"nt/doje3u","slide":2,"text":""}
+{"kind":"slide","id":"sl/xtcijx","slide":3,"title":"ก่อนเริ่มใช้งาน","textShapes":11}
+{"kind":"shape","id":"sh/kr6tg7ml","slide":3,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/jqxs7250","slide":3,"text":"ก่อนเริ่มใช้งาน","textPreview":"ก่อนเริ่มใช้งาน","textChars":15,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/ypobex4f","slide":3,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/tgzadcn2","slide":3,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/8fqtk7mh","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"shape","id":"sh/7ehsb25c","slide":3,"bbox":[68,166,665,433]}
+{"kind":"textbox","id":"sh/6t8bih4r","slide":3,"text":"[ วางภาพหน้าจอ: หน้า Home และป้ายสถานะ ]","textPreview":"[ วางภาพหน้าจอ: หน้า Home และป้ายสถานะ ]","textChars":40,"textLines":1,"bbox":[100,348.5,601,68]}
+{"kind":"textbox","id":"sh/hkjuhw3e","slide":3,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[782,174,45,36]}
+{"kind":"textbox","id":"sh/gjqtormt","slide":3,"text":"[ ระบุ URL และวิธีเปิดเว็บ ]","textPreview":"[ ระบุ URL และวิธีเปิดเว็บ ]","textChars":28,"textLines":1,"bbox":[834,173,355,70]}
+{"kind":"textbox","id":"sh/65c7a9sv","slide":3,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[782,278,45,36]}
+{"kind":"textbox","id":"sh/r6lo3e9g","slide":3,"text":"[ ตรวจสอบสถานะ Station และ Raspberry Pi ]","textPreview":"[ ตรวจสอบสถานะ Station และ Raspberry Pi ]","textChars":41,"textLines":1,"bbox":[834,277,355,70]}
+{"kind":"textbox","id":"sh/s7upcja1","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[782,382,45,36]}
+{"kind":"textbox","id":"sh/t83q5orm","slide":3,"text":"[ อธิบายความหมายของสถานะที่พบ ]","textPreview":"[ อธิบายความหมายของสถานะที่พบ ]","textChars":31,"textLines":1,"bbox":[834,381,355,70]}
+{"kind":"textbox","id":"sh/e9w7ets7","slide":3,"text":"[ เพิ่มเงื่อนไขก่อนเริ่มวัด ]","textPreview":"[ เพิ่มเงื่อนไขก่อนเริ่มวัด ]","textChars":29,"textLines":1,"bbox":[782,594,416,53]}
+{"kind":"notes","id":"nt/xtcijx","slide":3,"text":""}
+{"kind":"slide","id":"sl/b2mr8m","slide":4,"title":"เตรียมข้อมูลชิ้นงาน","textShapes":11}
+{"kind":"shape","id":"sh/69gbq5wv","slide":4,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/tcralkfm","slide":4,"text":"เตรียมข้อมูลชิ้นงาน","textPreview":"เตรียมข้อมูลชิ้นงาน","textChars":19,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/sbitsfe1","slide":4,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/j6psvqxk","slide":4,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/i5gbmlwz","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/587ah0fa","slide":4,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[68,174,45,36]}
+{"kind":"textbox","id":"sh/47ytove5","slide":4,"text":"[ เลือก IPM / New / Rework ]","textPreview":"[ เลือก IPM / New / Rework ]","textChars":28,"textLines":1,"bbox":[120,173,355,70]}
+{"kind":"textbox","id":"sh/32tcruxo","slide":4,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[68,278,45,36]}
+{"kind":"textbox","id":"sh/21kbypw3","slide":4,"text":"[ กรอก Operator และข้อมูล ALPL ]","textPreview":"[ กรอก Operator และข้อมูล ALPL ]","textChars":32,"textLines":1,"bbox":[120,277,355,70]}
+{"kind":"textbox","id":"sh/8jy5kve9","slide":4,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[68,382,45,36]}
+{"kind":"textbox","id":"sh/9k76d0fu","slide":4,"text":"[ ตรวจสอบคิว แล้วกด Save ]","textPreview":"[ ตรวจสอบคิว แล้วกด Save ]","textChars":26,"textLines":1,"bbox":[120,381,355,70]}
+{"kind":"textbox","id":"sh/mhgnilw3","slide":4,"text":"[ เพิ่มตัวอย่างข้อมูลที่กรอกถูกต้อง ]","textPreview":"[ เพิ่มตัวอย่างข้อมูลที่กรอกถูกต้อง ]","textChars":37,"textLines":1,"bbox":[68,594,416,53]}
+{"kind":"shape","id":"sh/7ipobqxo","slide":4,"bbox":[520,166,692,433]}
+{"kind":"textbox","id":"sh/kfy5gbed","slide":4,"text":"[ วางภาพหน้าจอ: Part Entry ]","textPreview":"[ วางภาพหน้าจอ: Part Entry ]","textChars":28,"textLines":1,"bbox":[552,348.5,628,68]}
+{"kind":"notes","id":"nt/b2mr8m","slide":4,"text":""}
+{"kind":"slide","id":"sl/oczkai","slide":5,"title":"เริ่มและหยุดการวัด","textShapes":11}
+{"kind":"shape","id":"sh/nal4nu1s","slide":5,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/obulgzid","slide":5,"text":"เริ่มและหยุดการวัด","textPreview":"เริ่มและหยุดการวัด","textChars":18,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/pc3mp4jy","slide":5,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/e5s3ap0b","slide":5,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/f61kju1g","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"shape","id":"sh/07ulczi1","slide":5,"bbox":[68,166,665,433]}
+{"kind":"textbox","id":"sh/1832lkjm","slide":5,"text":"[ วางภาพหน้าจอ: Session Control ]","textPreview":"[ วางภาพหน้าจอ: Session Control ]","textChars":33,"textLines":1,"bbox":[100,348.5,601,68]}
+{"kind":"textbox","id":"sh/qhs3650z","slide":5,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[782,174,45,36]}
+{"kind":"textbox","id":"sh/ri1kfa1k","slide":5,"text":"[ ตรวจสอบข้อมูลคิวก่อนกด Start ]","textPreview":"[ ตรวจสอบข้อมูลคิวก่อนกด Start ]","textChars":32,"textLines":1,"bbox":[834,173,355,70]}
+{"kind":"textbox","id":"sh/zq9oji1w","slide":5,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[782,278,45,36]}
+{"kind":"textbox","id":"sh/yp0nqd0b","slide":5,"text":"[ กด Start และดูสถานะ Running ]","textPreview":"[ กด Start และดูสถานะ Running ]","textChars":31,"textLines":1,"bbox":[834,277,355,70]}
+{"kind":"textbox","id":"sh/lsb6lsj2","slide":5,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[782,382,45,36]}
+{"kind":"textbox","id":"sh/kri5snih","slide":5,"text":"[ กด Stop เมื่อสิ้นสุดงาน ]","textPreview":"[ กด Stop เมื่อสิ้นสุดงาน ]","textChars":27,"textLines":1,"bbox":[834,381,355,70]}
+{"kind":"textbox","id":"sh/7utoni1s","slide":5,"text":"[ ระบุสิ่งที่เกิดขึ้นเมื่อหยุดกลางคัน ]","textPreview":"[ ระบุสิ่งที่เกิดขึ้นเมื่อหยุดกลางคัน ]","textChars":39,"textLines":1,"bbox":[782,594,416,53]}
+{"kind":"notes","id":"nt/oczkai","slide":5,"text":""}
+{"kind":"slide","id":"sl/j9ir75","slide":6,"title":"อ่านผลระหว่างวัด","textShapes":11}
+{"kind":"shape","id":"sh/oradwz2d","slide":6,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/nq1wnu1s","slide":6,"text":"อ่านผลระหว่างวัด","textPreview":"อ่านผลระหว่างวัด","textChars":16,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/mpsvupk7","slide":6,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/xg3et4ju","slide":6,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/wfudkz29","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/bu1wru14","slide":6,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[68,174,45,36]}
+{"kind":"textbox","id":"sh/atsvi9kj","slide":6,"text":"[ อ่านค่า X / Y / Offset ]","textPreview":"[ อ่านค่า X / Y / Offset ]","textChars":26,"textLines":1,"bbox":[120,173,355,70]}
+{"kind":"textbox","id":"sh/lk3exoj6","slide":6,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[68,278,45,36]}
+{"kind":"textbox","id":"sh/kjuxoj2l","slide":6,"text":"[ ดูผล OK / NG และภาพล่าสุด ]","textPreview":"[ ดูผล OK / NG และภาพล่าสุด ]","textChars":29,"textLines":1,"bbox":[120,277,355,70]}
+{"kind":"textbox","id":"sh/25wn2lgv","slide":6,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[68,382,45,36]}
+{"kind":"textbox","id":"sh/3654vqhg","slide":6,"text":"[ ติดตาม Progress ของ Session ]","textPreview":"[ ติดตาม Progress ของ Session ]","textChars":31,"textLines":1,"bbox":[120,381,355,70]}
+{"kind":"textbox","id":"sh/47y54vy1","slide":6,"text":"[ เพิ่มเกณฑ์ตัดสินผลหรือภาพตัวอย่าง ]","textPreview":"[ เพิ่มเกณฑ์ตัดสินผลหรือภาพตัวอย่าง ]","textChars":37,"textLines":1,"bbox":[68,594,416,53]}
+{"kind":"shape","id":"sh/p87mx0zm","slide":6,"bbox":[520,166,692,433]}
+{"kind":"textbox","id":"sh/q9gn65g7","slide":6,"text":"[ วางภาพหน้าจอ: Live Telemetry และ Camera Preview ]","textPreview":"[ วางภาพหน้าจอ: Live Telemetry และ Camera Preview ]","textChars":51,"textLines":1,"bbox":[552,348.5,628,68]}
+{"kind":"notes","id":"nt/j9ir75","slide":6,"text":""}
+{"kind":"slide","id":"sl/8opp5c","slide":7,"title":"ค้นหาและดูผลย้อนหลัง","textShapes":11}
+{"kind":"shape","id":"sh/5k36xwvy","slide":7,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/ihc72hcn","slide":7,"text":"ค้นหาและดูผลย้อนหลัง","textPreview":"ค้นหาและดูผลย้อนหลัง","textChars":20,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/3ilovmd8","slide":7,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/gfup07uh","slide":7,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/hg36tcv2","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"shape","id":"sh/udcnyhcb","slide":7,"bbox":[68,166,665,433]}
+{"kind":"textbox","id":"sh/velormdw","slide":7,"text":"[ วางภาพหน้าจอ: ตาราง Measurements ]","textPreview":"[ วางภาพหน้าจอ: ตาราง Measurements ]","textChars":36,"textLines":1,"bbox":[100,348.5,601,68]}
+{"kind":"textbox","id":"sh/0bepcbul","slide":7,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[782,174,45,36]}
+{"kind":"textbox","id":"sh/1c7q5gv6","slide":7,"text":"[ ค้นหาด้วย ALPL หรือวันที่ ]","textPreview":"[ ค้นหาด้วย ALPL หรือวันที่ ]","textChars":29,"textLines":1,"bbox":[834,173,355,70]}
+{"kind":"textbox","id":"sh/543e1o76","slide":7,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[782,278,45,36]}
+{"kind":"textbox","id":"sh/k3ud8j6l","slide":7,"text":"[ เปิดรายการเพื่อดูรายละเอียด ]","textPreview":"[ เปิดรายการเพื่อดูรายละเอียด ]","textChars":31,"textLines":1,"bbox":[834,277,355,70]}
+{"kind":"textbox","id":"sh/j2lwzep0","slide":7,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[782,382,45,36]}
+{"kind":"textbox","id":"sh/y1sv69of","slide":7,"text":"[ ตรวจสอบข้อมูลและภาพประกอบ ]","textPreview":"[ ตรวจสอบข้อมูลและภาพประกอบ ]","textChars":29,"textLines":1,"bbox":[834,381,355,70]}
+{"kind":"textbox","id":"sh/xgjex47u","slide":7,"text":"[ เพิ่มตัวอย่างการค้นหา ]","textPreview":"[ เพิ่มตัวอย่างการค้นหา ]","textChars":25,"textLines":1,"bbox":[782,594,416,53]}
+{"kind":"notes","id":"nt/8opp5c","slide":7,"text":""}
+{"kind":"slide","id":"sl/jw5slu","slide":8,"title":"แก้ไขข้อมูล","textShapes":11}
+{"kind":"shape","id":"sh/u1c3il0v","slide":8,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/h432d0j6","slide":8,"text":"แก้ไขข้อมูล","textPreview":"แก้ไขข้อมูล","textChars":11,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/g3ulkvil","slide":8,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/365kfa1c","slide":8,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/i5w3m50r","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/58n2h0ji","slide":8,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[68,174,45,36]}
+{"kind":"textbox","id":"sh/47elofix","slide":8,"text":"[ เลือกตาราง Parts / Measurements ]","textPreview":"[ เลือกตาราง Parts / Measurements ]","textChars":35,"textLines":1,"bbox":[120,173,355,70]}
+{"kind":"textbox","id":"sh/ja1k361s","slide":8,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[68,278,45,36]}
+{"kind":"textbox","id":"sh/y9sja10n","slide":8,"text":"[ เพิ่มหรือแก้ไขข้อมูลที่ต้องการ ]","textPreview":"[ เพิ่มหรือแก้ไขข้อมูลที่ต้องการ ]","textChars":34,"textLines":1,"bbox":[120,277,355,70]}
+{"kind":"textbox","id":"sh/kz6h03qx","slide":8,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[68,382,45,36]}
+{"kind":"textbox","id":"sh/l0fy9o7i","slide":8,"text":"[ ตรวจสอบผลหลังบันทึก ]","textPreview":"[ ตรวจสอบผลหลังบันทึก ]","textChars":23,"textLines":1,"bbox":[120,381,355,70]}
+{"kind":"textbox","id":"sh/yxozyt8r","slide":8,"text":"[ ระบุสิทธิ์ผู้แก้ไขและข้อควรระวัง ]","textPreview":"[ ระบุสิทธิ์ผู้แก้ไขและข้อควรระวัง ]","textChars":36,"textLines":1,"bbox":[68,594,416,53]}
+{"kind":"shape","id":"sh/zyxg7ypc","slide":8,"bbox":[520,166,692,433]}
+{"kind":"textbox","id":"sh/8nqh43qt","slide":8,"text":"[ วางภาพหน้าจอ: หน้า Edit ]","textPreview":"[ วางภาพหน้าจอ: หน้า Edit ]","textChars":27,"textLines":1,"bbox":[552,348.5,628,68]}
+{"kind":"notes","id":"nt/jw5slu","slide":8,"text":""}
+{"kind":"slide","id":"sl/lhn0hn","slide":9,"title":"ส่งออกข้อมูล","textShapes":11}
+{"kind":"shape","id":"sh/2ts3290f","slide":9,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/pw32xozq","slide":9,"text":"ส่งออกข้อมูล","textPreview":"ส่งออกข้อมูล","textChars":12,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/4val4ji5","slide":9,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/rilkzehw","slide":9,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/qhc36t0b","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"shape","id":"sh/dk3m1oz2","slide":9,"bbox":[68,166,665,433]}
+{"kind":"textbox","id":"sh/cjulsjih","slide":9,"text":"[ วางภาพหน้าจอ: หน้า Export ]","textPreview":"[ วางภาพหน้าจอ: หน้า Export ]","textChars":29,"textLines":1,"bbox":[100,348.5,601,68]}
+{"kind":"textbox","id":"sh/7mhknuhs","slide":9,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[782,174,45,36]}
+{"kind":"textbox","id":"sh/6l8jup07","slide":9,"text":"[ เลือก CSV / PDF / Excel ]","textPreview":"[ เลือก CSV / PDF / Excel ]","textChars":27,"textLines":1,"bbox":[834,173,355,70]}
+{"kind":"textbox","id":"sh/cbud4n2h","slide":9,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[782,278,45,36]}
+{"kind":"textbox","id":"sh/xc3exsjm","slide":9,"text":"[ เลือก Template และกรองข้อมูล ]","textPreview":"[ เลือก Template และกรองข้อมูล ]","textChars":32,"textLines":1,"bbox":[834,277,355,70]}
+{"kind":"textbox","id":"sh/a9cv2dkb","slide":9,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[782,382,45,36]}
+{"kind":"textbox","id":"sh/balwvi1w","slide":9,"text":"[ ตรวจตัวอย่าง แล้วดาวน์โหลด ]","textPreview":"[ ตรวจตัวอย่าง แล้วดาวน์โหลด ]","textChars":30,"textLines":1,"bbox":[834,381,355,70]}
+{"kind":"textbox","id":"sh/kzud872d","slide":9,"text":"[ เพิ่มชื่อไฟล์และตำแหน่งจัดเก็บ ]","textPreview":"[ เพิ่มชื่อไฟล์และตำแหน่งจัดเก็บ ]","textChars":34,"textLines":1,"bbox":[782,594,416,53]}
+{"kind":"notes","id":"nt/lhn0hn","slide":9,"text":""}
+{"kind":"slide","id":"sl/li4tzi","slide":10,"title":"ปัญหาที่พบบ่อย","textShapes":15}
+{"kind":"shape","id":"sh/o7qdcze1","slide":10,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/n6hwjudw","slide":10,"text":"ปัญหาที่พบบ่อย","textPreview":"ปัญหาที่พบบ่อย","textChars":14,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/m58vapwb","slide":10,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/14zehkvq","slide":10,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/03qd8fe5","slide":10,"text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/zihcfudk","slide":10,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,177,55,43]}
+{"kind":"textbox","id":"sh/ehov6pwz","slide":10,"text":"Raspberry Pi ไม่เชื่อมต่อ","textPreview":"Raspberry Pi ไม่เชื่อมต่อ","textChars":25,"textLines":1,"bbox":[144,177,450,46]}
+{"kind":"textbox","id":"sh/dgfudkve","slide":10,"text":"[ วิธีตรวจสอบและติดต่อผู้ดูแล ]","textPreview":"[ วิธีตรวจสอบและติดต่อผู้ดูแล ]","textChars":31,"textLines":1,"bbox":[604,177,570,64]}
+{"kind":"shape","id":"sh/cf6d4fe9","slide":10,"bbox":[70,261,1137,1]}
+{"kind":"textbox","id":"sh/qd8nulkb","slide":10,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[72,288,55,43]}
+{"kind":"textbox","id":"sh/rehonqlg","slide":10,"text":"กด Start ไม่ได้","textPreview":"กด Start ไม่ได้","textChars":15,"textLines":1,"bbox":[144,288,450,46]}
+{"kind":"textbox","id":"sh/sfq5wv21","slide":10,"text":"[ ตรวจสอบข้อมูลคิวและสถานะระบบ ]","textPreview":"[ ตรวจสอบข้อมูลคิวและสถานะระบบ ]","textChars":32,"textLines":1,"bbox":[604,288,570,64]}
+{"kind":"shape","id":"sh/dgz6p03m","slide":10,"bbox":[70,372,1137,1]}
+{"kind":"textbox","id":"sh/i9onq1kz","slide":10,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[72,399,55,43]}
+{"kind":"textbox","id":"sh/3ahoj6lk","slide":10,"text":"ไม่มีภาพหรือผลวัด","textPreview":"ไม่มีภาพหรือผลวัด","textChars":17,"textLines":1,"bbox":[144,399,450,46]}
+{"kind":"textbox","id":"sh/4bq5sb25","slide":10,"text":"[ วิธีตรวจสอบเครื่องวัดและการรับข้อมูล ]","textPreview":"[ วิธีตรวจสอบเครื่องวัดและการรับข้อมูล ]","textChars":40,"textLines":1,"bbox":[604,399,570,64]}
+{"kind":"shape","id":"sh/5cz6lg3q","slide":10,"bbox":[70,483,1137,1]}
+{"kind":"textbox","id":"sh/u5onm143","slide":10,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[72,510,55,43]}
+{"kind":"textbox","id":"sh/v6x4f6lo","slide":10,"text":"Export แล้วไม่มีข้อมูล","textPreview":"Export แล้วไม่มีข้อมูล","textChars":22,"textLines":1,"bbox":[144,510,450,46]}
+{"kind":"textbox","id":"sh/jqtkn21g","slide":10,"text":"[ ตรวจสอบตัวกรองและช่วงวันที่ ]","textPreview":"[ ตรวจสอบตัวกรองและช่วงวันที่ ]","textChars":31,"textLines":1,"bbox":[604,510,570,64]}
+{"kind":"notes","id":"nt/li4tzi","slide":10,"text":""}
+{"kind":"slide","id":"sl/fa0j43","slide":11,"title":"คำศัพท์และผู้ติดต่อ","textShapes":15}
+{"kind":"shape","id":"sh/ojix4fud","slide":11,"bbox":[0,0,1280,13]}
+{"kind":"textbox","id":"sh/ni9gvads","slide":11,"text":"คำศัพท์และผู้ติดต่อ","textPreview":"คำศัพท์และผู้ติดต่อ","textChars":19,"textLines":1,"bbox":[68,47,1120,60]}
+{"kind":"shape","id":"sh/2h0f25c7","slide":11,"bbox":[68,123,1144,2]}
+{"kind":"textbox","id":"sh/1gryt0vm","slide":11,"text":"TM-X CONTROL SYSTEM","textPreview":"TM-X CONTROL SYSTEM","textChars":19,"textLines":1,"bbox":[68,669,420,28]}
+{"kind":"textbox","id":"sh/0fyx0vu1","slide":11,"text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1150,664,60,34]}
+{"kind":"textbox","id":"sh/fepgrqdg","slide":11,"text":"คำศัพท์ที่ใช้ในระบบ","textPreview":"คำศัพท์ที่ใช้ในระบบ","textChars":19,"textLines":1,"bbox":[70,170,460,50]}
+{"kind":"textbox","id":"sh/edgfylcb","slide":11,"text":"ALPL","textPreview":"ALPL","textChars":4,"textLines":1,"bbox":[72,235,220,47]}
+{"kind":"textbox","id":"sh/dc7ypgvq","slide":11,"text":"[ ความหมาย ]","textPreview":"[ ความหมาย ]","textChars":12,"textLines":1,"bbox":[295,235,350,47]}
+{"kind":"shape","id":"sh/sbyxwvu5","slide":11,"bbox":[70,296,575,1]}
+{"kind":"textbox","id":"sh/2lknal4n","slide":11,"text":"Session","textPreview":"Session","textChars":7,"textLines":1,"bbox":[72,317,220,47]}
+{"kind":"textbox","id":"sh/3mtojq58","slide":11,"text":"[ ความหมาย ]","textPreview":"[ ความหมาย ]","textChars":12,"textLines":1,"bbox":[295,317,350,47]}
+{"kind":"shape","id":"sh/on25cvmt","slide":11,"bbox":[70,378,575,1]}
+{"kind":"textbox","id":"sh/pob6l0ne","slide":11,"text":"Tolerance","textPreview":"Tolerance","textChars":9,"textLines":1,"bbox":[72,399,220,47]}
+{"kind":"textbox","id":"sh/eh0n6l4r","slide":11,"text":"[ ความหมาย ]","textPreview":"[ ความหมาย ]","textChars":12,"textLines":1,"bbox":[295,399,350,47]}
+{"kind":"shape","id":"sh/fitofq5c","slide":11,"bbox":[70,460,575,1]}
+{"kind":"textbox","id":"sh/gj258vmx","slide":11,"text":"OK / NG","textPreview":"OK / NG","textChars":7,"textLines":1,"bbox":[72,481,220,47]}
+{"kind":"textbox","id":"sh/1kb6hgni","slide":11,"text":"[ ความหมาย ]","textPreview":"[ ความหมาย ]","textChars":12,"textLines":1,"bbox":[295,481,350,47]}
+{"kind":"shape","id":"sh/6t0n214f","slide":11,"bbox":[680,167,2,430]}
+{"kind":"textbox","id":"sh/ru9ob650","slide":11,"text":"ผู้ดูแลระบบ","textPreview":"ผู้ดูแลระบบ","textChars":11,"textLines":1,"bbox":[733,170,425,50]}
+{"kind":"textbox","id":"sh/vy5kj2ls","slide":11,"text":"ชื่อ: [ ระบุ ]\nแผนก: [ ระบุ ]\nโทรศัพท์ / อีเมล: [ ระบุ ]","textPreview":"ชื่อ: [ ระบุ ] | แผนก: [ ระบุ ] | โทรศัพท์ / อีเมล: [ ระบุ ]","textChars":56,"textLines":3,"bbox":[733,243,427,240]}
+{"kind":"textbox","id":"sh/axw3axk7","slide":11,"text":"เอกสารอ้างอิง: [ ระบุ ]","textPreview":"เอกสารอ้างอิง: [ ระบุ ]","textChars":23,"textLines":1,"bbox":[733,520,420,50]}
+{"kind":"notes","id":"nt/fa0j43","slide":11,"text":""}

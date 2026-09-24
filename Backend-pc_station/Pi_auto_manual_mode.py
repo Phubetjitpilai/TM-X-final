@@ -771,7 +771,7 @@ def send_package_size_to_mcu(package_size, session_id,piece,target_count) -> boo
         return True
     while is_running:
         try:
-            ack_msg = f"<PKG:{package_size}>\n"
+            ack_msg = f"<PKG:{package_size}:{number_alpl}>\n"
             mega_ser.write(ack_msg.encode("utf-8"))
             log.info(f"   [TX → Mega] {ack_msg.strip()}")
             return True
@@ -1156,8 +1156,10 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # (ไฟตก / USB re-enumerate) มันจะลืม <PKG> ของกลุ่มที่บอกไปแล้ว
             # แล้วตั้งฟิกซ์เจอร์ผิดขนาดต่อไปเงียบ ๆ จนจบกลุ่ม — ส่งซ้ำทุกชิ้น
             # ราคาถูกกว่ามาก (ข้อความเดียวต่อชิ้น) และกู้ตัวเองได้
+            alpl_queue = [alpl for group in groups for alpl in group.alpl]
+            number_alpl = alpl_queue[piece - 1]
             pkg = groups[group_of[piece - 1]].package_size
-            if not send_package_size_to_mcu(pkg, session_id,piece,target_count):
+            if not send_package_size_to_mcu(pkg,number_alpl, session_id,piece,target_count):
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: "
                                f"บอกขนาดชิ้นงาน ({pkg}) ให้ MCU ไม่สำเร็จ "
                                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")

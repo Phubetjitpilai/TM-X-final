@@ -256,7 +256,8 @@ def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str, *, p
         #   Pi คัดของตามเกณฑ์ของกลุ่ม · backend บันทึกตามเกณฑ์รายตัว
         # ไม่มีใครรู้จนกว่าจะไปนับของจริง — เปลี่ยนเป็นข้อความตอนกด Start แทน
         #
-        # New: ยังไม่มีแถว Part เลย (validate แล้ว) ไม่มีอะไรให้ชน
+        # New: อาจมี Part เดิมแล้ว จึงต้องตรวจว่าเกณฑ์ที่กรอกตรงกับของเดิม
+        #      แม้ create_measurement จะเติม field ที่ว่างให้ แต่ไม่ทับเกณฑ์เดิม
         # Rework: `_update_part_row` จะเขียนทับ config เดิมด้วยค่าจากฟอร์มอยู่แล้ว
         #         "ไม่ตรง" คือเจตนาของผู้ใช้ ไม่ใช่ความผิดพลาด
         if entry_mode == "IPM" or preserve_part:

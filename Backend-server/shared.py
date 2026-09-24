@@ -1174,8 +1174,14 @@ class PartsCheckRequest(BaseModel):
 
 _GROUP_MATCH_FIELDS = {
     "IPM":    [("package_size", "Package Size")],
-    "Rework": [("package_size", "Package Size"), ("part_number", "Part Number")],
-    "New":    [],
+    "Rework": [("package_size", "Package Size"), ("part_number", "Part Number"),
+               ("handler", "Handler"), ("vendor", "Vendor"), ("owner", "Owner"),
+               ("po_number", "PO Number"), ("description", "Description"),
+               ("receive_date", "Receive Date")],
+    "New":    [("package_size", "Package Size"), ("part_number", "Part Number"),
+               ("handler", "Handler"), ("vendor", "Vendor"), ("owner", "Owner"),
+               ("po_number", "PO Number"), ("description", "Description"),
+               ("receive_date", "Receive Date")],
 }
 
 def _insert_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:

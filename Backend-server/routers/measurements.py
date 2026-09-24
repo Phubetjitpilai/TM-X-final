@@ -119,6 +119,32 @@ def _update_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:
     )
 
 
+def _fill_missing_part_fields(cur, number_alpl: int, config: Dict[str, Any]) -> None:
+    """New: เติมข้อมูลที่ Part เดิมยังไม่มี โดยรักษาค่าที่ลงทะเบียนไว้แล้ว"""
+    part_number_id = _lookup_id(cur, "part_number", "part_number_id", "part_number_name", config.get("part_number"))
+    vendor_id = _lookup_id(cur, "vendor", "vendor_id", "vendor_name", config.get("vendor"))
+    owner_id = _lookup_id(cur, "owner", "owner_id", "owner_name", config.get("owner"))
+    package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", config.get("package_size"))
+    handler_id = _lookup_id(cur, "handler", "handler_id", "handler_name", config.get("handler"))
+    cur.execute(
+        "UPDATE parts_specifications SET "
+        "part_number_id = COALESCE(part_number_id, %s), "
+        "package_size_id = COALESCE(package_size_id, %s), "
+        "handler_id = COALESCE(handler_id, %s), "
+        "description = COALESCE(NULLIF(description, ''), %s), "
+        "vendor_id = COALESCE(vendor_id, %s), "
+        "po_number = COALESCE(po_number, %s), "
+        "owner_id = COALESCE(owner_id, %s), "
+        "recieve_date = COALESCE(recieve_date, %s) "
+        "WHERE number_alpl = %s",
+        (
+            part_number_id, package_size_id, handler_id,
+            config.get("description"), vendor_id, config.get("po_number"),
+            owner_id, config.get("recieve_date") or None, number_alpl,
+        ),
+    )
+
+
 # ระยะที่ถือว่า "สองมุมเท่ากัน" — ต่างกันน้อยกว่านี้ = เสมอ
 #
 # ⚠⚠ **ห้ามเทียบ `tr == tl` ตรง ๆ เด็ดขาด** แม้ TM-X จะส่งมาเป็นทศนิยม 3 ตำแหน่ง
@@ -296,6 +322,8 @@ async def create_measurement(req: MeasurementCreate):
                         _insert_part_row(cur, number_alpl, group_cfg)
                     elif qstate.get("measure_mode") == "Rework":
                         _update_part_row(cur, number_alpl, group_cfg)
+                    elif qstate.get("measure_mode") == "New":
+                        _fill_missing_part_fields(cur, number_alpl, group_cfg)
                 except pymysql.MySQLError as exc:
                     raise HTTPException(409, f"บันทึก Part ALPL {number_alpl} ไม่สำเร็จ: {exc}")
 

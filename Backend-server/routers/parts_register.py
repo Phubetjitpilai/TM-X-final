@@ -46,7 +46,7 @@ def check_parts(body: PartsCheckRequest):
 
     ╔═══ `conflicts` — ALPL ในกลุ่มเดียวกันต้องเข้าชุดกัน ═════════════════════╗
     ถ้าส่ง `groups` + `mode` มาด้วย จะตรวจเพิ่มว่า ALPL ที่ผู้ใช้จับใส่กลุ่ม
-    เดียวกัน มี Package Size (และ Part Number ถ้าเป็น Rework) ตรงกันจริงไหม
+    เดียวกัน มี Package Size ตรงกันไหม (New/Rework ตรวจข้อมูล Part ช่องอื่นด้วย)
 
     ทำไมสำคัญ: 1 กลุ่ม = ชิ้นงานที่ใช้ **config ชุดเดียวกัน** ถ้าในกลุ่มเดียวกัน
     มี ALPL ที่ผูก Package Size คนละอัน แปลว่าเกณฑ์ตัดสิน OK/NG ของแต่ละชิ้น
@@ -55,8 +55,8 @@ def check_parts(body: PartsCheckRequest):
     ของจริง (เป็นอาการเดียวกับที่ `_build_groups` กันไว้ตอนกด Start — ที่นี่แค่
     ดักให้เร็วขึ้นตั้งแต่ตอนกด Save จะได้แก้ก่อนที่จะเดินไปไกลกว่านั้น)
 
-    ตรวจเฉพาะ ALPL ที่ **มีอยู่จริงใน DB** — ตัวที่ยังไม่ลงทะเบียนไม่มีอะไรให้
-    เทียบ และจะถูกสร้างด้วย config ของกลุ่มอยู่แล้วตอนวัดจริง
+    ตรวจเฉพาะค่าที่มีอยู่ของ ALPL ที่ **มีอยู่จริงใน DB** — ช่องว่างกับตัวที่ยัง
+    ไม่ลงทะเบียนจะรับค่าจาก config ของกลุ่มเมื่อวัดสำเร็จ
     ╚═══════════════════════════════════════════════════════════════════════╝
 
     ⚠ **ห้ามใส่ `_block_if_session_running()`** — เป็นการอ่านอย่างเดียว และต้อง
@@ -142,7 +142,9 @@ def check_parts(body: PartsCheckRequest):
                 if a not in found:
                     continue                      # ยังไม่ลงทะเบียน — ไม่มีอะไรให้เทียบ
                 v = detail[str(a)].get(field)
-                by_value.setdefault("—" if v is None else str(v), []).append(a)
+                if v is None or str(v).strip() == "":
+                    continue                      # ช่องว่างจะเติมจากข้อมูลที่มีอยู่ตอนวัดสำเร็จ
+                by_value.setdefault(str(v), []).append(a)
 
             if len(by_value) > 1:
                 parts = " · ".join(

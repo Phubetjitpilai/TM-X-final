@@ -224,15 +224,14 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
       return;
     }
 
-    /** ค่าของ field นี้ตรงกันทุกตัวที่ลงทะเบียนแล้วไหม — ไม่ตรงคืน null
-     *  ALPL ที่ยังไม่ลงทะเบียนไม่นับ (จะถูกสร้างด้วย config ของกลุ่มนี้อยู่แล้ว) */
+    /** ใช้ค่าที่มีอยู่แล้วในกลุ่ม; ช่องว่างและ ALPL ที่ยังไม่ลงทะเบียน
+     *  จะได้รับค่านี้เมื่อวัดสำเร็จ ถ้าค่าที่มีอยู่ขัดกันจะไม่เดาค่าให้ */
     const agreed = (f: string): string | null => {
-      const vals = new Set(known.map((d) => (d[f] == null ? null : String(d[f]))));
+      const vals = new Set(known.map((d) => String(d[f] ?? "").trim()).filter(Boolean));
       return vals.size === 1 ? [...vals][0] : null;
     };
 
     const fields = GROUP_FIELDS[mode];
-    const lockable = LOCKED_FIELDS[mode];
     const g = groupsRef.current[gi] ?? {};
     const patch: Record<string, string> = {};
     const overwritten: string[] = [];
@@ -258,7 +257,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
       // ตอนนี้ยึด "ข้อมูลที่ลงทะเบียนไว้เป็นความจริงเสมอ" กรอกลำดับไหนผลก็เท่ากัน
       if (!wasAuto && (g[f] ?? "") && String(g[f]) !== v) overwritten.push(`${f} ${g[f]} → ${v}`);
       patch[f] = v;
-      if (lockable.includes(f)) nextAuto.add(f);
+      nextAuto.add(f);
     }
 
     autoRef.current[gi] = nextAuto;
@@ -296,8 +295,12 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
    *    part ตัวเก่าไว้ทั้งที่ผู้ใช้เปลี่ยนไปแล้ว — เป็นค่าที่ผิดแบบเงียบสนิท
    */
   const setField = (gi: number, key: string, v: string) => {
+    // Rework แก้ช่องที่ autofill ได้: เมื่อผู้ใช้แก้เอง อย่าล้างค่าที่แก้ตอน
+    // prefill รอบถัดไปเพียงเพราะค่าของ Part เดิมว่าง
+    autoRef.current[gi]?.delete(key);
     const patch: Record<string, string> = { [key]: v };
     if (key === "part_number" && mode !== "IPM") {
+      autoRef.current[gi]?.delete("handler");
       // ⚠ `handler` ไม่ได้อยู่ใน GROUP_FIELDS ของ New/Rework — จงใจไม่วาดช่อง
       //   แต่ค่ายังต้องติดไปกับกลุ่มเพื่อส่งให้ backend (handleSave ส่ง `{...g}`
       //   ทั้งก้อน ไม่ได้กรองตาม GROUP_FIELDS) **ห้ามลบบล็อกนี้ตามช่องที่หายไป**
@@ -388,7 +391,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                   const span = layout.span[f];
                   const val = g[f] ?? "";
                   // ช่องที่ระบบเติมให้จากข้อมูลที่ลงทะเบียนไว้ — ล็อกไม่ให้แก้ที่นี่
-                  const locked = !!autoRef.current[gi]?.has(f);
+                  const locked = !!autoRef.current[gi]?.has(f) && LOCKED_FIELDS[mode].includes(f);
                   return (
                     <div
                       key={f}

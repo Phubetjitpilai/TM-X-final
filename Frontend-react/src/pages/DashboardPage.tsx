@@ -2469,6 +2469,12 @@ export default function DashboardPage() {
             </>,
             { title: "มี ALPL ที่ลงทะเบียนแล้ว", okLabel: "วัดต่อ" },
           )}
+          onGroupConflict={(messages) => dialog.alert(
+            <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ข้อมูล ALPL ในกลุ่มที่ไม่ตรงกัน">
+              {messages.map((message, i) => <div key={i}>• {message}</div>)}
+            </div>,
+            { title: "ข้อมูลชิ้นงานในกลุ่มไม่ตรงกัน", okLabel: "รับทราบ" },
+          )}
           onSave={(q) => {
             setEntryQueue(q);
             entryQueueRef.current = q;
