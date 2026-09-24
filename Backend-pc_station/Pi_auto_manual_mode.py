@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__),  ".env"))
 TMX_IP = os.getenv("TMX_HOST", "192.168.10.11")
 TMX_PORT = int(os.getenv("TMX_PORT", 8600))
 BUFFER_SIZE = 1024
@@ -763,7 +763,7 @@ def send_result_to_mcu(result,session_id,piece,target_count) -> bool:
                     break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
     return False
 
-def send_package_size_to_mcu(package_size, session_id,piece,target_count) -> bool:
+def send_package_size_to_mcu(package_size,number_alpl, session_id,piece,target_count) -> bool:
     global mega_ser              # ⚠ เหตุผลเดียวกับ send_result_to_mcu ข้างบน
 
     if _trigger_mode != "auto":
@@ -787,6 +787,31 @@ def send_package_size_to_mcu(package_size, session_id,piece,target_count) -> boo
                 if open_mega():
                     break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
     return False
+
+def send_measure_error_to_mcu( session_id,piece,target_count):
+    global mega_ser              # ⚠ เหตุผลเดียวกับ send_result_to_mcu ข้างบน
+    if _trigger_mode != "auto":
+        log.info("   🔀 (manual) ไม่้องบอก Error ให้ MCU")
+        return True
+    while is_running:
+        try:
+            ack_msg = f"<MEASURE_ERROR>\n"
+            mega_ser.write(ack_msg.encode("utf-8"))
+            log.info(f"   [TX → Mega] {ack_msg.strip()}")
+            return True
+        except Exception as exc:
+            log.error("   ❌ ส่ง MEASURE_ERROR ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+            report("MCU_WRITE_FAILED",
+               f"ส่งค่า MEASURE ให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
+               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่", show_toast=False)
+            _drop_mega("ส่งขนาดชิ้นงาน")
+            while is_running:
+                if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
+                    return False
+                if open_mega():
+                    break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
+    return False
+
 
 def wait_for_measurement(session_id, count_before, timeout=MEASURE_TIMEOUT):
 
@@ -931,12 +956,18 @@ def ask_for_mcu_connection(session_id: int, piece: int | None = None, target: in
     log.info("   ⏹ ได้รับคำสั่ง Stop ระหว่างรอดารเชื่อมต่อจาก MCU")
     return "stop"
 
-def handle_error(kind, session_id, piece, target,detail) -> bool:
+def handle_error(kind, session_id, piece, target_count,detail) -> bool:
+    global stop_reason
     report(f"{kind}_FAILED",
-           f"ชิ้นที่ {piece}/{target} ({detail}", show_toast=False)
+           f"ชิ้นที่ {piece}/{target_count} ({detail}", show_toast=False)
     if not is_running:          # กด Stop จากเว็บระหว่างนี้
         return False
-    return ask_user(session_id, piece, target) == "retry"
+    if ask_user(session_id, piece, target_count) == "retry":
+        if kind == "GM":
+            if not send_measure_error_to_mcu(session_id,piece,target_count):
+                return False
+        return True
+    return False
 
 def post_measurement_from_pi(session_id, piece, x, y, horizon_left, horizon_right, vertical_top, vertical_bottom,
                              offset_x, offset_y) -> bool:
@@ -1195,7 +1226,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                         stop_reason = (f"ชิ้นที่ {piece}/{target_count}: ยิง T1 ไม่สำเร็จ ({t1_resp})")
                         break
                     continue
-                if result == "UNKNOWN":               
+                if result == "UNKNOWN":
                     if not handle_error("GM", session_id, piece, target_count,
                         f"รอ {GM_MAX_WAIT:.0f} วิแล้ว GM ไม่คืนค่าใหม่"):
                         stop_reason = f"ชิ้นที่ {piece}/{target_count}: TM-X วัดไม่ติด"
@@ -1372,4 +1403,4 @@ if __name__ == "__main__":
               f"— แก้ที่ .env\n")
 
     # port ต้องตรงกับ AGENT_PORT ที่ main.py ใช้ยิงมา
-    uvicorn.run(http_app, host="0.0.0.0", port=AGENT_PORT)
+    uvicorn.run(http_app, host="0.0.0.0", port=AGENT_PORT,access_log =False)
