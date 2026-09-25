@@ -29,6 +29,7 @@ interface TrashResponse {
 }
 
 interface TrashCardProps {
+  readOnly?: boolean;
   /** เพิ่มค่านี้ทีละ 1 เพื่อสั่งให้โหลดถังขยะใหม่ — ใช้ตอนหน้าแม่เพิ่งลบอะไรไป
    *
    *  ทำไมต้องมี: EditPage จัดการ state ของตัวเองด้วย useState ไม่ได้ใช้ TanStack
@@ -67,7 +68,7 @@ export function useTrash(reloadKey = 0) {
  *  วางไว้ท้ายสุดของหน้า Edit โดยตั้งใจ (ตามต้นฉบับ) — เป็นหน้าเดียวกับที่ผู้ใช้
  *  กดลบ เผลอลบแล้วเลื่อนลงมากู้ได้ทันที ไม่ต้องจำว่าต้องไปหน้าไหน
  */
-export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: TrashCardProps) {
+export default function TrashCard({ readOnly = false, reloadKey = 0, onRestored, onPurged }: TrashCardProps) {
   const { data, isLoading, refetch } = useTrash(reloadKey);
   const qc = useQueryClient();
   const toast = useToast();
@@ -151,8 +152,8 @@ export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: Trash
                     <button
                       type="button"
                       className="btn-restore"
-                      disabled={restore.isPending}
-                      onClick={() => restore.mutate(it.id)}
+                      disabled={readOnly || restore.isPending}
+                      onClick={() => { if (!readOnly) restore.mutate(it.id); }}
                     >
                       ↩ Restore
                     </button>
@@ -160,7 +161,7 @@ export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: Trash
                       type="button"
                       className="btn-purge"
                       title="ลบถาวร กู้คืนไม่ได้อีก"
-                      disabled={purge.isPending}
+                      disabled={readOnly || purge.isPending}
                       onClick={() => setConfirmPurge(it)}
                     >
                       🗑 Delete
@@ -194,7 +195,7 @@ export default function TrashCard({ reloadKey = 0, onRestored, onPurged }: Trash
           }`}
           confirmLabel="ลบถาวร"
           danger
-          onConfirm={() => { purge.mutate(confirmPurge.id); setConfirmPurge(null); }}
+          onConfirm={() => { if (!readOnly) purge.mutate(confirmPurge.id); setConfirmPurge(null); }}
           onCancel={() => setConfirmPurge(null)}
         />
       )}

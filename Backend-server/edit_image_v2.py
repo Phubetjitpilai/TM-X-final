@@ -66,6 +66,57 @@ def draw_label(img_out, text, pt, color=(255, 255, 255)):
     cv2.putText(img_out, text, (tx, ty), font, scale, color, thick, cv2.LINE_AA)
 
 
+def detect_features(img):
+    """คืน threshold, contours, hierarchy และตำแหน่งรูจากภาพที่ crop แล้ว"""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    width = gray.shape[1]
+    r_min, r_max = width * 0.010, width * 0.075
+
+    _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    contours, hierarchy = cv2.findContours(
+        thresh, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
+    )
+
+    detected_holes = []
+    if hierarchy is not None:
+        for i, cnt in enumerate(contours):
+            if hierarchy[0][i][3] == -1:
+                continue
+            area = cv2.contourArea(cnt)
+            perimeter = cv2.arcLength(cnt, True)
+            if perimeter <= 0:
+                continue
+            circularity = 4 * np.pi * area / (perimeter * perimeter)
+            (x, y), radius = cv2.minEnclosingCircle(cnt)
+            if circularity > 0.65 and r_min < radius < r_max:
+                detected_holes.append((x, y, radius))
+
+    return thresh, contours, hierarchy, detected_holes
+
+
+def has_three_holes_in_each_horizontal_row(holes):
+    """6 รูเป็นสองแถว แถวละ 3 รูและอยู่ในแนวคอลัมน์เดียวกัน"""
+    if len(holes) != 6:
+        return False
+    min_y = min(h[1] for h in holes)
+    max_y = max(h[1] for h in holes)
+    y_span = max_y - min_y
+    if y_span <= 0:
+        return False
+
+    top = sorted((h for h in holes if h[1] - min_y < y_span * 0.25), key=lambda h: h[0])
+    bottom = sorted((h for h in holes if max_y - h[1] < y_span * 0.25), key=lambda h: h[0])
+    if len(top) != 3 or len(bottom) != 3:
+        return False
+
+    x_span = max(h[0] for h in holes) - min(h[0] for h in holes)
+    if x_span <= 0:
+        return False
+    return all(abs(a[0] - b[0]) < x_span * 0.15 for a, b in zip(top, bottom))
+
+
 def process_and_save_image(image_path, pair):
     # 1. โหลดภาพและแปลงเป็น Grayscale
     img = cv2.imread(image_path)
@@ -76,41 +127,13 @@ def process_and_save_image(image_path, pair):
 
     # crop ก่อนทุกอย่าง
     img = crop_center_square(img, crop_size())
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    thresh, contours, hierarchy, detected_holes = detect_features(img)
 
-    # ── ขนาดรูมุมอ้างอิงตามความกว้างภาพ ──────────────────────────────────────
-    _h_img, _w_img = gray.shape[:2]
-    R_MIN, R_MAX = _w_img * 0.010, _w_img * 0.075
-
-    # 2. ทำ Threshold แยกชิ้นงานสีเข้มออกจากพื้นหลัง
-    _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV)
-
-    # 2.5 ล้างเศษ/รอยขีดข่วนออกจากรู (Morphological Opening)
-    CLEAN_KERNEL = 5
-    _kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (CLEAN_KERNEL, CLEAN_KERNEL)
-    )
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, _kernel)
-
-    # 3. หา Contour และ Hierarchy เพื่อระบุรูที่อยู่ด้านในชิ้นงาน
-    contours, hierarchy = cv2.findContours(
-        thresh, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
-    )
-
-    detected_holes = []
-
-    if hierarchy is not None:
-        for i, cnt in enumerate(contours):
-            if hierarchy[0][i][3] != -1:
-                area = cv2.contourArea(cnt)
-                perimeter = cv2.arcLength(cnt, True)
-
-                if perimeter > 0:
-                    circularity = 4 * np.pi * area / (perimeter * perimeter)
-                    (x, y), radius = cv2.minEnclosingCircle(cnt)
-
-                    if circularity > 0.65 and R_MIN < radius < R_MAX:
-                        detected_holes.append((x, y, radius))
+    # รู 3 บน + 3 ล่างหมายถึงชิ้นงานวางแนวนอน: หมุนภาพไปซ้ายก่อน
+    # แล้วตรวจจับใหม่ เพื่อให้เส้นและ contour ใช้พิกัดเดียวกับภาพที่บันทึก
+    if has_three_holes_in_each_horizontal_row(detected_holes):
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        thresh, contours, hierarchy, detected_holes = detect_features(img)
 
     output = img.copy()
 

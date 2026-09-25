@@ -276,11 +276,18 @@ def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str, *, p
                         f"— แก้ Package Size ของ ALPL นี้ที่หน้า Edit › Parts หรือแยกไปกรอกคนละกลุ่ม",
                     )
 
+        handler = g.get("handler")
+        if not isinstance(handler, str) or not handler.strip():
+            raise HTTPException(400, f"กลุ่มที่ {gi + 1}: ต้องระบุ Handler ก่อนเริ่มวัด")
+        if any(char in handler for char in ":<>\r\n"):
+            raise HTTPException(400, f"กลุ่มที่ {gi + 1}: Handler มีอักขระที่ใช้ในคำสั่ง MCU")
+
         out.append({
             "template_name": templates[gi],
             "alpl": alpl,
             "limits": _limits_of(crit, entry_mode),
             "package_size": g.get("package_size"),
+            "handler": handler.strip(),
         })
     return out
 

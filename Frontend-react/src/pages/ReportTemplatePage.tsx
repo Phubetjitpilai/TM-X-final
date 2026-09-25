@@ -4,6 +4,7 @@ import { apiGet, apiPatch, apiPost, ApiError } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDialog } from "../components/Dialog";
 import ColorButton from "../components/report/ColorButton";
+import { useSessionState } from "../hooks/useSessionState";
 // ⚠ สไตล์ของหน้านี้อยู่ในไฟล์ของตัวเอง ไม่ใช่ index.css — import ตรงนี้เพื่อให้
 //    Vite ผูกมันเป็น dependency ของโมดูลหน้านี้โดยตรง (HMR/บันเดิลจะไม่มีทาง
 //    หลุดกันได้) และกันไม่ให้กฎยาว ๆ ของหน้านี้ไปปนกับ stylesheet กลาง
@@ -101,6 +102,8 @@ export default function ReportTemplatePage() {
   const navigate = useNavigate();
   const toast = useToast();
   const dialog = useDialog();
+  const { data: sessionState } = useSessionState();
+  const sessionRunning = sessionState?.state === "running";
 
   const format = (params.get("format") ?? params.get("kind") ?? "pdf").toLowerCase();
   const output = format === "excel" ? "Excel" : "PDF";
@@ -630,6 +633,7 @@ export default function ReportTemplatePage() {
 
   // ── บันทึก ──────────────────────────────────────────────────────────────
   async function saveTemplate() {
+    if (sessionRunning) return;
     if (!name.trim()) { toast.show("ตั้งชื่อเทมเพลตก่อน"); return; }
     if (!g().flat().some((c) => c.f)) { toast.show("ยังไม่ได้ลากช่องข้อมูลลงในเซลล์เลย"); return; }
     const body = {
@@ -698,7 +702,7 @@ export default function ReportTemplatePage() {
           />
           <span style={{ marginLeft: "auto", display: "flex", gap: ".4rem" }}>
             <button type="button" className="btn-ghost" onClick={backToWizard}>ยกเลิก</button>
-            <button type="button" className="btn-primary" disabled={saving} onClick={saveTemplate}>
+            <button type="button" className="btn-primary" disabled={saving || sessionRunning} onClick={saveTemplate}>
               บันทึกเทมเพลต
             </button>
           </span>

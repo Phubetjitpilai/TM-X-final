@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,8 @@ import ExportFilters, {
   type FilterState, type MultiKey,
 } from "../components/export/ExportFilters";
 import TemplateModal, { type ExportColumn } from "../components/export/TemplateModal";
+import { useSessionState } from "../hooks/useSessionState";
+import { useSSE } from "../hooks/useSSE";
 
 // ExportPage — พอร์ตจาก Frontend/export.html (wizard 3 ขั้น)
 //
@@ -85,12 +87,57 @@ export default function ExportPage() {
   const toast = useToast();
   const dialog = useDialog();
   const qc = useQueryClient();
+  const { data: sessionState } = useSessionState();
+  const sessionRunning = sessionState?.state === "running";
+  const runningRef = useRef(sessionRunning);
+  runningRef.current = sessionRunning;
+  const refreshTimer = useRef<number | null>(null);
+  const lastSessionSig = useRef<string | null>(null);
+
+  function scheduleLiveRefresh() {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      void qc.invalidateQueries({ queryKey: ["export-preview"] });
+      void qc.invalidateQueries({ queryKey: ["export-filter-options"] });
+    }, 150);
+  }
+
+  const sseStatus = useSSE({
+    measurement: scheduleLiveRefresh,
+    measurement_replaced: scheduleLiveRefresh,
+    image_updated: scheduleLiveRefresh,
+    session_complete: scheduleLiveRefresh,
+    session_stopped: scheduleLiveRefresh,
+    session_timeout: scheduleLiveRefresh,
+  });
+
+  useEffect(() => {
+    if (!sessionState) return;
+    const sig = `${sessionState.session_id}|${sessionState.measured_count}|${sessionState.state}`;
+    if (lastSessionSig.current !== null && lastSessionSig.current !== sig) scheduleLiveRefresh();
+    lastSessionSig.current = sig;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState?.session_id, sessionState?.measured_count, sessionState?.state]);
+
+  useEffect(() => {
+    if (sseStatus !== "online") return;
+    scheduleLiveRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sseStatus]);
+
+  useEffect(() => () => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+  }, []);
 
   const [step, setStep] = useState(1);
   const [selectedTplId, setSelectedTplId] = useState<number | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTpl, setEditingTpl] = useState<Template | null>(null);
+  useEffect(() => {
+    if (sessionRunning) setModalOpen(false);
+  }, [sessionRunning]);
   /** ข้อความชั่วคราวแทนบรรทัดนับจำนวน ระหว่างกำลังสร้างไฟล์/เตรียมพิมพ์ */
   const [busyNote, setBusyNote] = useState<string | null>(null);
   /** ผังรายงานแบบเต็ม (full=1) ที่รอพิมพ์ — วาดลง #print-root แล้วสั่ง print */
@@ -179,6 +226,7 @@ export default function ExportPage() {
   // ถ้าดึงตัวไหนไม่ได้ ก็แค่ช่องนั้นว่าง ช่องอื่นยังใช้ได้ปกติ (เหมือนต้นฉบับ)
   const optionsQ = useQuery({
     queryKey: ["export-filter-options"],
+    refetchOnMount: "always",
     queryFn: async () => {
       const get = async (path: string) => {
         try { return await apiGet<any[]>(path); } catch { return []; }
@@ -245,6 +293,7 @@ export default function ExportPage() {
   const canPreview = step >= 2 && selectedTplId != null && !alplError;
   const previewQ = useQuery({
     queryKey: ["export-preview", format, qs.toString()],
+    refetchOnMount: "always",
     queryFn: () => {
       const p = new URLSearchParams(qs);
       if (format === "csv") {
@@ -283,6 +332,7 @@ export default function ExportPage() {
 
   const saveTpl = useMutation({
     mutationFn: async ({ name, columns }: { name: string; columns: string[] }) => {
+      if (runningRef.current) throw new Error("กำลังวัดอยู่ ไม่สามารถแก้ไข Template ได้");
       if (editingTpl) {
         return apiPatch(`/api/export/templates/${editingTpl.export_template_id}`, { name, columns });
       }
@@ -299,7 +349,10 @@ export default function ExportPage() {
   });
 
   const dupTpl = useMutation({
-    mutationFn: (id: number) => apiPost<Template>(`/api/export/templates/${id}/duplicate`),
+    mutationFn: (id: number) => {
+      if (runningRef.current) throw new Error("กำลังวัดอยู่ ไม่สามารถคัดลอก Template ได้");
+      return apiPost<Template>(`/api/export/templates/${id}/duplicate`);
+    },
     onSuccess: (res: any) => {
       toast.show("คัดลอก Template แล้ว", undefined, "success");
       if (res?.export_template_id) setSelectedTplId(res.export_template_id);
@@ -309,7 +362,10 @@ export default function ExportPage() {
   });
 
   const delTpl = useMutation({
-    mutationFn: (id: number) => apiDelete(`/api/export/templates/${id}`),
+    mutationFn: (id: number) => {
+      if (runningRef.current) throw new Error("กำลังวัดอยู่ ไม่สามารถลบ Template ได้");
+      return apiDelete(`/api/export/templates/${id}`);
+    },
     onSuccess: (_d, id) => {
       toast.show("ลบ Template แล้ว", undefined, "success");
       if (selectedTplId === id) setSelectedTplId(null);
@@ -367,6 +423,7 @@ export default function ExportPage() {
   }
 
   function doDownload() {
+    if (runningRef.current) return;
     const p = new URLSearchParams(qs);
     p.set("filename", cleanName);
     try { localStorage.setItem(fnameKey, cleanName); } catch { /* โหมดส่วนตัวเขียนไม่ได้ */ }
@@ -378,6 +435,7 @@ export default function ExportPage() {
   }
 
   async function onClickDownload() {
+    if (runningRef.current) return;
     if (!cleanName || total === 0) return;
     // ไม่ได้กรองอะไรเลย = กำลังจะดึงข้อมูลทั้งระบบ — ถามยืนยันก่อน กันเผลอกด
     // แล้วได้ไฟล์ใหญ่เกินคาด (โดยเฉพาะตอนติ๊ก "เฉพาะล่าสุด" ออกด้วย)
@@ -413,6 +471,7 @@ export default function ExportPage() {
    *    {name, columns} ไป PATCH ซึ่งไม่มี layout_json ติดไปด้วย ผังที่ผู้ใช้
    *    จัดไว้จะถูกทับหายทั้งใบโดยที่หน้าจอขึ้นว่า "บันทึกแล้ว" ตามปกติ */
   function openTemplateEditor(t: Template | null) {
+    if (runningRef.current) return;
     if (format === "csv") {
       setEditingTpl(t);
       setModalOpen(true);
@@ -436,6 +495,7 @@ export default function ExportPage() {
 
   return (
     <div className="main-edit">
+      {sessionRunning && <div className="mock-banner">⏳ กำลังวัดอยู่ — ดูข้อมูลและ Preview ได้ แต่แก้ Template หรือ Export ได้หลังวัดเสร็จ</div>}
       <div className="card">
         <div className="card-head">Export · {label}</div>
 
@@ -487,19 +547,19 @@ export default function ExportPage() {
                         <button
                           type="button"
                           className="btn-mini"
-                          disabled={lock}
+                          disabled={lock || sessionRunning}
                           title={lock ? "เทมเพลตค่าเริ่มต้นแก้ไขไม่ได้" : ""}
                           onClick={() => openTemplateEditor(t)}
                         >
                           Edit
                         </button>
-                        <button type="button" className="btn-mini" onClick={() => dupTpl.mutate(t.export_template_id)}>
+                        <button type="button" className="btn-mini" disabled={sessionRunning} onClick={() => dupTpl.mutate(t.export_template_id)}>
                           Duplicate
                         </button>
                         <button
                           type="button"
                           className="btn-mini del"
-                          disabled={lock}
+                          disabled={lock || sessionRunning}
                           title={lock ? "เทมเพลตค่าเริ่มต้นลบไม่ได้" : ""}
                           onClick={async () => {
                             const ok = await dialog.confirm(
@@ -528,7 +588,7 @@ export default function ExportPage() {
               })
             )}
 
-            <button type="button" className="btn-add-tpl" onClick={() => openTemplateEditor(null)}>
+            <button type="button" className="btn-add-tpl" disabled={sessionRunning} onClick={() => openTemplateEditor(null)}>
               + Create New Template
             </button>
 
@@ -658,7 +718,7 @@ export default function ExportPage() {
               <button
                 type="button"
                 className="btn-primary"
-                disabled={!cleanName || !!alplError || total === 0 || busyNote != null}
+                disabled={sessionRunning || !cleanName || !!alplError || total === 0 || busyNote != null}
                 onClick={onClickDownload}
               >
                 {downloadLabel}
@@ -680,7 +740,7 @@ export default function ExportPage() {
           editing={editingTpl}
           catalog={columnsQ.data ?? []}
           saving={saveTpl.isPending}
-          onSave={(name, columns) => saveTpl.mutate({ name, columns })}
+          onSave={(name, columns) => { if (!runningRef.current) saveTpl.mutate({ name, columns }); }}
           onClose={() => { setModalOpen(false); setEditingTpl(null); }}
         />
       )}

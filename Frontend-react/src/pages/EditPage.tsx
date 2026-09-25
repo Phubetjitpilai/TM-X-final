@@ -7,6 +7,7 @@ import HistoryCard from "../components/HistoryCard";
 import { orderForDatalist } from "../utils/datalistOrder";
 import { axisValue, offsetValue, xyPair, DP_MM, DP_OFF } from "../components/measurementCells";
 import { useSessionState } from "../hooks/useSessionState";
+import { useSSE } from "../hooks/useSSE";
 
 // EditPage — พอร์ตจาก Frontend/edit.html (Database Editor) แบบยึดโครงสร้าง/
 // field/คอลัมน์/ข้อความ ตามต้นฉบับเป็นหลัก
@@ -216,6 +217,8 @@ export default function EditPage() {
    */
   const { data: sessionState } = useSessionState();
   const sessionRunning = sessionState?.state === "running";
+  const liveRefreshTimer = useRef<number | null>(null);
+  const lastSessionSig = useRef<string | null>(null);
 
   // ── Dropdown lookups ─────────────────────────────────────────────────
   /* Handler กลับมาเป็น field ที่กรอกตรงๆ อีกครั้ง — `parts_specifications` เก็บ
@@ -310,6 +313,48 @@ export default function EditPage() {
     setPartNumberCatalog(partNumbers);
     setPackageSizeOptions(packageSizes.map((p) => p.package_size));
   }
+
+  function scheduleLiveRefresh() {
+    if (liveRefreshTimer.current !== null) window.clearTimeout(liveRefreshTimer.current);
+    liveRefreshTimer.current = window.setTimeout(() => {
+      liveRefreshTimer.current = null;
+      void Promise.all([
+        loadParts(partsPage, partsSearchRef.current),
+        loadMeasurements(measPage, measSearchRef.current, measDate),
+        loadDropdownData(),
+      ]);
+      bumpHistory();
+    }, 150);
+  }
+
+  // useSSE แชร์ EventSource กับ Layout; หน้านี้ลงทะเบียนเฉพาะตอนเปิด Edit
+  const sseStatus = useSSE({
+    measurement: scheduleLiveRefresh,
+    measurement_replaced: scheduleLiveRefresh,
+    image_updated: scheduleLiveRefresh,
+    session_complete: scheduleLiveRefresh,
+    session_stopped: scheduleLiveRefresh,
+    session_timeout: scheduleLiveRefresh,
+  });
+
+  // Poll ของ session ช่วยกู้ผลที่เข้ามาตอน SSE หลุด โดยไม่รีเฟรชทุก heartbeat
+  useEffect(() => {
+    if (!sessionState) return;
+    const sig = `${sessionState.session_id}|${sessionState.measured_count}|${sessionState.state}`;
+    if (lastSessionSig.current !== null && lastSessionSig.current !== sig) scheduleLiveRefresh();
+    lastSessionSig.current = sig;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState?.session_id, sessionState?.measured_count, sessionState?.state]);
+
+  useEffect(() => {
+    if (sseStatus !== "online") return;
+    scheduleLiveRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sseStatus]);
+
+  useEffect(() => () => {
+    if (liveRefreshTimer.current !== null) window.clearTimeout(liveRefreshTimer.current);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -468,6 +513,7 @@ export default function EditPage() {
   // ── Save Part ─────────────────────────────────────────────────────────
   async function savePart(e: FormEvent) {
     e.preventDefault();
+    if (sessionRunning) return;
     if (!formRef.current) return;
     const fd = new FormData(formRef.current);
     const get = (k: string) => ((fd.get(k) as string) ?? "").trim();
@@ -574,6 +620,7 @@ export default function EditPage() {
   // ── Save Measurement ──────────────────────────────────────────────────
   async function saveMeas(e: FormEvent) {
     e.preventDefault();
+    if (sessionRunning) return;
     if (!formRef.current) return;
     const fd = new FormData(formRef.current);
     const get = (k: string) => ((fd.get(k) as string) ?? "").trim();
@@ -690,7 +737,7 @@ export default function EditPage() {
     <div className="main-edit">
       {sessionRunning && (
         <div className="mock-banner">
-          ⏳ ขณะนี้กำลังวัดอยู่ (Session Running) — ไม่สามารถแก้ไขหรือลบข้อมูล Part / Measurement ได้ กรุณากด Stop session ก่อน
+          ⏳ กำลังวัดอยู่ — ตารางจะอัปเดตตามผลวัด ดูและค้นหาได้ แต่เพิ่ม แก้ไข ลบ หรือกู้ข้อมูลได้หลังวัดเสร็จ
         </div>
       )}
 
@@ -700,7 +747,7 @@ export default function EditPage() {
           <div className="card-title">
             ALPL Profile <span className="count">({partsTotal})</span>
           </div>
-          <button type="button" className="btn-add" onClick={() => openPartModal("add")}>
+          <button type="button" className="btn-add" disabled={sessionRunning} onClick={() => openPartModal("add")}>
             + Add Part
           </button>
         </div>
@@ -976,6 +1023,7 @@ export default function EditPage() {
           จัดการตาราง lookup ทั้ง 7 ตัว · ลำดับตรงกับ edit.html คือ
           Parts → Measurements → Lookup Tables → Trash */}
       <LookupTables
+        readOnly={sessionRunning}
         onDeleted={bumpTrash}
         onChanged={() => { loadDropdownData(); bumpHistory(); }}
         onAlert={setAlertText}
@@ -995,6 +1043,7 @@ export default function EditPage() {
           วางไว้ท้ายสุดของหน้าโดยตั้งใจ (ตามต้นฉบับ) — เป็นหน้าเดียวกับที่ผู้ใช้
           กดลบ เผลอลบแล้วเลื่อนลงมากู้ได้ทันที ไม่ต้องจำว่าต้องไปหน้าไหน */}
       <TrashCard
+        readOnly={sessionRunning}
         reloadKey={trashReload}
         onPurged={bumpHistory}
         onRestored={async () => {
@@ -1266,6 +1315,7 @@ export default function EditPage() {
                   <button
                     type="button"
                     className="btn-delete-inline"
+                    disabled={sessionRunning}
                     onClick={() => editContext.key != null && confirmDeleteMeas(editContext.key)}
                   >
                     🗑 Delete
@@ -1276,7 +1326,7 @@ export default function EditPage() {
                 <button type="button" className="btn-cancel" onClick={closeEditModal}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-save">
+                <button type="submit" className="btn-save" disabled={sessionRunning}>
                   ✔ Save
                 </button>
               </div>
@@ -1307,7 +1357,7 @@ export default function EditPage() {
             <button type="button" className="btn-cancel" onClick={() => setConfirmState(null)}>
               Cancel
             </button>
-            <button type="button" className="btn-delete-inline" onClick={() => confirmState?.onConfirm()}>
+            <button type="button" className="btn-delete-inline" disabled={sessionRunning} onClick={() => confirmState?.onConfirm()}>
               🗑 Delete
             </button>
           </div>

@@ -109,6 +109,7 @@ function lookupToApiBody(kind: string, values: Record<string, string>): Record<s
 const PAGE = 10;
 
 interface Props {
+  readOnly?: boolean;
   /** เรียกหลังลบสำเร็จ — ให้หน้าแม่ไปโหลดถังขยะใหม่ */
   onDeleted?: () => void;
   /** เรียกหลังแก้/เพิ่ม — dropdown ที่อื่นอาจต้องอัปเดตตาม */
@@ -127,7 +128,7 @@ interface Props {
  * เช็คให้แล้ว คืน 409 พร้อมข้อความบอกให้เปลี่ยนชื่อแทน (ดู _delete_lookup)
  * ฝั่งนี้แค่เอาข้อความนั้นมาโชว์ ไม่ตัดสินเองว่าลบได้ไหม
  */
-export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm }: Props) {
+export default function LookupTables({ readOnly = false, onDeleted, onChanged, onAlert, onConfirm }: Props) {
   const toast = useToast();
   const [kind, setKind] = useState("operator");
   const [rows, setRows] = useState<Record<string, any>[]>([]);
@@ -242,6 +243,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
   }
 
   async function addRow() {
+    if (readOnly) return;
     const values = Object.fromEntries(cfg.fields.map((f) => [f.key, (draft[f.key] ?? "").trim()]));
     // ข้ามช่องที่ตั้ง optional ไว้ (เช่น Handlers) — ดูคอมเมนต์ที่ LOOKUP_CONFIG
     if (cfg.fields.some((f) => !f.optional && values[f.key] === "")) {
@@ -262,6 +264,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
   }
 
   async function saveRow(row: Record<string, any>) {
+    if (readOnly) return;
     const id = String(row[cfg.idField]);
     if (!isDirty(row)) { toast.show("ยังไม่มีอะไรเปลี่ยน"); return; }
     const values = Object.fromEntries(cfg.fields.map((f) => [f.key, valueOf(row, f.key).trim()]));
@@ -286,7 +289,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
       const stillDirty = dirtyCount - 1;
       toast.show(stillDirty > 0
         ? `บันทึก "${rowName}" แล้ว — ยังมีอีก ${stillDirty} แถวที่แก้ไว้แต่ยังไม่ได้กด Save`
-        : `บันทึก "${rowName}" แล้ว`);
+        : `บันทึก "${rowName}" แล้ว`, undefined, "success");
 
       // อัปเดตเฉพาะรายชื่อใน dropdown (เผื่อชื่อ handler/package size เปลี่ยน)
       // โดยไม่แตะตาราง — ค่าที่ค้างในแถวอื่นจึงไม่หาย
@@ -299,6 +302,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
   }
 
   function deleteRow(row: Record<string, any>) {
+    if (readOnly) return;
     const id = String(row[cfg.idField]);
     const run = async () => {
       setBusy(true);
@@ -334,6 +338,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
     if (f.type === "multi-handler") {
       return (
         <MultiSelectCell
+          disabled={readOnly}
           options={opts.handler}
           // state เก็บเป็นสตริงคั่นคอมมา — แตกเข้า/ประกอบออกตรงนี้ที่เดียว
           value={value ? value.split(",").filter(Boolean) : []}
@@ -345,7 +350,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
     const list = optionsFor(f.type);
     if (list) {
       return (
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <select value={value} disabled={readOnly} onChange={(e) => onChange(e.target.value)}>
           <option value="" disabled hidden>-- {f.label} --</option>
           {list.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
@@ -353,6 +358,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
     }
     return (
       <input
+        disabled={readOnly}
         type={f.type === "number" ? "number" : "text"}
         step={f.type === "number" ? "0.001" : undefined}
         placeholder={f.label}
@@ -388,8 +394,8 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
         </div>
       </div>
       <div className="filter-result-note">
-        เปลี่ยนชื่อ/ค่าได้เสมอ (แก้แล้วกด Save ของแถวนั้น) — ลบไม่ได้ถ้ายังมีตารางอื่นอ้างอิงอยู่
-        (ระบบจะแจ้งเตือนให้เปลี่ยนชื่อแทน)
+        {readOnly ? "กำลังวัดอยู่ — ดูและค้นหาข้อมูลได้ แก้ไขได้หลังวัดเสร็จ" :
+          "เปลี่ยนชื่อ/ค่าได้ (แก้แล้วกด Save ของแถวนั้น) — ลบไม่ได้ถ้ายังมีตารางอื่นอ้างอิงอยู่ (ระบบจะแจ้งเตือนให้เปลี่ยนชื่อแทน)"}
       </div>
 
       <div className="table-wrap">
@@ -420,7 +426,7 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
               ))}
               <td className="row-actions">
                 <div className="actions-inner">
-                  <button type="button" className="btn-add" disabled={busy} onClick={addRow}>+ Add</button>
+                  <button type="button" className="btn-add" disabled={busy || readOnly} onClick={addRow}>+ Add</button>
                 </div>
               </td>
               <td />
@@ -452,12 +458,12 @@ export default function LookupTables({ onDeleted, onChanged, onAlert, onConfirm 
                         <button
                           type="button"
                           className={`btn-icon${isDirty(row) ? " dirty" : ""}`}
-                          disabled={busy}
+                          disabled={busy || readOnly}
                           onClick={() => saveRow(row)}
                         >
                           ✔ Save
                         </button>
-                        <button type="button" className="btn-icon delete" disabled={busy} onClick={() => deleteRow(row)}>
+                        <button type="button" className="btn-icon delete" disabled={busy || readOnly} onClick={() => deleteRow(row)}>
                           🗑 Delete
                         </button>
                       </div>

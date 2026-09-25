@@ -51,7 +51,12 @@ export default function MultiSelectCell({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   function toggle(name: string) {
+    if (disabled) return;
     // เรียงผลลัพธ์เสมอ — ลำดับที่ผู้ใช้กดไม่ควรมีผลกับสิ่งที่ส่งไป backend
     // ไม่งั้นประวัติการแก้ไขจะขึ้นว่า "แก้ไข" ทั้งที่ชุดเดิมเป๊ะ แค่สลับที่กัน
     const next = value.includes(name)
@@ -87,6 +92,7 @@ export default function MultiSelectCell({
               <label key={o} className={`msc-item${value.includes(o) ? " on" : ""}`}>
                 <input
                   type="checkbox"
+                  disabled={disabled}
                   checked={value.includes(o)}
                   onChange={() => toggle(o)}
                 />

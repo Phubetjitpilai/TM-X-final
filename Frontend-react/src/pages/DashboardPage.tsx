@@ -741,16 +741,33 @@ export default function DashboardPage() {
         savePartEntryState();
         return;
       }
-      const [totalD, okD, ngD] = await Promise.all([
-        apiGet<{ total: number }>("/api/measurements", { session_id: sid, limit: 1 }).catch(() => ({ total: 0 })),
-        apiGet<{ total: number }>("/api/measurements", { session_id: sid, result: "OK", limit: 1 }).catch(() => ({ total: 0 })),
-        apiGet<{ total: number }>("/api/measurements", { session_id: sid, result: "NG", limit: 1 }).catch(() => ({ total: 0 })),
-      ]);
-      // เช็คธงอีกรอบ "หลัง await" — ผู้ใช้อาจกด Clear ระหว่างที่ fetch ยังค้างอยู่
-      // ถ้าไม่เช็ค response ที่มาถึงทีหลังจะเขียนทับของที่เพิ่งล้าง
-      if (request !== statsRequestRef.current) return;
-      if (isTelemetryCleared()) { setStats({ total: 0, ok: 0, ng: 0 }); return; }
-      setStats({ total: totalD.total ?? 0, ok: okD.total ?? 0, ng: ngD.total ?? 0 });
+      // SSE handler ของ Dashboard ถูกถอดเมื่อไปหน้า Edit/Export จึงต้องกู้ผล
+      // รายชิ้นจาก DB ด้วย ไม่เช่นนั้น measured_count ขยับ แต่ชิป Queue ยังเป็น ?
+      const rows: Measurement[] = [];
+      for (let offset = 0, total = Infinity; offset < total; offset += 1000) {
+        const page = await apiGet<{ items: Measurement[]; total: number }>("/api/measurements", {
+          session_id: sid, limit: 1000, offset,
+        });
+        rows.push(...(page.items ?? []));
+        total = page.total ?? rows.length;
+        if (!page.items?.length) break;
+      }
+      // เช็คหลัง await: ผู้ใช้อาจกด Clear, เริ่ม Session ใหม่ หรือมี SSE ใหม่
+      // ระหว่างโหลด DB; response เก่าต้องไม่เขียนทับผลที่ใหม่กว่า
+      if (request !== statsRequestRef.current || sessionRef.current.session_id !== sid || reviewDisplayRef.current || isTelemetryCleared()) return;
+      rows.sort((a, b) => a.measurement_id - b.measurement_id);
+      resultsRef.current = rows.map((m) => m.result ?? "");
+      setQueueStrip(prev => prev.map((q, index) => q.sessionId === sid && index < rows.length
+        ? { ...q, state: chipStateFor(index) }
+        : q));
+      const latest = rows[rows.length - 1];
+      if (latest && JSON.stringify(latestTelemetryRef.current) !== JSON.stringify(latest)) {
+        latestTelemetryRef.current = latest as Telemetry;
+        if (selectedQueueRef.current === null) applyTelemetry(latest as Telemetry);
+      }
+      setStats({ total: rows.length, ok: rows.filter(m => m.result === "OK").length,
+        ng: rows.filter(m => m.result === "NG").length });
+      savePartEntryState();
     } catch (e) {
       console.warn("updateStats:", e);
     }

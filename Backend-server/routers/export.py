@@ -195,6 +195,7 @@ def create_export_template(body: ExportTemplateBody):
     db = get_db()
     try:
         with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข")
             try:
                 cur.execute(
                     "INSERT INTO export_template (name, kind, columns_json, layout_json, is_default) "
@@ -213,6 +214,7 @@ def update_export_template(export_template_id: int, body: ExportTemplateBody):
     db = get_db()
     try:
         with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข")
             row = _get_template(cur, export_template_id)
             # เทมเพลตตั้งต้นของระบบล็อกไว้ — ให้ Duplicate ไปแก้ตัวใหม่แทน
             if row["is_default"]:
@@ -234,6 +236,7 @@ def delete_export_template(export_template_id: int):
     db = get_db()
     try:
         with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข")
             row = _get_template(cur, export_template_id)
             if row["is_default"]:
                 raise HTTPException(403, "เทมเพลตค่าเริ่มต้นลบไม่ได้")
@@ -252,6 +255,7 @@ def duplicate_export_template(export_template_id: int):
     db = get_db()
     try:
         with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข")
             row = _get_template(cur, export_template_id)
             cur.execute("SELECT name FROM export_template")
             taken = {r["name"] for r in cur.fetchall()}
@@ -764,7 +768,10 @@ def export_report_preview(
     db = get_db()
     try:
         with db.cursor() as cur:
-            _block_if_session_running(cur, "Export")
+            # Preview จำกัด 100 แถว ใช้ดูข้อมูลสดได้ระหว่างวัด; full=1 ใช้พิมพ์
+            # รายงานจริงและอาจโหลดหลายหมื่นแถว จึงต้องล็อกไว้เหมือน Export
+            if full:
+                _block_if_session_running(cur, "Export")
             tpl = _load_report_layout(cur, export_template_id)
     finally:
         db.close()

@@ -475,7 +475,8 @@ async def replace_measurement(req, capture):
                              offset_opx=req.offset_opx, offset_opy=req.offset_opy,
                              crit=crit, measure_type=before["measure_type"])
             pos = _get_position_label(req.horizon_left, req.horizon_right, req.vertical_top, req.vertical_bottom)
-            # Preserve the previous image on disk and its path in edit history.
+            # ล้าง path ของรูปเดิมระหว่างรอรูปใหม่; ลบไฟล์จริงหลัง DB commit สำเร็จ
+            # เท่านั้น เพื่อไม่ให้ rollback แล้ว Measurement ชี้ไปยังไฟล์ที่ถูกลบ
             cur.execute("UPDATE measurements SET value_x=%s,value_y=%s,offset_opx=%s,offset_opy=%s,offset_pos_op=%s,result=%s,image_path=NULL,image_upload_failed=0,timestamp=NOW() WHERE measurement_id=%s",
                         (req.value_x, req.value_y, req.offset_opx, req.offset_opy, pos, verdict["result"], mid))
             response = {"measurement_id": mid, "result": verdict["result"], "offset_pos_op": pos,
@@ -494,6 +495,9 @@ async def replace_measurement(req, capture):
             session_queues.pop(req.session_id, None)
             measure_timeouts.pop(req.session_id, None)
         log_edit("measurements", "edit", f"วัดซ้ำ ID {mid}", before=before, after=after)
+        old_image_path = before.get("image_path")
+        if old_image_path and not _delete_image_file(old_image_path):
+            log.warning("ลบรูปเก่าหลังวัดซ้ำ Measurement %s ไม่สำเร็จ (%s)", mid, old_image_path)
         await push_event("measurement_replaced", {
             **response, "session_id": req.session_id, "piece": capture["piece"],
             "measurement_session_id": source_sid,

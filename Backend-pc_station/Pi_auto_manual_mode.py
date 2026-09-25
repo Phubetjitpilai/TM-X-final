@@ -210,6 +210,7 @@ class Group(BaseModel):
     alpl: list[int]
     limits: Limits | None = None
     package_size: str | None = None      # เผื่อ backend รุ่นเก่าไม่ส่งมา
+    handler: str
 
 class CommandRequest(BaseModel):
     review_job: dict | None = None
@@ -618,7 +619,7 @@ def trigger_tmx(sock):
     for attempt in range(1, T1_RETRY + 1):
         resp, ok = send_recv(sock, "T1")
         log.info(resp)
-        if ok:
+        if ok:  
             log.info(f"📡 TM-X ตอบ T1: {resp}")
             log.info(f"ส่ง T1 สำเร็จหลังลอง {T1_RETRY} ครั้ง  {resp}")
             return True, resp
@@ -799,7 +800,7 @@ def send_result_to_mcu(result,session_id,piece,target_count) -> bool:
                     break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
     return False
 
-def send_package_size_to_mcu(package_size,number_alpl, session_id,piece,target_count) -> bool:
+def send_package_size_to_mcu(package_size, number_alpl, handler, session_id, piece, target_count) -> bool:
     global mega_ser              # ⚠ เหตุผลเดียวกับ send_result_to_mcu ข้างบน
 
     if _trigger_mode != "auto":
@@ -807,7 +808,7 @@ def send_package_size_to_mcu(package_size,number_alpl, session_id,piece,target_c
         return True
     while is_running:
         try:
-            ack_msg = f"<PKG:{package_size}:{number_alpl}>\n"
+            ack_msg = f"<PKG:{package_size}:{number_alpl}:{handler}>\n"
             mega_ser.write(ack_msg.encode("utf-8"))
             log.info(f"   [TX → Mega] {ack_msg.strip()}")
             return True
@@ -1232,8 +1233,10 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             # ราคาถูกกว่ามาก (ข้อความเดียวต่อชิ้น) และกู้ตัวเองได้
             alpl_queue = [alpl for group in groups for alpl in group.alpl]
             number_alpl = alpl_queue[piece - 1]
-            pkg = groups[group_of[piece - 1]].package_size
-            if not send_package_size_to_mcu(pkg,number_alpl, session_id,piece,target_count):
+            group = groups[group_of[piece - 1]]
+            pkg = group.package_size
+            handler = group.handler
+            if not send_package_size_to_mcu(pkg, number_alpl, handler, session_id, piece, target_count):
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: "
                                f"บอกขนาดชิ้นงาน ({pkg}) ให้ MCU ไม่สำเร็จ "
                                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่")
