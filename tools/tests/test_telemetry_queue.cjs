@@ -13,7 +13,7 @@ const source = ts.createSourceFile('Dashboard.tsx', fs.readFileSync(
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const dashboard = source.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'DashboardPage');
 const names = ['setQueueStrip', 'prepareDisplaySession', 'syncQueueStrip', 'onSessionStarted',
-  'savePartEntryState', 'clearTelemetry', 'selectQueueTelemetry', 'remeasureSelected', 'updateStats',
+  'savePartEntryState', 'clearTelemetry', 'isQueueReviewLocked', 'selectQueueTelemetry', 'remeasureSelected', 'updateStats',
   'ensureMeasurementSession', 'onMeasurementReplaced', 'partEntryForSession', 'startFromQueue'];
 const code = ts.transpileModule(dashboard.body.statements.filter(n =>
   ts.isFunctionDeclaration(n) && names.includes(n.name?.text)).map(n => n.getText(source)).join('\n'),
@@ -25,6 +25,7 @@ function fixture() {
     console, PART_ENTRY_STORAGE_KEY: 'test',
     exports: {}, require: () => require('../../Frontend-react/node_modules/react/jsx-runtime'),
     RemeasureStartOptions() {}, parsedQueue: { trigger_mode: 'auto' },
+    pendingWork: false, continueMode: 'remaining',
     displaySessionIdRef: { current: 42 },
     displayQueueRef: { current: [1, 2, 3].map(alpl => ({ alpl, state: 'ok', sessionId: 42 })) },
     sessionRef: { current: { session_id: 42, state: 'stopped', measured_count: 3, target_count: 3 } },
@@ -34,9 +35,9 @@ function fixture() {
     telemetryRef: { current: { measurement_id: 102, session_id: 42, number_alpl: 2 } },
     selectedQueueIndex: 1, selectedQueueRef: { current: 1 },
     telemetryRequestRef: { current: 0 }, entryQueueRef: { current: null },
-    reviewBusyRef: { current: false },
+    reviewBusyRef: { current: false }, reviewPhase: 'running',
     mtTimerRef: { current: null }, setMtModal() {}, loadMeasurementsPage: async () => {},
-    setQueueStripState() {}, setReviewPhase() {}, setReviewBusy() {}, setTelemetryLoading() {},
+    setQueueStripState() {}, setReviewPhase(phase) { c.reviewPhase = phase; }, setReviewBusy() {}, setTelemetryLoading() {},
     setSelectedQueueIndex(i) { c.selectedQueueIndex = i; },
     setStats(stats) { c.stats = stats; },
     chipStateFor(i) { return c.resultsRef.current[i] === 'OK' ? 'ok' : c.resultsRef.current[i] === 'NG' ? 'ng' : 'done'; },
@@ -59,18 +60,54 @@ function started(id, alpl, source = true) {
       review_source: source ? { session_id: 42, number_alpl: alpl, measurement_id: 102 } : null } };
 }
 
-test('one-item Start retains all chips and exact source sessions', async () => {
+test('stopped remeasure keeps the original session and queue', async () => {
   const c = fixture();
+  c.apiPost = async (url, body) => {
+    assert.equal(url, '/api/review/start/102');
+    assert.equal(body.trigger_mode, 'auto');
+    return { session_id: 42, target_count: 3, measured_count: 3,
+      queue_state: { queue: [1, 2, 3], position: 3, run_mode: 'single', start_confirmed: true } };
+  };
   await c.remeasureSelected();
-  assert.equal(c.sessionRef.current.session_id, 43);
+  assert.equal(c.sessionRef.current.session_id, 42);
   assert.equal(c.displayQueueRef.current.length, 3);
-  assert.equal(c.reviewDisplayRef.current.queueIndex, 1);
+  assert.equal(c.reviewDisplayRef.current, null);
   c.sessionRef.current.state = 'stopped';
   await c.selectQueueTelemetry(0, 1);
   assert.equal(c.calls.at(-1).session_id, 42);
-  c.displayQueueRef.current[1].sessionId = 43;
   await c.selectQueueTelemetry(1, 2);
-  assert.equal(c.calls.at(-1).session_id, 43);
+  assert.equal(c.calls.at(-1).session_id, 42);
+});
+
+test('Queue selection is locked during a single-item remeasure and restored afterward', async () => {
+  const c = fixture();
+  c.sessionRef.current.state = 'running';
+  c.sessionRef.current.queue_state = { run_mode: 'single' };
+  const shown = c.telemetryRef.current;
+  assert.equal(c.isQueueReviewLocked(), true);
+  await c.selectQueueTelemetry(0, 1);
+  assert.equal(c.selectedQueueIndex, 1);
+  assert.equal(c.telemetryRef.current, shown);
+  assert.equal(c.calls.length, 0);
+
+  c.sessionRef.current.state = 'stopped';
+  assert.equal(c.isQueueReviewLocked(), false);
+  await c.selectQueueTelemetry(0, 1);
+  assert.equal(c.selectedQueueIndex, 0);
+  assert.equal(c.calls.length, 1);
+});
+
+test('Queue selection is locked while Pi is remeasuring an item in a running session', async () => {
+  const c = fixture();
+  c.sessionRef.current.state = 'running';
+  c.sessionRef.current.queue_state = { run_mode: 'normal' };
+  c.reviewPhase = 'remeasuring';
+  assert.equal(c.isQueueReviewLocked(), true);
+  await c.selectQueueTelemetry(0, 1);
+  assert.equal(c.selectedQueueIndex, 1);
+  assert.equal(c.calls.length, 0);
+  c.reviewPhase = 'paused';
+  assert.equal(c.isQueueReviewLocked(), false);
 });
 
 test('failed single-item Start does not leave a pending review or change queue', async () => {
@@ -276,5 +313,25 @@ test('normal Start sends optional tray capacity as null and preserves zero and a
     const restored = c.partEntryForSession({ state: 'running', session_id: 43, queue_state: {
       queue: [10], groups: posted.groups, tray_capacity: posted.Tray_Capacity, trigger_mode: 'auto' } }, null);
     assert.equal(restored.trayCapacity, capacity ?? null);
+  }
+});
+
+test('Part Entry continue sends the selected plan without creating a new display session', async () => {
+  for (const mode of ['remaining', 'all']) {
+    const c = fixture();
+    c.pendingWork = true;
+    c.continueMode = mode;
+    c.session = { session_id: 42, state: 'stopped', target_count: 5, measured_count: 2 };
+    let posted;
+    c.apiPost = async (url, body) => {
+      posted = { url, body };
+      return { session_id: 42, state: 'running', measured_count: 2, target_count: 5,
+        queue_state: { queue: [1, 2, 3, 4, 5], position: 2, run_mode: mode, start_confirmed: true } };
+    };
+    await c.startFromQueue();
+    assert.equal(posted.url, '/api/session/continue');
+    assert.equal(posted.body.session_id, 42);
+    assert.equal(posted.body.mode, mode);
+    assert.equal(c.sessionRef.current.session_id, 42);
   }
 });

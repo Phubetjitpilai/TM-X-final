@@ -14,6 +14,7 @@ export type SSEEventName =
   | "measurement"
   | "measurement_replaced"
   | "session_stopped"
+  | "session_work_ended"
   | "session_complete"
   | "session_timeout"
   | "image_updated"
@@ -30,6 +31,7 @@ const EVENT_NAMES: SSEEventName[] = [
   "measurement",
   "measurement_replaced",
   "session_stopped",
+  "session_work_ended",
   "session_complete",
   "session_timeout",
   "image_updated",

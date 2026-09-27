@@ -3,6 +3,7 @@ import math
 import re
 import socket
 import threading
+import asyncio
 import time
 
 import httpx
@@ -214,6 +215,8 @@ class Group(BaseModel):
 
 class CommandRequest(BaseModel):
     review_job: dict | None = None
+    run_pieces: list[int] | None = None
+    existing_measurements: dict[int, int] | None = None
     action: str
     session_id: int | None = None
     target_count: int | None = None
@@ -225,7 +228,7 @@ class CommandRequest(BaseModel):
 
 @http_app.post("/command")
 async def command(req: CommandRequest):
-    global is_running, _answer_action, TRAY_CAPACITY
+    global is_running, _answer_action, TRAY_CAPACITY, _worker_thread
     if req.action in ("pause_queue", "resume_queue", "remeasure"):
         if not is_running:
             raise HTTPException(409, "ไม่มี Session กำลังทำงาน")
@@ -234,6 +237,10 @@ async def command(req: CommandRequest):
     if req.action == "start":
         if is_running:
             raise HTTPException(409, "Pi กำลังทำงานอยู่")
+        if globals().get("_worker_thread") is not None and _worker_thread.is_alive():
+            await asyncio.to_thread(_worker_thread.join, 8)
+            if _worker_thread.is_alive():
+                raise HTTPException(409, "Pi ยังหยุดรอบก่อนหน้าไม่เสร็จ กรุณารอสักครู่")
         try:
             httpx.post(f"{BACKEND_URL}/api/heartbeat",
                 json={"session_id": current_session_id},
@@ -254,6 +261,8 @@ async def command(req: CommandRequest):
             raise HTTPException(400, "มี ALPL ซ้ำข้ามกลุ่ม")
         if req.target_count != len(all_alpl):
             raise HTTPException(400, f"target_count ({req.target_count}) ไม่เท่ากับจำนวน ALPL รวมทุกกลุ่ม ({len(all_alpl)})")
+        if req.run_pieces is not None and (not req.run_pieces or any(p < 1 or p > req.target_count for p in req.run_pieces) or len(set(req.run_pieces)) != len(req.run_pieces)):
+            raise HTTPException(400, "run_pieces ไม่ตรงกับคิว")
         if any(not g.template_name for g in groups):
             raise HTTPException(400, "มีกลุ่มที่ไม่ได้ระบุ `template_name`")
 
@@ -280,15 +289,16 @@ async def command(req: CommandRequest):
             _answer_action = None
             _answer_event.clear()
 
-        queue_review.reset(req.session_id)
+        queue_review.reset(req.session_id, req.run_pieces, req.existing_measurements)
         TRAY_CAPACITY = 8 if req.tray_capacity is None else req.tray_capacity
         log.info("   Tray Capacity: %s", TRAY_CAPACITY)
         is_running = True
-        threading.Thread(
+        _worker_thread = threading.Thread(
             target=command_flow,
             args=(req.session_id, groups, req.target_count, req.trigger_mode),
             daemon=True,
-        ).start()
+        )
+        _worker_thread.start()
 
     elif req.action == "retry":
         with _answer_lock:
@@ -662,44 +672,10 @@ def judge(x, y, offset_x, offset_y, limits):
             reasons.append(f"offset_y {_f3(offset_y)} เกิน {_f3(limits.offset_max)}")
     return ("NG" if reasons else "OK"), reasons
 
-def clean_tools(tools, package_size):
-    """จัด GM เป็น X, Y, ค่าอื่น 4 ตัว, Offset X, Offset Y โดยไม่ใช้ค่าซ้ำ"""
-    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*",
-                         str(package_size or ""), re.IGNORECASE)
-    if not match:
-        raise ValueError(f"Package Size ไม่อยู่ในรูปแบบ กว้างxสูง: {package_size!r}")
-    nominal_x, nominal_y = map(float, match.groups())
-    candidates = [(index, item) for index, item in enumerate(tools or [])
-                  if item[0] is not None and math.isfinite(item[0])
-                  and abs(item[0]) < NO_VALUE_ABS and item[1] == 1]
-    if len(candidates) < 8:
+def clean_tools(tools):
+    if not tools:
         return []
-
-    # เลือกคู่ X/Y ที่มีความคลาดเคลื่อนรวมจาก Package Size น้อยสุด
-    # โดยบังคับให้เป็นคนละ Tool แม้ขนาดสองแกนจะเท่ากัน เช่น 4x4
-    x_index, y_index = min(
-        ((x[0], y[0]) for x in candidates for y in candidates if x[0] != y[0]),
-        key=lambda pair: (abs(tools[pair[0]][0] - nominal_x)
-                          + abs(tools[pair[1]][0] - nominal_y), pair),
-    )
-    remaining = [(index, item) for index, item in candidates
-                 if index not in (x_index, y_index)]
-    offset_indices = [index for index, _ in sorted(
-        remaining, key=lambda entry: (abs(entry[1][0]), entry[0]))[:2]]
-    middle = [item for index, item in remaining if index not in offset_indices][:4]
-    log.info("GM จัดค่าจาก Package Size %s: X=#%s Y=#%s Offset X=#%s Offset Y=#%s",
-             package_size, x_index + 1, y_index + 1,
-             offset_indices[0] + 1, offset_indices[1] + 1)
-    values = [tools[x_index], tools[y_index], *middle,
-              tools[offset_indices[0]], tools[offset_indices[1]]]
-    positions = [GM_IDX_X, GM_IDX_Y, GM_IDX_HORIZON_LEFT, GM_IDX_HORIZON_RIGHT,
-                 GM_IDX_VERTICAL_TOP, GM_IDX_VERTICAL_BOTTOM,
-                 GM_IDX_OFFSET_X, GM_IDX_OFFSET_Y]
-    tools_new = [None] * (max((index for index in positions if index is not None), default=-1) + 1)
-    for index, item in zip(positions, values):
-        if index is not None:
-            tools_new[index] = item
-    return tools_new
+    return [item for item in tools if item[0] is not None and item[0] >= 0]
 
             # ── ดึงค่าออกมาตาม index ที่ตั้งไว้ ────────────────────────────
 def _val(idx,tools):
@@ -708,7 +684,7 @@ def _val(idx,tools):
     return None if tools[idx] is None else tools[idx][0]
             
 
-def get_measurement_tmx(sock, limits, package_size, timeout=GM_MAX_WAIT):
+def get_measurement_tmx(sock, limits, timeout=GM_MAX_WAIT):
     """วน GM จนได้ค่าใหม่ → ตัดสิน OK/NG → พิมพ์ผล
 
     คืน `(result, x, y, offset)` โดย result เป็น "OK" / "NG" / "UNKNOWN"
@@ -734,7 +710,7 @@ def get_measurement_tmx(sock, limits, package_size, timeout=GM_MAX_WAIT):
         tools = parse_gm(resp) if ok else None
         log.info(tools)
         if tools and has_real_value(tools):
-            tools_new = clean_tools(tools, package_size)
+            tools_new = clean_tools(tools)
             log.info(tools_new)
         
             x, y, horizon_left, horizon_right, vertical_top, vertical_bottom, offset_x, offset_y = (
@@ -1089,6 +1065,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
 
     global current_session_id, is_running,_hb_last_ok, _trigger_mode
     _hb_last_ok = time.time()
+    run_generation = queue_review.generation
     current_session_id = session_id  # heartbeat จะเริ่มแนบ session นี้ทันที
     # ⚠ ตั้ง **ก่อน** is_running = True — heartbeat_loop อ่านตัวนี้จากอีกเธรด
     #   ถ้าตั้งทีหลัง heartbeat รอบแรกของ session จะส่งโหมดของรอบก่อนไป
@@ -1271,7 +1248,7 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                     break
                 ok, t1_resp = trigger_tmx(client_socket)
                 if ok:
-                    result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits, pkg)
+                    result, x, y, horizon_left, horizon_right,vertical_top, vertical_bottom, offset_x, offset_y = get_measurement_tmx(client_socket, groups[group_of[piece - 1]].limits)
                     if result != "UNKNOWN":
                         break
                 if not ok:
@@ -1384,6 +1361,8 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
                 client_socket.close()
             except Exception:
                 pass
+        if run_generation != queue_review.generation:
+            return
         is_running = False
         current_session_id = None  # heartbeat กลับไปยิงแบบ idle (ไม่แนบ session)
         log.info("\n✅ จบ session — ปิดการเชื่อมต่อ TM-X แล้ว")

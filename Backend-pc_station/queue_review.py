@@ -13,9 +13,12 @@ class QueueReview:
         self.lock = threading.RLock()
         self.reset(None)
 
-    def reset(self, session_id):
+    def reset(self, session_id, run_pieces=None, existing_measurements=None):
         with self.lock:
+            self.generation = getattr(self, "generation", 0) + 1
             self.session_id = session_id
+            self.run_pieces = list(run_pieces) if run_pieces is not None else None
+            self.existing_measurements = {int(k): v for k, v in (existing_measurements or {}).items()}
             self.phase = "running"
             self.pause = False
             self.pending = None
@@ -58,17 +61,21 @@ class QueueReview:
             return False
 
     def pieces(self, target, running):
-        next_piece = 1
-        while running() and next_piece <= target:
+        plan = self.run_pieces if self.run_pieces is not None else list(range(1, target + 1))
+        generation = self.generation
+        next_index = 0
+        while running() and generation == self.generation and next_index < len(plan):
             with self.lock:
                 if self.pause and not self.pending:
                     self.phase = "paused"
                     piece = None
                 else:
-                    self.job = self.pending
+                    scheduled_piece = plan[next_index]
+                    existing_id = self.existing_measurements.get(scheduled_piece)
+                    self.job = self.pending or ({"piece": scheduled_piece, "measurement_id": existing_id} if existing_id else None)
                     self.pending = None
                     self.phase = "remeasuring" if self.job else "running"
-                    piece = self.job["piece"] if self.job else next_piece
+                    piece = self.job["piece"] if self.job else scheduled_piece
                     self.capture_id = None
                     self.interrupted = False
             if piece is None:
@@ -81,8 +88,8 @@ class QueueReview:
                 except Exception:
                     self.phase = "failed"
                     raise
-            if not self.job and not self.interrupted:
-                next_piece += 1
+            if not self.interrupted and (not self.job or self.job["piece"] == plan[next_index]):
+                next_index += 1
             self.job = None
 
     def prepare(self, piece):

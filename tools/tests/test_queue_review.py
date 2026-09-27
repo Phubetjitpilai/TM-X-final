@@ -92,6 +92,29 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             c.command("pause_queue", 42)
 
+    def test_continue_remaining_and_replay_all_use_original_positions(self):
+        c = QueueReview("http://unused")
+        c.reset(42, run_pieces=[3, 4, 5])
+        self.assertEqual(list(c.pieces(5, lambda: True)), [3, 4, 5])
+        c.reset(42, run_pieces=[1, 2, 3, 4, 5], existing_measurements={1: 101, 2: 102})
+        worker = c.pieces(5, lambda: True)
+        self.assertEqual(next(worker), 1)
+        self.assertEqual(c.job["measurement_id"], 101)
+        self.assertEqual(next(worker), 2)
+        self.assertEqual(c.job["measurement_id"], 102)
+        self.assertEqual(next(worker), 3)
+        self.assertIsNone(c.job)
+        self.assertEqual(list(worker), [4, 5])
+
+    def test_single_piece_plan_keeps_same_session_identity(self):
+        c = QueueReview("http://unused")
+        c.reset(42, run_pieces=[2], existing_measurements={2: 102})
+        worker = c.pieces(5, lambda: True)
+        self.assertEqual(next(worker), 2)
+        self.assertEqual(c.session_id, 42)
+        self.assertEqual(c.job["measurement_id"], 102)
+        self.assertEqual(list(worker), [])
+
 
 class FakeDB:
     def __init__(self):
@@ -121,6 +144,10 @@ class FakeDB:
             self.row["image_path"] = None
         if sql.startswith("UPDATE sessions SET measured_count=1"):
             self.session.update(state="stopped", measured_count=1, queue_state=args[0])
+        if sql.startswith("UPDATE sessions SET state='stopped'"):
+            self.session.update(state="stopped", queue_state=args[0])
+        if sql.startswith("UPDATE sessions SET target_count="):
+            self.session.update(target_count=args[0], queue_state=args[1])
     def fetchone(self):
         sql = self.statements[-1][0]
         if "JOIN sessions" in sql:
@@ -177,17 +204,10 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException): review.check_image(101, "ticket-1")
 
     async def test_finished_session_restarts_exactly_one_alpl_with_original_mode(self):
-        async def start(request):
-            body = await request.json()
-            self.assertEqual(body["groups"][0]["number_alpl"], [10])
-            self.assertEqual(body["Trigger_Mode"], "manual")
-            self.assertEqual(body["Operator"], "Test")
-            self.assertEqual(body["Measure_Type"], "IPM")
-            self.assertEqual(body["Tray_Capacity"], 0)
-            self.assertEqual(request.state.review_source, {"measurement_id": 101, "session_id": 42, "number_alpl": 10, "update_existing": True})
-            return {"session_id": 43, "target_count": 1}
-        with patch.object(review.s, "get_db", return_value=self.db), patch.object(session, "start_session", side_effect=start):
-            self.assertEqual(await review.start_single(101), {"session_id": 43, "target_count": 1})
+        restart = AsyncMock(return_value={"session_id": 42, "target_count": 5})
+        with patch.object(review.s, "get_db", return_value=self.db), patch.object(session, "restart_existing_session", restart):
+            self.assertEqual(await review.start_single(101), {"session_id": 42, "target_count": 5})
+        restart.assert_awaited_once_with(42, "single", None, 101)
 
     async def test_capture_cannot_advance_until_previous_image_finishes(self):
         with patch.dict(review.s.session_queues, {42: self.db.queue}), patch.object(review.s, "get_db", return_value=self.db):
@@ -231,6 +251,24 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events.call_args_list[0].args[1]["measurement_session_id"], 42)
         self.assertTrue(review.check_image(101, "single"))  # image arrives after completion
 
+    async def test_stopped_remeasure_replaces_row_in_same_session_without_advancing_queue(self):
+        q = {**self.db.queue, "run_mode": "single", "run_pieces": [1]}
+        criteria = {"nominal_x": 8.035, "nominal_y": 8.035, "upper_tol": .015, "lower_tol": .015, "offset_tol": None}
+        events = AsyncMock()
+        with patch.dict(review.s.session_queues, {42: q}, clear=True), \
+             patch.object(measurements, "get_db", return_value=self.db), \
+             patch.object(measurements, "_load_criteria", return_value=criteria), \
+             patch.object(measurements, "push_event", events), patch.object(measurements, "log_edit"):
+            result = await measurements.create_measurement(self.request)
+        self.assertEqual(result["measurement_id"], 101)
+        self.assertEqual(result["measured"], 2)
+        self.assertEqual(result["target"], 5)
+        self.assertEqual(self.db.session["state"], "stopped")
+        self.assertEqual(self.db.session["measured_count"], 2)
+        self.assertEqual(json.loads(self.db.session["queue_state"])["position"], 2)
+        self.assertEqual([call.args[0] for call in events.call_args_list], ["measurement_replaced", "session_complete"])
+        self.assertFalse(any(sql.startswith("INSERT") for sql, _ in self.db.statements))
+
     async def test_standalone_review_without_capture_cannot_insert(self):
         q = {"review_source": {"update_existing": True}}
         with patch.dict(review.s.session_queues, {43: q}):
@@ -259,59 +297,215 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session._validate_group(Cursor(), 0, group, "New", [10], remeasure=True), "021")
 
     async def test_new_remeasure_start_uses_real_start_validation_and_original_limits(self):
-        class StartDB(FakeDB):
-            lastrowid = 43
+        # The restart endpoint must keep the original ID and schedule only
+        # unmeasured positions, while replay-all includes measured positions.
+        class RestartDB(FakeDB):
+            def __init__(self):
+                super().__init__()
+                self.session["state"] = "stopped"
+                self.queue.update(start_confirmed=True, group_templates=["021"], tray_capacity=8)
             def fetchone(self):
                 sql = self.statements[-1][0]
                 if "GET_LOCK" in sql: return {"got": 1}
-                if "SELECT session_id FROM sessions WHERE state" in sql: return None
-                if "SELECT t.template_name" in sql: return {"template_name": "021"}
+                if "WHERE state='running'" in sql: return None
+                if "ORDER BY session_id DESC" in sql: return {"session_id": 42}
+                if "FROM sessions WHERE session_id" in sql:
+                    return {**self.session, "queue_state": json.dumps(self.queue)}
                 return super().fetchone()
-            def fetchall(self): return [{"number_alpl": 10}]
-        db = StartDB()
-        db.queue.update(entry_mode="New", measure_mode="New")
-        db.queue["groups"][0]["part_number"] = "PN"
-        crit = {"nominal_x": 8.035, "nominal_y": 8.035, "upper_tol": .015, "lower_tol": .015, "offset_tol": .1}
-        notify = AsyncMock()
+            def fetchall(self):
+                return [{"measurement_id": 101, "number_alpl": 10},
+                        {"measurement_id": 102, "number_alpl": 20}]
+        db = RestartDB()
+        client = AsyncMock()
+        client.post.return_value = Mock(status_code=200)
+        client.post.return_value.raise_for_status = Mock()
+        context = AsyncMock()
+        context.__aenter__.return_value = client
         with patch.dict(review.s.session_queues, {}, clear=True), \
-             patch.object(review.s, "get_db", return_value=db), patch.object(session, "get_db", return_value=db), \
-             patch.object(session, "ALLOW_MANUAL_TRIGGER", True), \
-             patch.object(session, "_criteria_from_config", return_value=crit), \
-             patch.object(session, "_load_criteria", return_value=crit), \
-             patch.object(session, "_notify_agent_start", notify), patch.object(session, "push_event", AsyncMock()):
-            response = await review.start_single(101, review.SingleReviewStartRequest(trigger_mode="auto"))
-            self.assertEqual(response["target_count"], 1)
-            self.assertEqual(response["queue_state"]["measure_mode"], "New")
-            self.assertTrue(response["queue_state"]["review_source"]["update_existing"])
-            self.assertEqual(response["queue_state"]["trigger_mode"], "auto")
-            self.assertEqual(notify.call_args.args[3], "auto")
-            self.assertEqual(notify.call_args.args[4], 0)
-            self.assertEqual(response["queue_state"]["tray_capacity"], 0)
-            sent_groups = notify.call_args.args[2]
-            self.assertEqual(sent_groups[0]["alpl"], [10])
-            self.assertEqual(sent_groups[0]["template_name"], "021")
-            self.assertEqual(sent_groups[0]["limits"]["offset_max"], .1)
-            for capacity in (None, 12, 0):
-                body = {"Measure_Type": "IPM", "Operator": "Test", "Trigger_Mode": "auto",
-                        "Tray_Capacity": capacity, "groups": [{"number_alpl": [10], "package_size": "8x8"}]}
-                async def receive():
-                    return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
-                normal = await session.start_session(Request({"type": "http", "method": "POST", "headers": []}, receive))
-                self.assertEqual(notify.call_args.args[4], capacity)
-                self.assertEqual(normal["queue_state"]["tray_capacity"], capacity)
-        writes = [sql for sql, _ in db.statements if sql.startswith(("INSERT", "UPDATE"))]
-        self.assertTrue(writes)
-        self.assertTrue(all("sessions" in sql for sql in writes))
+             patch.object(session, "get_db", return_value=db), \
+             patch.object(session, "_build_groups", return_value=[{"template_name": "021", "alpl": db.queue["queue"], "handler": "H"}]), \
+             patch.object(session.httpx, "AsyncClient", return_value=context), \
+             patch.object(session, "push_event", AsyncMock()):
+            for mode, pieces in (("remaining", [3, 4, 5]), ("all", [1, 2, 3, 4, 5]), ("single", [1])):
+                result = await session.restart_existing_session(42, mode, measurement_id=101 if mode == "single" else None)
+                payload = client.post.call_args.kwargs["json"]
+                self.assertEqual(result["session_id"], 42)
+                self.assertEqual(result["measured_count"], 2)
+                self.assertEqual(payload["run_pieces"], pieces)
+                self.assertEqual(payload["existing_measurements"],
+                                 {1: 101, 2: 102} if mode == "all" else {1: 101} if mode == "single" else {})
+                self.assertEqual(payload["target_count"], 5)
+                self.assertEqual(payload["tray_capacity"], 0 if mode == "single" else 8)
+            db.queue.update(queue=[10, 20], group_of=[0, 0], position=2,
+                            groups=[{**db.queue["groups"][0], "number_alpl": [10, 20]}],
+                            work_closed=True)
+            db.session["target_count"] = 2
+            closed = await session.restart_existing_session(42, "single", measurement_id=101)
+            self.assertEqual(closed["target_count"], 2)
+            self.assertEqual(client.post.call_args.kwargs["json"]["run_pieces"], [1])
+
+    async def test_timeout_restart_requires_pi_and_restores_timeout_after_rejected_start(self):
+        class RestartDB(FakeDB):
+            def fetchone(self):
+                sql = self.statements[-1][0]
+                if "GET_LOCK" in sql: return {"got": 1}
+                if "WHERE state='running'" in sql: return None
+                if "ORDER BY session_id DESC" in sql: return {"session_id": 42}
+                if "FROM sessions WHERE session_id" in sql:
+                    return {**self.session, "queue_state": json.dumps(self.queue)}
+                return super().fetchone()
+            def fetchall(self):
+                return [{"measurement_id": 101, "number_alpl": 10},
+                        {"measurement_id": 102, "number_alpl": 20}]
+
+        db = RestartDB()
+        db.session.update(state="timeout", last_seen="old-heartbeat", ended_at="interrupted-at")
+        db.queue.update(start_confirmed=True, group_templates=["021"], tray_capacity=8)
+        original_queue = copy.deepcopy(db.queue)
+        client = AsyncMock()
+        client.post.return_value = Mock()
+        context = AsyncMock()
+        context.__aenter__.return_value = client
+        events = AsyncMock()
+        with patch.dict(session.session_queues, {}, clear=True), \
+             patch.object(session, "get_db", return_value=db), \
+             patch.object(session, "read_pi_status", return_value=False) as pi_status, \
+             patch.object(session, "_build_groups", return_value=[{"template_name": "021", "alpl": db.queue["queue"]}]), \
+             patch.object(session.httpx, "AsyncClient", return_value=context), \
+             patch.object(session, "push_event", events):
+            with self.assertRaises(HTTPException) as offline:
+                await session.restart_existing_session(42, "single", measurement_id=101)
+            self.assertEqual(offline.exception.status_code, 503)
+            self.assertFalse(any(sql.startswith("UPDATE sessions SET state='running'") for sql, _ in db.statements))
+            client.post.assert_not_awaited()
+
+            pi_status.return_value = True
+            client.post.return_value.raise_for_status.side_effect = session.httpx.HTTPStatusError(
+                "Pi is busy", request=session.httpx.Request("POST", "http://pi/command"),
+                response=session.httpx.Response(409))
+            with self.assertRaises(HTTPException) as rejected:
+                await session.restart_existing_session(42, "single", measurement_id=101)
+            self.assertEqual(rejected.exception.status_code, 502)
+            rollback = [(sql, args) for sql, args in db.statements
+                        if sql.startswith("UPDATE sessions SET state=%s")][-1]
+            self.assertEqual(rollback[1][:3], ("timeout", "interrupted-at", "old-heartbeat"))
+            self.assertEqual(json.loads(rollback[1][3]), original_queue)
+            self.assertNotIn(42, session.session_queues)
+            events.assert_not_awaited()
+
+            client.post.side_effect = session.httpx.ConnectError("Pi disconnected")
+            with self.assertRaises(HTTPException) as disconnected:
+                await session.restart_existing_session(42, "remaining")
+            self.assertEqual(disconnected.exception.status_code, 502)
+            rollback = [(sql, args) for sql, args in db.statements
+                        if sql.startswith("UPDATE sessions SET state=%s")][-1]
+            self.assertEqual(rollback[1][0], "timeout")
+            client.post.side_effect = None
+            client.post.return_value.raise_for_status.side_effect = None
+            result = await session.restart_existing_session(42, "single", measurement_id=101)
+            self.assertEqual(result["session_id"], 42)
+            self.assertEqual(result["state"], "running")
+            self.assertEqual(client.post.call_args.kwargs["json"]["run_pieces"], [1])
+            self.assertEqual(client.post.call_args.kwargs["json"]["existing_measurements"], {1: 101})
+            events.assert_awaited_once()
+            continued = await session.restart_existing_session(42, "remaining")
+            self.assertEqual(continued["session_id"], 42)
+            self.assertEqual(client.post.call_args.kwargs["json"]["run_pieces"], [3, 4, 5])
+            self.assertEqual(client.post.call_args.kwargs["json"]["existing_measurements"], {})
 
     async def test_standalone_start_forwards_selected_mode_over_saved_mode(self):
         for mode in ("auto", "manual"):
             self.db.queue["trigger_mode"] = "manual" if mode == "auto" else "auto"
-            async def start(request):
-                body = await request.json()
-                self.assertEqual(body["Trigger_Mode"], mode)
-                return {"session_id": 43, "target_count": 1}
-            with patch.object(review.s, "get_db", return_value=self.db), patch.object(session, "start_session", side_effect=start):
+            restart = AsyncMock(return_value={"session_id": 42})
+            with patch.object(review.s, "get_db", return_value=self.db), patch.object(session, "restart_existing_session", restart):
                 await review.start_single(101, review.SingleReviewStartRequest(trigger_mode=mode))
+            restart.assert_awaited_once_with(42, "single", mode, 101)
+
+    async def test_end_work_closes_only_pending_queue_and_preserves_measurements(self):
+        class EndDB(FakeDB):
+            def fetchone(self):
+                sql = self.statements[-1][0]
+                if "GET_LOCK" in sql: return {"got": 1}
+                if "ORDER BY session_id DESC" in sql: return {"session_id": 42}
+                if "FROM sessions WHERE session_id" in sql:
+                    return {**self.session, "queue_state": json.dumps(self.queue)}
+                return super().fetchone()
+        db = EndDB()
+        db.session["state"] = "stopped"
+        db.queue["group_templates"] = ["021"]
+        events = AsyncMock()
+        with patch.object(session, "get_db", return_value=db), patch.object(session, "push_event", events):
+            result = await session.end_work(session.StopSessionRequest(session_id=42))
+        self.assertTrue(result["queue_state"]["work_closed"])
+        self.assertEqual(result["queue_state"]["queue"], [10, 20])
+        self.assertEqual(result["queue_state"]["original_plan"]["queue"], [10, 20, 30, 40, 50])
+        self.assertEqual(db.session["measured_count"], 2)
+        self.assertEqual(db.session["target_count"], 2)
+        self.assertFalse(any(sql.startswith("DELETE") for sql, _ in db.statements))
+        events.assert_awaited_once()
+
+    async def test_timeout_end_work_requires_online_idle_pi(self):
+        class EndDB(FakeDB):
+            def fetchone(self):
+                sql = self.statements[-1][0]
+                if "GET_LOCK" in sql: return {"got": 1}
+                if "ORDER BY session_id DESC" in sql: return {"session_id": 42}
+                if "FROM sessions WHERE session_id" in sql:
+                    return {**self.session, "queue_state": json.dumps(self.queue)}
+                return super().fetchone()
+
+        db = EndDB()
+        db.session["state"] = "timeout"
+        db.queue.update(start_confirmed=True, group_templates=["021"])
+        client = AsyncMock()
+        client.get.return_value = Mock()
+        client.get.return_value.json.return_value = {"phase": "running"}
+        context = AsyncMock()
+        context.__aenter__.return_value = client
+        events = AsyncMock()
+        with patch.object(session, "get_db", return_value=db), \
+             patch.object(session, "read_pi_status", return_value=False) as pi_status, \
+             patch.object(session.httpx, "AsyncClient", return_value=context), \
+             patch.object(session, "push_event", events):
+            with self.assertRaises(HTTPException) as offline:
+                await session.end_work(session.StopSessionRequest(session_id=42))
+            self.assertEqual(offline.exception.status_code, 503)
+            client.get.assert_not_awaited()
+            pi_status.return_value = True
+            with self.assertRaises(HTTPException) as busy:
+                await session.end_work(session.StopSessionRequest(session_id=42))
+            self.assertEqual(busy.exception.status_code, 409)
+            self.assertFalse(any(sql.startswith("UPDATE sessions SET target_count") for sql, _ in db.statements))
+            client.get.return_value.json.return_value = {"phase": "stopped"}
+            result = await session.end_work(session.StopSessionRequest(session_id=42))
+            self.assertTrue(result["queue_state"]["work_closed"])
+            self.assertEqual(result["queue_state"]["queue"], [10, 20])
+            events.assert_awaited_once()
+
+    async def test_normal_start_is_blocked_while_latest_queue_has_pending_pieces(self):
+        class GuardDB(FakeDB):
+            def fetchone(self):
+                sql = self.statements[-1][0]
+                if "GET_LOCK" in sql: return {"got": 1}
+                if "WHERE state = 'running'" in sql: return None
+                if "ORDER BY session_id DESC" in sql:
+                    return {"state": self.pending_state, "measured_count": 2, "target_count": 5,
+                            "queue_state": json.dumps({"start_confirmed": True, "work_closed": False})}
+                return super().fetchone()
+        body = {"Measure_Type": "IPM", "Operator": "Test", "groups": [{"number_alpl": [11]}]}
+        for state in ("stopped", "timeout"):
+            db = GuardDB()
+            db.pending_state = state
+            async def receive():
+                return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
+            request = Request({"type": "http", "method": "POST", "headers": []}, receive)
+            with patch.object(session, "get_db", return_value=db), \
+                 patch.object(session, "_parse_entry_groups", return_value=body["groups"]), \
+                 patch.object(session, "_flatten_groups", return_value=([11], [0])):
+                with self.assertRaises(HTTPException) as caught:
+                    await session.start_session(request)
+            self.assertEqual(caught.exception.status_code, 409)
+            self.assertFalse(any(sql.startswith("INSERT") for sql, _ in db.statements))
 
     def test_invalid_standalone_trigger_mode_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -383,9 +577,10 @@ class AgentTrayTests(unittest.IsolatedAsyncioTestCase):
             exec(compile(ast.Module(body=nodes, type_ignores=[]), filename, "exec"), env)
             for capacity, expected in [(None, 8), (12, 12), (0, 0), (None, 8)]:
                 env["is_running"] = False
+                env["_worker_thread"] = None
                 req = env["CommandRequest"](action="start", session_id=43, target_count=1,
                     tray_capacity=capacity, groups=[{"template_name": "021", "alpl": [10],
-                    "limits": {"x_lo": 8, "x_hi": 9, "y_lo": 8, "y_hi": 9}}])
+                    "handler": "H", "limits": {"x_lo": 8, "x_hi": 9, "y_lo": 8, "y_hi": 9}}])
                 await env["command"](req)
                 self.assertEqual(env["TRAY_CAPACITY"], expected, filename)
             for invalid in (-1, 1.5, True):

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { useToast } from "./Toast";
 import MultiSelectCell from "./MultiSelectCell";
+import { normalizePackageSize } from "../utils/packageSize";
 
 /** ชนิดของช่องกรอกในตาราง lookup
  *  select-* = FK ไปตารางอื่น ต้องเลือกจากรายการที่มีจริงเท่านั้น ห้ามพิมพ์เอง
@@ -363,7 +364,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
         step={f.type === "number" ? "0.001" : undefined}
         placeholder={f.label}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(f.key === "package_size" ? normalizePackageSize(e.target.value) : e.target.value)}
         // ช่องตัวเลข: ลด padding ขวา (spinner ของ input[type=number] กินที่อยู่แล้ว)
         // ให้ตัวเลข/placeholder แสดงเต็มไม่โดนตัดกลางคำ
         style={f.type === "number" ? { width: "100%", paddingRight: "0.25rem" } : { width: "100%" }}

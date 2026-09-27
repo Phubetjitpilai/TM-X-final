@@ -1,10 +1,8 @@
 """Queue review commands and acquisition identity shared by Pi and Receiver."""
-import copy
-import json
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import shared as s
 
@@ -181,33 +179,16 @@ def check_image(measurement_id, token):
 
 @router.post("/api/review/start/{measurement_id}")
 async def start_single(measurement_id: int, options: SingleReviewStartRequest | None = None):
-    # Reuse Start validation/locking and original group configuration, with only one ALPL.
-    from routers.session import start_session
+    # A stopped review reopens the original session and replaces its original row.
+    from routers.session import restart_existing_session
     db = s.get_db()
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT m.number_alpl, m.session_id, s.queue_state FROM measurements m JOIN sessions s ON s.session_id=m.session_id WHERE m.measurement_id=%s", (measurement_id,))
+            cur.execute("SELECT m.session_id FROM measurements m WHERE m.measurement_id=%s", (measurement_id,))
             row = cur.fetchone()
-            if not row or not row["queue_state"]:
-                raise HTTPException(409, "ไม่มีข้อมูลคิวเดิม — กรุณาเริ่มผ่าน Part Entry")
-            q = row["queue_state"]
-            q = json.loads(q) if isinstance(q, str) else q
-            index = q["queue"].index(row["number_alpl"])
-            group = copy.deepcopy(q["groups"][q["group_of"][index]])
-            group["number_alpl"] = [row["number_alpl"]]
-            body = {"Measure_Type": q.get("measure_mode", q["entry_mode"]),
-                    "Operator": q["operator"],
-                    "Trigger_Mode": (options.trigger_mode if options else None) or q.get("trigger_mode", "auto"),
-                    "Tray_Capacity": 0,
-                    "groups": [group]}
+            if not row:
+                raise HTTPException(404, "ไม่พบผลวัดเดิม")
     finally:
         db.close()
-    async def receive():
-        return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
-    request = Request({"type": "http", "method": "POST", "path": "/api/session/start", "headers": []}, receive)
-    # Internal metadata, not a client-supplied Start option. Keep it in queue_state
-    # so both SSE and polling can distinguish a single-item remeasure from Start.
-    request.state.review_source = {"measurement_id": measurement_id,
-                                   "session_id": row["session_id"], "number_alpl": row["number_alpl"],
-                                   "update_existing": True}
-    return await start_session(request)
+    return await restart_existing_session(row["session_id"], "single",
+                                          options.trigger_mode if options else None, measurement_id)

@@ -443,7 +443,9 @@ async def replace_measurement(req, capture):
     an in-session review leaves the normal queue and its counters untouched.
     """
     mid = capture["measurement_id"]
-    single_review = capture.get("single_review", False)
+    queue_state = session_queues.get(req.session_id) or {}
+    single_review = capture.get("single_review", False) or queue_state.get("run_mode") == "single"
+    same_session_review = queue_state.get("run_mode") == "single"
     source_sid = capture.get("measurement_session_id", req.session_id)
     completed_queue = None
     db = get_db()
@@ -456,19 +458,25 @@ async def replace_measurement(req, capture):
                 raise HTTPException(409, "Session ไม่ได้ Running")
             if single_review:
                 q = session_queues.get(req.session_id)
-                source = (q or {}).get("review_source") or {}
-                if (not source.get("update_existing") or source.get("measurement_id") != mid
-                        or source.get("session_id") != source_sid or q.get("position") != 0
-                        or session["measured_count"] != 0 or session["target_count"] != 1):
-                    raise HTTPException(409, "รอบวัดซ้ำไม่ตรงกับรายการเดิม หรือบันทึกไปแล้ว")
-                completed_queue = {**q, "position": 1}
+                if same_session_review:
+                    if (not q or capture["piece"] not in q.get("run_pieces", [])
+                            or source_sid != req.session_id or q["queue"][capture["piece"] - 1] not in q["queue"][:q["position"]]):
+                        raise HTTPException(409, "รอบวัดซ้ำไม่ตรงกับรายการเดิม")
+                    completed_queue = {**q, "run_mode": "single_complete"}
+                else:
+                    source = (q or {}).get("review_source") or {}
+                    if (not source.get("update_existing") or source.get("measurement_id") != mid
+                            or source.get("session_id") != source_sid or q.get("position") != 0
+                            or session["measured_count"] != 0 or session["target_count"] != 1):
+                        raise HTTPException(409, "รอบวัดซ้ำไม่ตรงกับรายการเดิม หรือบันทึกไปแล้ว")
+                    completed_queue = {**q, "position": 1}
             elif source_sid != req.session_id:
                 raise HTTPException(409, "ไม่สามารถวัดซ้ำข้าม Session โดยไม่มีคำสั่ง Start วัดซ้ำ")
             cur.execute("SELECT * FROM measurements WHERE measurement_id=%s AND session_id=%s FOR UPDATE", (mid, source_sid))
             before = cur.fetchone()
             if not before:
                 raise HTTPException(404, "ไม่พบผลวัดเดิม")
-            if single_review and completed_queue["queue"] != [before["number_alpl"]]:
+            if single_review and before["number_alpl"] != completed_queue["queue"][capture["piece"] - 1]:
                 raise HTTPException(409, "ALPL ไม่ตรงกับรายการวัดซ้ำ")
             crit = _load_criteria(cur, before["number_alpl"])
             verdict = _judge(value_x=req.value_x, value_y=req.value_y,
@@ -481,17 +489,21 @@ async def replace_measurement(req, capture):
                         (req.value_x, req.value_y, req.offset_opx, req.offset_opy, pos, verdict["result"], mid))
             response = {"measurement_id": mid, "result": verdict["result"], "offset_pos_op": pos,
                         "status": "complete" if single_review else "remeasured",
-                        "measured": 1 if single_review else session["measured_count"], "target": session["target_count"]}
+                        "measured": 1 if single_review and not same_session_review else session["measured_count"], "target": session["target_count"]}
             if single_review:
-                cur.execute("UPDATE sessions SET measured_count=1, state='stopped', ended_at=NOW(), queue_state=%s WHERE session_id=%s",
-                            (json.dumps(completed_queue), req.session_id))
+                if same_session_review:
+                    cur.execute("UPDATE sessions SET state='stopped', ended_at=NOW(), queue_state=%s WHERE session_id=%s",
+                                (json.dumps(completed_queue), req.session_id))
+                else:
+                    cur.execute("UPDATE sessions SET measured_count=1, state='stopped', ended_at=NOW(), queue_state=%s WHERE session_id=%s",
+                                (json.dumps(completed_queue), req.session_id))
             cur.execute("SELECT * FROM measurements WHERE measurement_id=%s", (mid,))
             after = cur.fetchone()
         db.commit()
         capture.update(saved=True, response=response, saved_measurement_id=mid)
         review.latest_image_capture[mid] = req.capture_id
         if single_review:
-            q["position"] = 1
+            q.update(completed_queue)
             session_queues.pop(req.session_id, None)
             measure_timeouts.pop(req.session_id, None)
         log_edit("measurements", "edit", f"วัดซ้ำ ID {mid}", before=before, after=after)
@@ -508,7 +520,8 @@ async def replace_measurement(req, capture):
             **{k: crit[k] for k in ("nominal_x", "nominal_y", "upper_tol", "lower_tol")},
         })
         if single_review:
-            await push_event("session_complete", {"session_id": req.session_id, "measured": 1, "target": 1})
+            await push_event("session_complete", {"session_id": req.session_id,
+                                                  "measured": response["measured"], "target": response["target"]})
         return response
     except Exception:
         db.rollback()

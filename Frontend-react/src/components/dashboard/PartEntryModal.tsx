@@ -417,7 +417,7 @@ export default function PartEntryModal({
             <label htmlFor="pe-tray-capacity">Tray Capacity</label>
             <input id="pe-tray-capacity" type="number" min="0" step="1"
               className={trayCapacityError ? "invalid" : undefined}
-              value={trayCapacity} placeholder="เว้นว่างเพื่อใช้ 8"
+              value={trayCapacity}
               aria-invalid={!!trayCapacityError} aria-describedby="pe-tray-capacity-hint"
               onChange={e => { setTrayCapacity(e.target.value); setTrayCapacityError(""); }} />
             <div id="pe-tray-capacity-hint" className="entry-session-hint" style={{ marginTop: ".4rem" }}>

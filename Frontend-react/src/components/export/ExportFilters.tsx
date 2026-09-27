@@ -1,4 +1,5 @@
 import MultiSelect from "../MultiSelect";
+import { normalizePackageSize } from "../../utils/packageSize";
 
 /** ช่องที่ติ๊กเลือกได้หลายค่า — ลำดับตรงกับ export.html เป๊ะ
  *
@@ -182,6 +183,7 @@ export default function ExportFilters({
             options={m.key === "part_number" ? partOptions : (options[m.key] ?? [])}
             selected={value.multi[m.key]}
             onChange={(next) => setMulti(m.key, next)}
+            normalizeQuery={m.key === "package_size" ? normalizePackageSize : undefined}
             hint={m.key === "part_number" ? "เลือก Package Size ก่อน" : undefined}
             emptyText={
               m.key === "part_number" && pkgSelected.length === 0

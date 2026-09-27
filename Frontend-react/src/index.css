@@ -689,6 +689,7 @@ button.topbar-link {
 .tq-chip.wait { background: var(--surface2); color: var(--muted); }
 .tq-chip:not(:disabled) { cursor: pointer; }
 .tq-chip:disabled { cursor: default; opacity: 1; }
+.tq-chip.review-locked { opacity: .5; }
 .tq-chip.selected { box-shadow: inset 0 0 0 2px var(--accent); }
 .tq-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* วัดไปแล้วแต่หน้านี้ไม่รู้ผล (เปิดจากอีกเครื่อง / ข้อมูลเก่ากว่าที่เซฟไว้) —
@@ -1551,14 +1552,17 @@ input[type="number"]::-webkit-outer-spin-button {
 .entry-session-hint {
   font-size: 0.78rem;
   color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.55rem 0.85rem;
   margin-bottom: 1rem;
 }
 .entry-session-hint strong { color: var(--text); }
-.entry-session-hint.warn { border-color: var(--warn); color: var(--warn); }
+.entry-session-hint.warn {
+  color: var(--warn);
+  background: var(--bg);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.85rem;
+}
+.entry-field-help { font-size: 0.72rem; color: var(--muted); margin-top: 0.25rem; }
 .entry-placeholder {
   text-align: center;
   color: var(--muted);

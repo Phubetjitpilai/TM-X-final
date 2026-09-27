@@ -217,6 +217,7 @@ export default function DashboardPage() {
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [reviewPhase, setReviewPhase] = useState("running");
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [continueMode, setContinueMode] = useState<"remaining" | "all">("remaining");
   const reviewBusyRef = useRef(false);
 
   async function resumeLatestTelemetry() {
@@ -262,19 +263,10 @@ export default function DashboardPage() {
         await apiPost("/api/review/command", { action: "remeasure", session_id: sid, measurement_id: selected.measurement_id });
         setReviewPhase("remeasuring");
       } else {
-        const originIndex = selectedQueueIndex;
-        if (originIndex == null) {
+        if (selectedQueueIndex == null) {
           showToast("กรุณาเลือก Queue ที่ต้องการวัดซ้ำก่อน", undefined, "warning");
           return;
         }
-        reviewDisplayRef.current = {
-          sessionId: null,
-          originSessionId: sid,
-          queueIndex: originIndex,
-          measurementId: selected.measurement_id,
-          pendingStart: true,
-          completed: false,
-        };
         const data = await apiPost<SessionState>(`/api/review/start/${selected.measurement_id}`, { trigger_mode: triggerMode });
         onSessionStarted(data);
         savePartEntryState();
@@ -298,7 +290,20 @@ export default function DashboardPage() {
     applyTelemetry(latestTelemetryRef.current);
   }
 
+  function isQueueReviewLocked() {
+    if (reviewBusyRef.current) return true;
+    const current = sessionRef.current;
+    if (current.state !== "running") return false;
+    let queue = current.queue_state;
+    try { if (typeof queue === "string") queue = JSON.parse(queue); } catch { queue = null; }
+    // วัดซ้ำตอน Session หยุดจะรันใน Session เดิมด้วย run_mode=single
+    // ส่วนวัดซ้ำระหว่าง Running ใช้ phase=remeasuring ของ Pi
+    return reviewPhase === "remeasuring" || queue?.run_mode === "single";
+  }
+
   async function selectQueueTelemetry(index: number, alpl: number) {
+    // กันที่ handler ด้วย เพราะคลิกที่เกิดก่อน React วาด disabled ยังมาถึงได้
+    if (isQueueReviewLocked()) return;
     const sid = sessionRef.current.session_id;
     if (sid == null) return;
     const request = ++telemetryRequestRef.current;
@@ -560,6 +565,7 @@ export default function DashboardPage() {
     measurement: (d) => onNewMeasurement(d),
     measurement_replaced: (d) => onMeasurementReplaced(d),
     session_stopped: (d) => onSessionStopped(d),
+    session_work_ended: (d) => onWorkEnded(d),
     session_complete: (d) => onSessionComplete(d),
     session_timeout: () => onSessionTimeout(),
     image_updated: (d) => onImageUpdated(d),
@@ -607,8 +613,14 @@ export default function DashboardPage() {
    *  `measured_count` ครอบเรื่อง queue_state ให้แล้ว เพราะ position ใน
    *  queue_state ขยับพร้อมกับตัวนับนี้เสมอ (ดู create_measurement)
    */
+  const polledQueue = (() => {
+    try {
+      const q = polledSession?.queue_state;
+      return typeof q === "string" ? JSON.parse(q) : q;
+    } catch { return null; }
+  })();
   const sessionSig = polledSession
-    ? `${polledSession.session_id}|${polledSession.state}|${polledSession.measured_count}|${polledSession.target_count}`
+    ? `${polledSession.session_id}|${polledSession.state}|${polledSession.measured_count}|${polledSession.target_count}|${polledQueue?.work_closed}|${polledQueue?.run_mode}|${polledQueue?.start_confirmed}`
     : "";
 
   /* ── ปุ่มจำลองสัญญาณทริกเกอร์ — ใช้ระหว่างที่ยังไม่ได้ต่อ MCU ──────────────
@@ -890,6 +902,27 @@ export default function DashboardPage() {
     savePartEntryState();
   }
 
+  async function endIncompleteWork() {
+    if (!pendingWork || session.session_id == null) return;
+    if (!await dialog.confirm(
+      "จบการทำงานนี้หรือไม่? ชิ้นที่ยังไม่ได้วัดจะถูกซ่อนจาก Queue ส่วนผลที่วัดแล้วจะยังอยู่และวัดซ้ำได้",
+      { title: "จบการทำงาน", okLabel: "■ จบการทำงาน", danger: true },
+    )) return;
+    try {
+      const result = await apiPost<{ queue_state: any; target_count: number }>("/api/session/end-work", { session_id: session.session_id });
+      onWorkEnded({ session_id: session.session_id, queue_state: result.queue_state, target_count: result.target_count });
+    } catch (e) {
+      dialog.alert(e instanceof ApiError ? e.message : "จบการทำงานไม่สำเร็จ", { title: "จบการทำงานไม่สำเร็จ", danger: true });
+    }
+  }
+
+  function onWorkEnded(d: any) {
+    if (d.session_id !== sessionRef.current.session_id) return;
+    const next = { ...sessionRef.current, queue_state: d.queue_state, target_count: d.target_count };
+    updateSession(next);
+    syncQueueStrip(next);
+  }
+
   /** ปุ่ม 🧹 Clear ของ Part Entry — ล้างคิวที่กรอกไว้ทั้ง 3 โหมด
    *
    *  ล้าง localStorage ด้วย ไม่งั้นรีเฟรชหน้าแล้วคิวเก่าจะกลับมาเอง —
@@ -931,8 +964,14 @@ export default function DashboardPage() {
     if (!raw) { setQueueStrip([]); return; }
     let q: any = null;
     try { q = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return; }
-    const list: number[] = q?.queue ?? q?.alpl ?? (q?.groups ?? []).flatMap((g: any) => g.alpl ?? []);
+    const fullList: number[] = q?.queue ?? q?.alpl ?? (q?.groups ?? []).flatMap((g: any) => g.alpl ?? []);
+    const list = q?.work_closed ? fullList.slice(0, q.position ?? st?.measured_count ?? 0) : fullList;
     if (!Array.isArray(list) || list.length === 0) { setQueueStrip([]); return; }
+    if (selectedQueueRef.current !== null && selectedQueueRef.current >= list.length) {
+      selectedQueueRef.current = null;
+      setSelectedQueueIndex(null);
+      applyTelemetry(latestTelemetryRef.current);
+    }
     const done = st?.measured_count ?? 0;
     setQueueStrip(
       list.map((alpl, i) => ({
@@ -941,7 +980,7 @@ export default function DashboardPage() {
         // ผลของชิ้นที่วัดไปแล้วมาจาก resultsRef ที่สะสมจาก SSE (+ กู้จาก
         // localStorage ตอน mount) — ถ้ายังไม่รู้ผลจริงๆ chipStateFor คืน "done"
         state: i < done ? chipStateFor(i)
-             : i === done && st?.state === "running" ? "now"
+             : i === done && st?.state === "running" && q?.run_mode !== "single" ? "now"
              : "wait",
       })),
     );
@@ -984,9 +1023,9 @@ export default function DashboardPage() {
 
   function onSessionStarted(d: any) {
     if (prepareDisplaySession(d) === false) return;
-    if (sessionRef.current.session_id === d.session_id) return;
+    if (sessionRef.current.session_id === d.session_id && sessionRef.current.state === "running") return;
     setReviewPhase("running");
-    const started = { ...d, state: "running", measured_count: 0 };
+    const started = { ...d, state: "running", measured_count: d.measured_count ?? 0 };
     syncQueueStrip(started);
     updateSession(started);
   }
@@ -1066,8 +1105,11 @@ export default function DashboardPage() {
     const index = review?.queueIndex ?? d.piece - 1;
     resultsRef.current[index] = d.result;
     setQueueStrip(prev => prev.map((q, i) => i === index ? { ...q, state: chipStateFor(i) } : q));
-    if (review || latestTelemetryRef.current?.measurement_id === d.measurement_id) latestTelemetryRef.current = d;
-    if (telemetryRef.current?.measurement_id === d.measurement_id || (review && selectedQueueRef.current === null)) applyTelemetry(d);
+    const q = sessionRef.current.queue_state;
+    const runMode = (typeof q === "string" ? JSON.parse(q) : q)?.run_mode;
+    const isLatestRunResult = runMode === "all" || runMode === "single";
+    if (review || isLatestRunResult || latestTelemetryRef.current?.measurement_id === d.measurement_id) latestTelemetryRef.current = d;
+    if (telemetryRef.current?.measurement_id === d.measurement_id || (selectedQueueRef.current === null && (review || isLatestRunResult))) applyTelemetry(d);
     if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
     setMtModal(null);
     if (review) updateSession({ measured_count: d.measured, target_count: d.target });
@@ -1233,6 +1275,7 @@ export default function DashboardPage() {
   }
 
   function onSessionStopped(d?: { agent_error?: string | null }) {
+    setContinueMode("remaining");
     const review = reviewDisplayRef.current;
     if (review && review.sessionId === sessionRef.current.session_id) {
       review.completed = true;
@@ -1260,6 +1303,8 @@ export default function DashboardPage() {
   }
   function onSessionComplete(d: any) {
     const review = reviewDisplayRef.current;
+    const rawQueue = sessionRef.current.queue_state;
+    const completedMode = (typeof rawQueue === "string" ? JSON.parse(rawQueue) : rawQueue)?.run_mode;
     if (review && review.sessionId === d.session_id) {
       review.completed = true;
       setReviewPhase("complete");
@@ -1273,7 +1318,7 @@ export default function DashboardPage() {
     updateSession({ state: "stopped", measured_count: d.measured, target_count: d.target });
     clearAllQueuesAndForms();
     savePartEntryState();
-    if (!review) showIpmSummary(sid);
+    if (!review && completedMode !== "single") showIpmSummary(sid);
   }
 
   /** เด้งสรุปผลตอนวัดครบ — เฉพาะโหมด IPM
@@ -1446,7 +1491,18 @@ export default function DashboardPage() {
   const barOkPct = barTotal ? (stats.ok / barTotal) * 100 : 0;
   const barNgPct = barTotal ? (stats.ng / barTotal) * 100 : 0;
 
-  const hasQueue = !!entryQueue;
+  const persistedQueue = (() => {
+    try {
+      const q = session.queue_state;
+      return typeof q === "string" ? JSON.parse(q) : q;
+    } catch { return null; }
+  })();
+  const pendingWork =
+    (session.state === "stopped" || session.state === "timeout") &&
+    !!persistedQueue?.start_confirmed &&
+    !persistedQueue?.work_closed &&
+    (session.measured_count ?? 0) < (session.target_count ?? 0);
+  const hasQueue = !!entryQueue || pendingWork;
 
   /* ── ทำไมเช็ค `!== "offline"` ไม่ใช่ `=== "online"` ──────────────────────
      `stationStatus` เริ่มต้นเป็น "connecting" เสมอ และเปลี่ยนเป็น "online"
@@ -1485,6 +1541,7 @@ export default function DashboardPage() {
     : stationStatus === "offline" ? "▶ Start (Server Offline)"
     : piStatus === false          ? "▶ Start (Pi Offline)"
     : !piOnline                   ? "▶ Start (Waiting for Pi)"
+    : pendingWork                ? "▶ Start (วัดต่อ)"
     : entryQueue                  ? `▶ Start (${entryQueue.mode} ×${entryQueue.list.length})`
     :                               "▶ Start (กด Save ก่อน)";
 
@@ -1518,6 +1575,24 @@ export default function DashboardPage() {
 
 
   async function startFromQueue() {
+    if (pendingWork) {
+      const ok = await dialog.confirm(
+        <div>
+          วัดต่อใน Session เดิม: {continueMode === "all" ? "วัดทั้งหมดอีกครั้ง ผลและรูปเดิมจะถูกแทนที่" : `วัดเฉพาะ ${session.target_count - session.measured_count} ชิ้นที่เหลือ`}
+        </div>,
+        { title: "วัดชิ้นงานต่อ", okLabel: "▶ เริ่มวัดต่อ" },
+      );
+      if (!ok) return;
+      try {
+        const data = await apiPost<SessionState>("/api/session/continue", {
+          session_id: session.session_id, mode: continueMode,
+        });
+        onSessionStarted(data);
+      } catch (e) {
+        dialog.alert(e instanceof ApiError ? e.message : "เริ่มวัดต่อไม่สำเร็จ", { title: "เริ่มวัดต่อไม่สำเร็จ", danger: true });
+      }
+      return;
+    }
     const q = entryQueue;
     if (!q) return;
 
@@ -1651,8 +1726,9 @@ export default function DashboardPage() {
   }
 
   const isRunning = session.state === "running";
+  const queueReviewLocked = isQueueReviewLocked();
   function partEntryForSession(st: SessionState, queued: EntryQueue | null): EntryQueue | null {
-    if (st.state !== "running") return queued;
+    if (st.state !== "running" && !pendingWork) return queued;
     let q = st.queue_state;
     try { if (typeof q === "string") q = JSON.parse(q); } catch { q = null; }
     if (!Array.isArray(q?.groups) || !Array.isArray(q?.queue)) {
@@ -1683,7 +1759,7 @@ export default function DashboardPage() {
     )}
     {isRunning && <button className="btn-stop" onClick={stopSession}>■ Stop</button>}
   </>;
-  const canEditQueue = session.state !== "running";
+  const canEditQueue = session.state !== "running" && !pendingWork;
 
   return (
     <div className="layout">
@@ -1768,14 +1844,12 @@ export default function DashboardPage() {
                     {parsedQueue?.review_source ? "วัดซ้ำ · " : ""}
                     {showManualTrigger ? "Manual (ปุ่มบนเว็บ)" : "Auto (MCU)"}
                   </span>}
-                  {/* ล้างคิวที่กรอกไว้ทั้งหมด — ล็อกตอน running เพราะคิวระหว่างวัด
-                      คือของที่ backend ถืออยู่จริง ล้างฝั่งหน้าเว็บอย่างเดียวจะทำให้
-                      สองฝั่งไม่ตรงกัน แล้วผลวัดที่ตามมาจะไปแปะกับ ALPL ผิดตัว */}
+                  {/* ล้างคิวที่กรอกไว้ไม่ได้ระหว่างวัดหรือขณะยังมีงานค้าง */}
                   <button
                     type="button"
                     className="btn-clear"
-                    disabled={isRunning}
-                    title={isRunning ? "กดไม่ได้ระหว่างกำลังวัด — กด Stop ก่อน"
+                    disabled={isRunning || pendingWork}
+                    title={isRunning || pendingWork ? "คิวเดิมยังเปิดอยู่ — วัดต่อหรือจบการทำงานก่อน"
                                      : "ล้างคิว Part Entry ที่กรอกไว้ทั้งหมด"}
                     onClick={clearPartEntry}
                   >
@@ -1823,6 +1897,13 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
+                  {pendingWork && <div style={{ gridColumn: "1 / -1", display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+                    <label><input type="radio" name="continueMode" checked={continueMode === "remaining"}
+                      onChange={() => setContinueMode("remaining")} /> วัดเฉพาะชิ้นที่เหลือ</label>
+                    <label><input type="radio" name="continueMode" checked={continueMode === "all"}
+                      onChange={() => setContinueMode("all")} /> วัดทั้งหมดอีกครั้ง</label>
+                  </div>}
+
                   {/* ⚠ ปุ่มควบคุมทั้งหมดอยู่ที่นี่ที่เดียว ไม่กระจายไปการ์ดซ้าย —
                       ตอนต้องกด Stop ด่วน คนต้องรู้ทันทีว่ามองที่ไหน ไม่ใช่กวาดตา
                       หาสองที่ · การ์ดซ้ายจึงเป็นจอแสดงสถานะล้วน ๆ ไม่มีปุ่มเลย */}
@@ -1830,6 +1911,16 @@ export default function DashboardPage() {
                     <button className="btn-start" disabled={!canStart} title={startTitle} onClick={startFromQueue}>
                       {startLabel}
                     </button>
+                    {pendingWork && (
+                      <button type="button" className="btn-stop"
+                        disabled={session.state === "timeout" && !piOnline}
+                        title={session.state === "timeout" && !piOnline
+                          ? "รอ Pi กลับมา Online ก่อนจบงาน"
+                          : "จบงานและซ่อนชิ้นที่ยังไม่ได้วัด"}
+                        onClick={endIncompleteWork}>
+                        ■ จบการทำงาน
+                      </button>
+                    )}
                     {runningControls}
                   </div>
               </div>
@@ -1848,10 +1939,11 @@ export default function DashboardPage() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span className="telemetry-alpl-badge">ALPL {telemetry?.number_alpl ?? "—"}</span>
-                  {(selectedQueueIndex !== null || (isRunning && reviewPhase !== "running")) && (
+                  {(selectedQueueIndex !== null || (isRunning && reviewPhase !== "running"))
+                    && (!isRunning || (reviewPhase !== "remeasuring" && reviewPhase !== "unknown")) && (
                     <button type="button" className="btn-clear" onClick={resumeLatestTelemetry}
-                      disabled={reviewBusy || (isRunning && (reviewPhase === "remeasuring" || reviewPhase === "unknown"))}>
-                      {isRunning ? "กลับไปค่าล่าสุดและวัดต่อ" : "กลับไปค่าล่าสุด"}
+                      disabled={reviewBusy}>
+                      {isRunning ? "ออกจากโหมดนี้" : "ออกจากโหมดนี้"}
                     </button>
                   )}
                   {/* ล้างเฉพาะสิ่งที่แสดงบนจอ ไม่แตะฐานข้อมูล — ผลวัดที่บันทึกไปแล้ว
@@ -1861,9 +1953,10 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     className="btn-clear"
-                    disabled={isRunning}
-                    title={isRunning ? "กดไม่ได้ระหว่างกำลังวัด — กด Stop ก่อน"
-                                     : "ล้างค่าที่แสดงอยู่ ไม่กระทบข้อมูลที่บันทึกแล้ว"}
+                    disabled={isRunning || pendingWork}
+                    title={pendingWork
+                      ? "คิวยังวัดไม่ครบ — วัดต่อหรือจบการทำงานก่อนล้างหน้าจอ"
+                      : "ล้างค่าที่แสดงอยู่ ไม่กระทบข้อมูลที่บันทึกแล้ว"}
                     onClick={clearTelemetry}
                   >
                     🧹 Clear
@@ -1874,7 +1967,7 @@ export default function DashboardPage() {
                 <div style={{ marginBottom: "0.5rem" }}>
                   <span title={reviewUnavailable} style={{ display: "inline-block" }}>
                     <button type="button" className="btn-start" disabled={!!reviewUnavailable || !telemetry?.measurement_id}
-                      onClick={remeasureSelected}>วัดใหม่</button>
+                      onClick={remeasureSelected}>วัดชิ้นนี้อีกรอบ</button>
                   </span>
                   {isRunning && <span role="status" style={{ marginLeft: "0.5rem" }}>
                     {reviewPhase === "paused" ? "พักคิวแล้ว — วางชิ้นงานที่เลือกก่อนวัดใหม่"
@@ -1971,10 +2064,10 @@ export default function DashboardPage() {
                   <div ref={queueStripRef} className="tq-strip" tabIndex={0} role="region" aria-label="Queue — เลื่อนแนวนอนเพื่อดูรายการเพิ่มเติม">
                     {queueStrip.map((q, i) => (
                       <button type="button" key={`${q.alpl}-${i}`}
-                        className={`tq-chip ${q.state}${selectedQueueIndex === i ? " selected" : ""}`}
-                        disabled={q.state === "wait" || q.state === "now"}
+                        className={`tq-chip ${q.state}${selectedQueueIndex === i ? " selected" : ""}${queueReviewLocked && selectedQueueIndex !== i ? " review-locked" : ""}`}
+                        disabled={q.state === "wait" || q.state === "now" || queueReviewLocked}
                         aria-pressed={selectedQueueIndex === i}
-                        aria-label={`ALPL ${q.alpl} — ${q.state === "wait" || q.state === "now" ? "ยังไม่มีผลวัด" : "ดูผลวัด"}`}
+                        aria-label={`ALPL ${q.alpl} — ${queueReviewLocked ? "กำลังวัดซ้ำ รอผลก่อนเลือก Queue อื่น" : q.state === "wait" || q.state === "now" ? "ยังไม่มีผลวัด" : "ดูผลวัด"}`}
                         onClick={() => selectQueueTelemetry(i, q.alpl)}>
                         {q.state === "now" && <span className="tq-dot" />}
                         {(q.state === "ok" || q.state === "ng" || q.state === "done") && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "../../api/client";
 import { orderForDatalist } from "../../utils/datalistOrder";
+import { normalizePackageSize } from "../../utils/packageSize";
 
 export type EntryMode = "IPM" | "New" | "Rework";
 
@@ -9,16 +10,13 @@ export type GroupValues = Record<string, string>;
 
 const FIELD_DEFS: Record<
   string,
-  { label: string; type: "text" | "datalist" | "part_number" | "handler" | "select" | "date"; placeholder?: string }
+  { label: string; type: "text" | "datalist" | "part_number" | "handler" | "select" | "date"; help?: string }
 > = {
-  // ⚠ ยังรับหลายตัวคั่นด้วยจุลภาคได้เหมือนเดิม — แค่ตัดคำอธิบายออกจาก
-  //   placeholder เพราะช่องแคบเกินกว่าจะแสดงจนจบ (ถูกตัดกลางคำ)
-  //   ตัวอย่าง "201, 202, 203" สื่อเรื่องจุลภาคอยู่แล้วในตัว
-  number_alpl:  { label: "ALPL", type: "text", placeholder: "เช่น 201, 202, 203" },
+  number_alpl:  { label: "ALPL", type: "text", help: "เช่น 201, 202, 203 หรือ 201-205" },
   package_size: { label: "Package Size", type: "datalist" },
   part_number:  { label: "Part Number", type: "part_number" },
   description:  { label: "Description", type: "text" },
-  po_number:    { label: "PO Number", type: "text", placeholder: "ตัวเลขเท่านั้น" },
+  po_number:    { label: "PO Number", type: "text", help: "ตัวเลขเท่านั้น" },
   vendor:       { label: "Vendor", type: "select" },
   owner:        { label: "Owner", type: "select" },
   receive_date: { label: "Receive Date", type: "date" },
@@ -295,6 +293,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
    *    part ตัวเก่าไว้ทั้งที่ผู้ใช้เปลี่ยนไปแล้ว — เป็นค่าที่ผิดแบบเงียบสนิท
    */
   const setField = (gi: number, key: string, v: string) => {
+    if (key === "package_size") v = normalizePackageSize(v);
     // Rework แก้ช่องที่ autofill ได้: เมื่อผู้ใช้แก้เอง อย่าล้างค่าที่แก้ตอน
     // prefill รอบถัดไปเพียงเพราะค่าของ Part เดิมว่าง
     autoRef.current[gi]?.delete(key);
@@ -486,7 +485,6 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                       ) : (
                         <input
                           type={def.type === "date" ? "date" : "text"}
-                          placeholder={def.placeholder}
                           className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
                           disabled={disabled || locked}
                           value={val}
@@ -497,6 +495,8 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                           }}
                         />
                       )}
+
+                      {def.help && <div className="entry-field-help">{def.help}</div>}
 
                       <div className="field-error">
                         {err ?? (locked

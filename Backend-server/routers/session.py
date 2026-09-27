@@ -5,6 +5,8 @@
   ต้องดึงจาก shared.py เท่านั้น ไม่งั้นจะกลายเป็นคนละ object โดยไม่มี error
 """
 from fastapi import APIRouter
+from typing import Literal
+from copy import deepcopy
 
 from shared import *  # noqa: F401,F403
 
@@ -690,6 +692,14 @@ async def start_session(request: Request):
                 cur.execute("SELECT session_id FROM sessions WHERE state = 'running'")
                 if cur.fetchone():
                     raise HTTPException(400, "A session is already running")
+                if not remeasure:
+                    cur.execute("SELECT state, measured_count, target_count, queue_state FROM sessions ORDER BY session_id DESC LIMIT 1")
+                    previous = cur.fetchone()
+                    if previous and previous["state"] in ("stopped", "timeout") and previous["measured_count"] < previous["target_count"]:
+                        previous_q = previous["queue_state"] or {}
+                        previous_q = json.loads(previous_q) if isinstance(previous_q, str) else previous_q
+                        if isinstance(previous_q, dict) and previous_q.get("start_confirmed") and not previous_q.get("work_closed"):
+                            raise HTTPException(409, "ยังมีชิ้นงานในคิวที่ไม่ได้วัด — วัดต่อหรือกดจบการทำงานก่อนเริ่มงานใหม่")
                 if remeasure:
                     cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s",
                                 (review_source["measurement_id"], review_source["session_id"]))
@@ -746,6 +756,8 @@ async def start_session(request: Request):
         # entry_mode / entry_note ถูก map ไว้ตั้งแต่ต้นฟังก์ชันแล้ว
         queue_state = {
             "start_confirmed": False,
+            "work_closed": False,
+            "run_mode": "normal",
             "review_source": getattr(request.state, "review_source", None),
             "trigger_mode": trigger_mode,
             "tray_capacity": tray_capacity,
@@ -804,6 +816,189 @@ async def start_session(request: Request):
         )
         return {"session_id": session_id, "template_name": template_name, "target_count": target_count,
                 "queue_state": queue_state}
+    finally:
+        db.close()
+
+
+class ContinueRequest(BaseModel):
+    session_id: int
+    mode: Literal["remaining", "all"]
+    trigger_mode: Literal["auto", "manual"] | None = None
+
+
+async def restart_existing_session(session_id: int, mode: str, trigger_mode: str | None = None,
+                                   measurement_id: int | None = None):
+    """Run selected positions in the original session; existing measurements are replaced."""
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT GET_LOCK('tmx_start_session', 5) AS got")
+            if not cur.fetchone()["got"]:
+                raise HTTPException(503, "ระบบกำลังประมวลผลคำสั่ง Start อื่นอยู่")
+        try:
+            with db.cursor() as cur:
+                cur.execute("SELECT session_id FROM sessions WHERE state='running' LIMIT 1")
+                if cur.fetchone():
+                    raise HTTPException(409, "มี Session กำลังวัดอยู่")
+                cur.execute("SELECT session_id FROM sessions ORDER BY session_id DESC LIMIT 1")
+                latest = cur.fetchone()
+                if not latest or latest["session_id"] != session_id:
+                    raise HTTPException(409, "วัดต่อหรือวัดซ้ำได้เฉพาะ Session ล่าสุด")
+                cur.execute("SELECT state, measured_count, target_count, queue_state, "
+                            "last_seen, ended_at, last_event, last_event_detail, last_event_at "
+                            "FROM sessions WHERE session_id=%s FOR UPDATE", (session_id,))
+                row = cur.fetchone()
+                if not row or row["state"] not in ("stopped", "timeout") or not row["queue_state"]:
+                    raise HTTPException(409, "Session นี้ยังไม่พร้อมวัดต่อหรือวัดซ้ำ")
+                if row["state"] == "timeout" and read_pi_status() is not True:
+                    raise HTTPException(503, "Pi ยัง Offline — รอให้กลับมา Online ก่อนวัดต่อหรือวัดซ้ำ")
+                q = row["queue_state"]
+                q = json.loads(q) if isinstance(q, str) else q
+                queue = q["queue"]
+                position = q["position"]
+                if len(queue) != row["target_count"] or position != row["measured_count"]:
+                    raise HTTPException(409, "ข้อมูลคิวกับผลวัดไม่ตรงกัน กรุณาตรวจสอบก่อน")
+                if mode == "single":
+                    cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s", (measurement_id, session_id))
+                    found = cur.fetchone()
+                    if not found or found["number_alpl"] not in queue[:position]:
+                        raise HTTPException(409, "ไม่พบชิ้นงานที่วัดแล้วใน Session นี้")
+                    run_pieces = [queue.index(found["number_alpl"]) + 1]
+                elif mode in ("remaining", "all") and not q.get("work_closed") and position < len(queue):
+                    run_pieces = list(range(position + 1, len(queue) + 1)) if mode == "remaining" else list(range(1, len(queue) + 1))
+                else:
+                    raise HTTPException(409, "คิวครบหรือจบงานแล้ว ไม่สามารถวัดต่อได้")
+                cur.execute("SELECT measurement_id, number_alpl FROM measurements WHERE session_id=%s", (session_id,))
+                ids = {item["number_alpl"]: item["measurement_id"] for item in cur.fetchall()}
+                if any(alpl not in ids for alpl in queue[:position]):
+                    raise HTTPException(409, "ผลวัดเดิมไม่ครบตามตำแหน่งคิว")
+                existing = {p: ids[queue[p - 1]] for p in run_pieces if queue[p - 1] in ids}
+                chosen_trigger = trigger_mode or q.get("trigger_mode", "auto")
+                if chosen_trigger == "manual" and not ALLOW_MANUAL_TRIGGER:
+                    raise HTTPException(403, "โหมด Manual ถูกปิดไว้")
+                groups = _build_groups(cur, q["groups"], q["group_of"], queue,
+                                       q["group_templates"], q["entry_mode"],
+                                       preserve_part=q.get("measure_mode") == "New")
+                before = dict(q)
+                q.update(run_mode=mode, run_pieces=run_pieces, trigger_mode=chosen_trigger,
+                         start_confirmed=False)
+                tray = 0 if mode == "single" else q.get("tray_capacity")
+                cur.execute("UPDATE sessions SET state='running', ended_at=NULL, last_seen=NOW(), "
+                            "last_event=NULL, last_event_detail=NULL, last_event_at=NULL, queue_state=%s WHERE session_id=%s",
+                            (json.dumps(q), session_id))
+                session_queues[session_id] = q
+                measure_timeouts.pop(session_id, None)
+                tray_pending.pop(session_id, None)
+                mcu_disconnected_pending.pop(session_id, None)
+                # A Stop can leave an unfinished capture token behind. It must not
+                # block the first capture of the resumed run.
+                from routers import review
+                old_token = review.active.pop(session_id, None)
+                if old_token in review.captures:
+                    review.captures[old_token]["cancelled"] = True
+            payload = {"action": "start", "session_id": session_id, "target_count": len(queue),
+                       "groups": groups, "trigger_mode": chosen_trigger, "tray_capacity": tray,
+                       "run_pieces": run_pieces, "existing_measurements": existing}
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(f"{AGENT_BASE_URL}/command", json=payload,
+                                                 timeout=httpx.Timeout(connect=3, read=10, write=10, pool=3))
+                response.raise_for_status()
+            except Exception as exc:
+                with db.cursor() as cur:
+                    cur.execute("UPDATE sessions SET state=%s, ended_at=%s, last_seen=%s, queue_state=%s, "
+                                "last_event=%s, last_event_detail=%s, last_event_at=%s WHERE session_id=%s",
+                                (row["state"], row.get("ended_at"), row.get("last_seen"), json.dumps(before),
+                                 row.get("last_event"), row.get("last_event_detail"), row.get("last_event_at"), session_id))
+                session_queues.pop(session_id, None)
+                if isinstance(exc, httpx.TimeoutException):
+                    await _notify_agent_action("stop", session_id)
+                raise HTTPException(502, f"สั่ง Pi วัดต่อไม่สำเร็จ: {exc}")
+            q["start_confirmed"] = True
+            with db.cursor() as cur:
+                cur.execute("UPDATE sessions SET queue_state=%s WHERE session_id=%s", (json.dumps(q), session_id))
+            result = {"session_id": session_id, "state": "running", "target_count": len(queue),
+                      "measured_count": position, "queue_state": q}
+            await push_event("session_started", result)
+            return result
+        finally:
+            with db.cursor() as cur:
+                cur.execute("SELECT RELEASE_LOCK('tmx_start_session')")
+    finally:
+        db.close()
+
+
+@router.post("/api/session/continue")
+async def continue_session(req: ContinueRequest):
+    return await restart_existing_session(req.session_id, req.mode, req.trigger_mode)
+
+
+@router.post("/api/session/end-work")
+async def end_work(req: StopSessionRequest):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT GET_LOCK('tmx_start_session', 5) AS got")
+            if not cur.fetchone()["got"]:
+                raise HTTPException(503, "ระบบกำลังประมวลผลคำสั่งอื่นอยู่")
+        try:
+            with db.cursor() as cur:
+                cur.execute("SELECT session_id FROM sessions ORDER BY session_id DESC LIMIT 1")
+                latest = cur.fetchone()
+                if not latest or latest["session_id"] != req.session_id:
+                    raise HTTPException(409, "จบงานได้เฉพาะ Session ล่าสุด")
+                cur.execute("SELECT state, measured_count, target_count, queue_state FROM sessions WHERE session_id=%s FOR UPDATE", (req.session_id,))
+                row = cur.fetchone()
+                if not row or row["state"] not in ("stopped", "timeout") or not row["queue_state"]:
+                    raise HTTPException(409, "ไม่มีคิวที่หยุดกลางทางให้จบงาน")
+                if row["state"] == "timeout":
+                    if read_pi_status() is not True:
+                        raise HTTPException(503, "Pi ยัง Offline — รอให้กลับมา Online ก่อนจบงาน")
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            agent_state = await client.get(f"{AGENT_BASE_URL}/queue-review",
+                                                           timeout=httpx.Timeout(connect=3, read=3, write=3, pool=3))
+                        agent_state.raise_for_status()
+                        phase = agent_state.json().get("phase")
+                    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+                        raise HTTPException(503, f"ตรวจสถานะ Pi ไม่สำเร็จ: {exc}") from exc
+                    if phase != "stopped":
+                        raise HTTPException(409, "Pi ยังวัดอยู่ — รอให้หยุดก่อนจบงาน")
+                q = row["queue_state"]
+                q = json.loads(q) if isinstance(q, str) else q
+                if q.get("work_closed"):
+                    return {"ok": True, "target_count": row["target_count"], "queue_state": q}
+                if row["measured_count"] >= row["target_count"]:
+                    raise HTTPException(409, "ไม่มีคิวที่หยุดกลางทางให้จบงาน")
+                measured = row["measured_count"]
+                q["original_plan"] = {
+                    "queue": deepcopy(q["queue"]),
+                    "group_of": deepcopy(q["group_of"]),
+                    "groups": deepcopy(q["groups"]),
+                    "group_templates": deepcopy(q["group_templates"]),
+                    "target_count": row["target_count"],
+                }
+                old_group_of = q["group_of"][:measured]
+                used_groups = list(dict.fromkeys(old_group_of))
+                remap = {old: new for new, old in enumerate(used_groups)}
+                q["queue"] = q["queue"][:measured]
+                q["group_of"] = [remap[gi] for gi in old_group_of]
+                q["groups"] = [
+                    {**q["groups"][gi], "number_alpl":
+                     [q["queue"][i] for i, group_index in enumerate(old_group_of) if group_index == gi]}
+                    for gi in used_groups
+                ]
+                q["group_templates"] = [q["group_templates"][gi] for gi in used_groups]
+                q["work_closed"] = True
+                q["run_mode"] = "ended"
+                cur.execute("UPDATE sessions SET target_count=%s, queue_state=%s WHERE session_id=%s",
+                            (measured, json.dumps(q), req.session_id))
+        finally:
+            with db.cursor() as cur:
+                cur.execute("SELECT RELEASE_LOCK('tmx_start_session')")
+        await push_event("session_work_ended", {"session_id": req.session_id,
+                                                "target_count": measured, "queue_state": q})
+        return {"ok": True, "target_count": measured, "queue_state": q}
     finally:
         db.close()
 

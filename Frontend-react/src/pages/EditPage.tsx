@@ -5,6 +5,7 @@ import TrashCard from "../components/TrashCard";
 import LookupTables from "../components/LookupTables";
 import HistoryCard from "../components/HistoryCard";
 import { orderForDatalist } from "../utils/datalistOrder";
+import { normalizePackageSize } from "../utils/packageSize";
 import { axisValue, offsetValue, xyPair, DP_MM, DP_OFF } from "../components/measurementCells";
 import { useSessionState } from "../hooks/useSessionState";
 import { useSSE } from "../hooks/useSSE";
@@ -1114,7 +1115,7 @@ export default function EditPage() {
                       id="f-package_size"
                       list="package-size-datalist"
                       value={pkgValue}
-                      onChange={(e) => setPkgValue(e.target.value)}
+                      onChange={(e) => setPkgValue(normalizePackageSize(e.target.value))}
                       placeholder="เลือก Package Size ก่อนถึงจะเลือก Part Number ได้"
                     />
                     <div className="field-error">{fieldErrors.package_size}</div>

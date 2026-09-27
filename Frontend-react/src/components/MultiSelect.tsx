@@ -12,6 +12,8 @@ interface MultiSelectProps {
   hint?: string;
   /** ข้อความตอนไม่มีตัวเลือกให้เลือก — อธิบายสาเหตุได้ ไม่ใช่แค่ "ว่าง" */
   emptyText?: string;
+  /** แปลงคำค้นระหว่างพิมพ์สำหรับ field ที่มีรูปแบบมาตรฐาน */
+  normalizeQuery?: (value: string) => string;
 }
 
 /**
@@ -33,6 +35,7 @@ export default function MultiSelect({
   disabled = false,
   hint,
   emptyText = "ไม่มีตัวเลือก",
+  normalizeQuery,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -109,7 +112,7 @@ export default function MultiSelect({
                 type="text"
                 placeholder="พิมพ์เพื่อค้นหา…"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => setQuery(normalizeQuery ? normalizeQuery(e.target.value) : e.target.value)}
                 /* ⚠ กัน Escape ทะลุไปหา listener ที่ปิดแผง — คนพิมพ์ผิดแล้วกด Esc
                    ตั้งใจจะล้างคำค้น ไม่ได้ตั้งใจปิดแผงทิ้งทั้งอัน */
                 onKeyDown={(e) => {

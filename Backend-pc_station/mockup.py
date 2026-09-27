@@ -20,6 +20,7 @@ import os
 import sys
 import random
 import threading
+import asyncio
 import time
 import mimetypes
 from pathlib import Path
@@ -564,6 +565,7 @@ def measurement_flow(session_id, groups, target_count):
     # เพิ่งฟื้นจากดับไปนาน _hb_last_ok จะค้างเก่าจน heartbeat_loop หยุด session
     # ทิ้งทันทีที่กด Start (เหตุผลเต็มอยู่ใน send_command(Pi).py)
     _hb_last_ok = time.time()
+    run_generation = queue_review.generation
     current_session_id = session_id
     target_count = target_count or 1
     stop_reason = None          # เหตุผลที่จบกลางคัน — แนบไปกับ /api/session/stop
@@ -695,12 +697,14 @@ def measurement_flow(session_id, groups, target_count):
     # ⚠ ล้างธงเฉพาะเมื่อเรายังเป็น "เจ้าของ" อยู่จริง — ถ้ามี session ใหม่เริ่มไป
     #   แล้วระหว่างที่เรากำลังเก็บกวาด (เช่นเราค้างอยู่ใน ask_user 90 วิ) การเซ็ต
     #   is_running=False ตรงนี้จะไปฆ่า session ของคนอื่นทิ้งกลางคัน
-    if current_session_id == session_id:
+    if current_session_id == session_id and run_generation == queue_review.generation:
         is_running = False
         current_session_id = None  # heartbeat กลับไปยิงแบบ idle
     else:
         print(f"   ℹ️ มี session ใหม่ ({current_session_id}) เริ่มไปแล้ว — ไม่แตะธงร่วม")
     print(f"\n✅ จบ session {session_id}\n")
+    if run_generation != queue_review.generation:
+        return
 
     # ── แจ้ง backend ปิด session ถ้าจบกลางคัน (ตรงกับ finally ของ Pi.py) ─────
     # ⚠ ต้องเช็คว่ายังเป็น session ของเราและยัง running อยู่ก่อน — กันยิงซ้ำตอน
@@ -754,6 +758,8 @@ class EntryGroup(BaseModel):
 
 class CommandRequest(BaseModel):
     review_job: dict | None = None
+    run_pieces: list[int] | None = None
+    existing_measurements: dict[int, int] | None = None
     action: str
     session_id: int | None = None
     target_count: int | None = None
@@ -778,7 +784,7 @@ async def command(req: CommandRequest):
       backend ขยับคิวไปแล้วแต่สั่ง Pi ไม่ผ่าน → คิวเหลื่อมถาวร · ที่นี่เคยรองรับ
       อยู่ฝ่ายเดียวจึงเป็นกับดักซ้ำรอย pause พอดี
     """
-    global is_running, _answer_action, _trigger_mode, TRAY_CAPACITY
+    global is_running, _answer_action, _trigger_mode, TRAY_CAPACITY, _worker_thread
 
     if req.action in ("pause_queue", "resume_queue", "remeasure"):
         if not is_running:
@@ -788,6 +794,10 @@ async def command(req: CommandRequest):
     if req.action == "start":
         if is_running:
             raise HTTPException(409, "Mock is already running a session")
+        if globals().get("_worker_thread") is not None and _worker_thread.is_alive():
+            await asyncio.to_thread(_worker_thread.join, 8)
+            if _worker_thread.is_alive():
+                raise HTTPException(409, "Mock ยังหยุดรอบก่อนหน้าไม่เสร็จ กรุณารอสักครู่")
         if req.trigger_mode not in ("manual", "auto"):
             raise HTTPException(
                 400,
@@ -798,6 +808,8 @@ async def command(req: CommandRequest):
             raise HTTPException(400, "Start a test session from Dashboard first")
         if sum(len(g["alpl"]) for g in groups) != req.target_count or any(g["limits"] is None for g in groups):
             raise HTTPException(400, "Groups, limits and target_count must match")
+        if req.run_pieces is not None and (not req.run_pieces or any(p < 1 or p > req.target_count for p in req.run_pieces) or len(set(req.run_pieces)) != len(req.run_pieces)):
+            raise HTTPException(400, "run_pieces ไม่ตรงกับคิว")
         # ล้างคำตอบค้างจาก session ก่อนหน้า — ถ้ารอบที่แล้วจบตอน modal เปิดอยู่
         with _answer_lock:
             _answer_action = None
@@ -807,13 +819,14 @@ async def command(req: CommandRequest):
         _trigger_mode = req.trigger_mode
         TRAY_CAPACITY = 8 if req.tray_capacity is None else req.tray_capacity
         print(f"   Tray Capacity: {TRAY_CAPACITY}")
-        queue_review.reset(req.session_id)
+        queue_review.reset(req.session_id, req.run_pieces, req.existing_measurements)
         is_running = True
-        threading.Thread(
+        _worker_thread = threading.Thread(
             target=measurement_flow,
             args=(req.session_id, groups, req.target_count),
             daemon=True,
-        ).start()
+        )
+        _worker_thread.start()
 
     elif req.action == "retry":
         # ผู้ใช้กด "ลองใหม่" — ชิ้นเดิม ตำแหน่งคิวไม่ขยับ
