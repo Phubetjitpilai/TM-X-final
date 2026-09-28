@@ -1,7 +1,11 @@
 import os
+import logging
+from itertools import combinations
 
 import cv2
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 # ── Crop กรอบสี่เหลี่ยมจัตุรัสกลางภาพ — ทำ **ก่อน** ตรวจจับและวาด ──────────
 #
@@ -64,6 +68,80 @@ def P(x, y):
     return (int(round(x * F)), int(round(y * F)))
 
 
+def select_corner_holes(top_holes, bottom_holes, image_width):
+    """เลือกสองคอลัมน์รูที่ตรงกันจริง แทนการหยิบจุดซ้าย/ขวาสุดที่อาจเป็น noise"""
+    max_shift = image_width * 0.045
+    min_span = image_width * 0.20
+    best = None
+    best_score = None
+    for top_pair in combinations(sorted(top_holes, key=lambda h: h[0]), 2):
+        for bottom_pair in combinations(sorted(bottom_holes, key=lambda h: h[0]), 2):
+            shifts = [abs(t[0] - b[0]) for t, b in zip(top_pair, bottom_pair)]
+            span = min(top_pair[1][0] - top_pair[0][0],
+                       bottom_pair[1][0] - bottom_pair[0][0])
+            if max(shifts) > max_shift or span < min_span:
+                continue
+            score = (span, -sum(shifts),
+                     -abs(top_pair[0][1] - top_pair[1][1])
+                     -abs(bottom_pair[0][1] - bottom_pair[1][1]))
+            if best_score is None or score > best_score:
+                best, best_score = (top_pair, bottom_pair), score
+    return best
+
+
+def has_three_holes_per_horizontal_row(holes, width, height):
+    """ยืนยันรูปแบบ 3 รูบน + 3 รูล่างก่อนหมุนภาพไปทางซ้าย"""
+    if len(holes) < 6:
+        return False
+    min_y = min(h[1] for h in holes)
+    max_y = max(h[1] for h in holes)
+    y_span = max_y - min_y
+    if y_span < height * 0.25:
+        return False
+    top = [h for h in holes if h[1] - min_y < y_span * 0.15]
+    bottom = [h for h in holes if max_y - h[1] < y_span * 0.15]
+    for top_three in combinations(top, 3):
+        t = sorted(top_three, key=lambda h: h[0])
+        if max(h[1] for h in t) - min(h[1] for h in t) > height * 0.07:
+            continue
+        if min(t[1][0] - t[0][0], t[2][0] - t[1][0]) < width * 0.12:
+            continue
+        for bottom_three in combinations(bottom, 3):
+            b = sorted(bottom_three, key=lambda h: h[0])
+            if max(h[1] for h in b) - min(h[1] for h in b) > height * 0.07:
+                continue
+            if all(abs(a[0] - c[0]) < width * 0.06 for a, c in zip(t, b)):
+                return True
+    return False
+
+
+def detect_features(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    width = gray.shape[1]
+    r_min, r_max = width * 0.010, width * 0.075
+    _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    # ปิดรอยขีดสว่างบนพื้นดำเพื่อให้ช่องกลางยังเป็น contour แยกจากพื้นหลัง
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+
+    holes = []
+    if hierarchy is not None:
+        for i, cnt in enumerate(contours):
+            if hierarchy[0][i][3] == -1:
+                continue
+            area = cv2.contourArea(cnt)
+            perimeter = cv2.arcLength(cnt, True)
+            if perimeter <= 0:
+                continue
+            circularity = 4 * np.pi * area / (perimeter * perimeter)
+            (x, y), radius = cv2.minEnclosingCircle(cnt)
+            if circularity > 0.65 and r_min < radius < r_max:
+                holes.append((x, y, radius))
+    return thresh, contours, hierarchy, holes
+
+
 def draw_dashed_line(img_out, p1, p2, color, thickness=2, dash_len=8, space_len=6):
     dist = np.hypot(p2[0] - p1[0], p2[1] - p1[1])
     if dist == 0:
@@ -113,50 +191,22 @@ def process_and_save_image(image_path, pair):
     #   (เหตุผลเต็มอยู่ที่นิยาม CROP_SIZE ข้างบน)
     img = crop_center_square(img, crop_size())
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # ── ขนาดรูมุมอ้างอิงตามความกว้างภาพ ไม่ใช่พิกเซลตายตัว ────────────────────
-    # ⚠ เดิมเป็น `10 < radius < 40` ซึ่งเป็นเลขที่วัดมาจากภาพ package เล็ก
-    #   รูจริงในภาพชุดนั้นรัศมี 28.1–37.6 px คือ **ชนเพดาน 40 อยู่แล้ว** เหลือ
-    #   ที่ว่างแค่ 6% · พอ package ใหญ่ขึ้น (9x9 / 9x15 / 10x6.5) รูโตเกิน 40
-    #   → ไม่มีรูไหนผ่านตัวกรอง → `top_holes`/`bottom_holes` เหลือฝั่งละจุดเดียว
-    #   → `zip()` บรรทัด ~110 จับคู่ข้ามมุม วาดเป็นเส้นทแยงพาดกลางภาพ
-    #   (วัดจริงแล้ว: ขยายภาพที่วาดถูกแค่ 1.2 เท่า รูจาก 6 เหลือ 2 · 1.6 เท่า เหลือ 0)
-    # 1.0% / 7.5% คือสัดส่วนเดิมเทียบภาพอ้างอิง จึงให้ผลเท่าเดิมเป๊ะที่ขนาดนั้น
-    _h_img, _w_img = gray.shape[:2]
-    R_MIN, R_MAX = _w_img * 0.010, _w_img * 0.075
-
-    # 2. ทำ Threshold แยกชิ้นงานสีเข้มออกจากพื้นหลัง
-    _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV)
-
-    # 2.5 ล้างเศษ/รอยขีดข่วนออกจากรู (Morphological Opening)
-    CLEAN_KERNEL = 5
-    _kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (CLEAN_KERNEL, CLEAN_KERNEL))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, _kernel)
-
-    # 3. หา Contour และ Hierarchy เพื่อระบุรูที่อยู่ด้านในชิ้นงาน (RETR_CCOMP)
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-
-    detected_holes = []
-
-    if hierarchy is not None:
-        for i, cnt in enumerate(contours):
-            if hierarchy[0][i][3] != -1:
-                area = cv2.contourArea(cnt)
-                perimeter = cv2.arcLength(cnt, True)
-
-                if perimeter > 0:
-                    circularity = 4 * np.pi * area / (perimeter * perimeter)
-                    (x, y), radius = cv2.minEnclosingCircle(cnt)
-
-                    if circularity > 0.65 and R_MIN < radius < R_MAX:
-                        detected_holes.append((x, y, radius))
+    thresh, contours, hierarchy, detected_holes = detect_features(img)
+    _h_img, _w_img = img.shape[:2]
+    if has_three_holes_per_horizontal_row(detected_holes, _w_img, _h_img):
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        thresh, contours, hierarchy, detected_holes = detect_features(img)
+        _h_img, _w_img = img.shape[:2]
+        log.info("หมุนภาพ 90° ไปทางซ้ายก่อนวาด: พบ 3 รูบนและ 3 รูล่างใน %s",
+                 os.path.basename(image_path))
 
     output = img.copy()
 
     # ══════════════════════════════════════════════════════════════════════════
     # LAYER 1: วาดเส้นแนวแกนสีเหลือง (Background Layer)
     # ══════════════════════════════════════════════════════════════════════════
+    top_holes = []
+    bottom_holes = []
     if detected_holes:
         y_coords = [h[1] for h in detected_holes]
         min_y, max_y = min(y_coords), max(y_coords)
@@ -165,8 +215,13 @@ def process_and_save_image(image_path, pair):
         top_holes = [h for h in detected_holes if abs(h[1] - min_y) < y_range * 0.25]
         bottom_holes = [h for h in detected_holes if abs(h[1] - max_y) < y_range * 0.25]
 
-        top_holes = sorted(top_holes, key=lambda h: h[0])
-        bottom_holes = sorted(bottom_holes, key=lambda h: h[0])
+        chosen = select_corner_holes(top_holes, bottom_holes, _w_img)
+        if chosen is None:
+            log.warning("วาดเส้นรูอ้างอิงไม่ได้ใน %s: จับคู่รูบน/ล่างไม่ครบ",
+                        os.path.basename(image_path))
+            top_holes, bottom_holes = [], []
+        else:
+            top_holes, bottom_holes = chosen
 
         midpoints = []
         YELLOW = (0, 255, 255)
@@ -216,6 +271,22 @@ def process_and_save_image(image_path, pair):
     square_cnt = None
     main_body_idx = None
 
+    # รูอ้างอิงบอกบริเวณของช่องกลางได้แม้รอยขีด/เงาทำให้ hierarchy ของ
+    # contour เปลี่ยนไป เลือกช่องที่ใหญ่ที่สุดภายในกรอบรูทั้งสี่ก่อน
+    if len(top_holes) >= 2 and len(bottom_holes) >= 2:
+        corner_holes = (top_holes[0], top_holes[-1], bottom_holes[0], bottom_holes[-1])
+        roi_x1 = min(h[0] for h in corner_holes)
+        roi_x2 = max(h[0] for h in corner_holes)
+        roi_y1 = min(h[1] for h in corner_holes)
+        roi_y2 = max(h[1] for h in corner_holes)
+        best_area = 0
+        for cnt in contours:
+            bx, by, bw, bh = cv2.boundingRect(cnt)
+            if roi_x1 <= bx and bx + bw <= roi_x2 and roi_y1 <= by and by + bh <= roi_y2:
+                area = cv2.contourArea(cnt)
+                if area > best_area:
+                    square_cnt, best_area = cnt, area
+
     if hierarchy is not None:
         _h, _w = thresh.shape[:2]
         body_area = 0
@@ -229,7 +300,7 @@ def process_and_save_image(image_path, pair):
             if a > body_area:
                 main_body_idx, body_area = i, a
 
-        if main_body_idx is not None:
+        if square_cnt is None and main_body_idx is not None:
             best = 0
             for i, cnt in enumerate(contours):
                 if hierarchy[0][i][3] != main_body_idx:
@@ -240,7 +311,10 @@ def process_and_save_image(image_path, pair):
 
     # 72 = 4 × 18 (ค่า NECK_WINDOW เดิม) — เป็นพื้นขั้นต่ำว่าเส้นรอบรูปต้องมีจุด
     # พอให้หา 8 คอได้ ต้องเป็นเลขคงที่เพราะตอนนี้ยังไม่รู้ `n`
-    if square_cnt is not None and len(square_cnt) > 72:
+    if square_cnt is None or len(square_cnt) <= 72:
+        log.warning("วาดเส้นระยะไม่ได้ใน %s: ไม่พบขอบช่องกลางที่ชัดพอ",
+                    os.path.basename(image_path))
+    else:
         pts = square_cnt.reshape(-1, 2).astype(float)
         n = len(pts)
 
@@ -275,12 +349,54 @@ def process_and_save_image(image_path, pair):
         if len(necks) == 8:
             sx, sy, sw, sh = cv2.boundingRect(square_cnt)
             scx, scy = sx + sw / 2.0, sy + sh / 2.0
-            horiz = lambda p: abs(p[1] - scy) > abs(p[0] - scx)
 
-            edge_top = sorted([p for p in necks if horiz(p) and p[1] < scy], key=lambda p: p[0])
-            edge_bottom = sorted([p for p in necks if horiz(p) and p[1] > scy], key=lambda p: p[0])
-            edge_left = sorted([p for p in necks if not horiz(p) and p[0] < scx], key=lambda p: p[1])
-            edge_right = sorted([p for p in necks if not horiz(p) and p[0] > scx], key=lambda p: p[1])
+            def quadrant(p):
+                return ("top" if p[1] < scy else "bottom",
+                        "left" if p[0] < scx else "right")
+
+            corners = (("top", "left"), ("top", "right"),
+                       ("bottom", "left"), ("bottom", "right"))
+            groups = {corner: [] for corner in corners}
+            for point in necks:
+                groups[quadrant(point)].append(point)
+
+            # Each rounded corner of the opening has two concave necks:
+            # one on the horizontal edge and one on the vertical edge.
+            # Global top-eight selection may cluster on only three corners.
+            if any(len(group) != 2 for group in groups.values()):
+                groups = {corner: [] for corner in corners}
+                chosen = {corner: [] for corner in corners}
+                for i in np.argsort(turn):
+                    if turn[i] >= -5:
+                        break
+                    corner = quadrant(pts[i])
+                    if len(groups[corner]) < 2 and all(
+                        min(abs(i - j), n - abs(i - j)) > NECK_GAP for j in chosen[corner]
+                    ):
+                        groups[corner].append(tuple(pts[i]))
+                        chosen[corner].append(i)
+                    if all(len(group) == 2 for group in groups.values()):
+                        break
+
+            if all(len(groups[corner]) == 2 for corner in corners):
+                def split_corner(corner):
+                    points = groups[corner]
+                    horizontal = (min if corner[0] == "top" else max)(points, key=lambda p: p[1])
+                    vertical = points[1] if points[0] == horizontal else points[0]
+                    return horizontal, vertical
+
+                tl_h, tl_v = split_corner(("top", "left"))
+                tr_h, tr_v = split_corner(("top", "right"))
+                bl_h, bl_v = split_corner(("bottom", "left"))
+                br_h, br_v = split_corner(("bottom", "right"))
+                edge_top = [tl_h, tr_h]
+                edge_bottom = [bl_h, br_h]
+                edge_left = [tl_v, bl_v]
+                edge_right = [tr_v, br_v]
+            else:
+                edge_top = edge_bottom = edge_left = edge_right = []
+                log.warning("วาดเส้นระยะไม่ได้ใน %s: พบจุดคอ %s/8 ตำแหน่ง",
+                            os.path.basename(image_path), sum(len(groups[c]) for c in corners))
 
             for grp in (edge_top, edge_bottom, edge_left, edge_right):
                 if len(grp) == 2:
@@ -372,6 +488,9 @@ def process_and_save_image(image_path, pair):
 
             if len(edge_top) == 2 and len(edge_bottom) == 2:
                 add_split_dimension(right_wide_pts, ratio=0.25, colors=(COLOR_5, COLOR_6), labels=("[5]", "[6]"))
+        else:
+            log.warning("วาดเส้นระยะไม่ได้ใน %s: พบจุดคอเพียง %s/8 จุด",
+                        os.path.basename(image_path), len(necks))
 
     # ══════════════════════════════════════════════════════════════════════════
     # ภาพชิ้นงาน = กรอบที่ crop ไว้ตั้งแต่ต้น (ไม่ crop ซ้ำ)
