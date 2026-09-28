@@ -1373,6 +1373,14 @@ def _axis_state(r, axis: str) -> str:
         return ""
     return "OK" if _within_tolerance(val, nom, r["upper_tol"], r["lower_tol"]) else "NG"
 
+def _offset_axis_state(r, axis: str) -> str:
+    """สถานะ Offset รายแกนตามเกณฑ์เดียวกับการวัด; IPM/ไม่มีเกณฑ์ไม่ลงสี"""
+    val = r.get(f"offset_op{axis}")
+    limit = _offset_limit(r.get("measure_type"), r)
+    if val is None or limit is None:
+        return ""
+    return "OK" if _offset_ok(val, limit) else "NG"
+
 def _tolerance_spec(r) -> str:
     """สเปกขนาดชิ้นงานแบบย่อบรรทัดเดียว — ใช้ในรายงาน PDF/Excel เท่านั้น
 
@@ -1424,8 +1432,10 @@ EXPORT_COLUMNS: Dict[str, Dict[str, Any]] = {
                       "get": lambda r: _fmt_num(r["value_y"])},
     # แกนแยก — ข้อมูลมีอยู่ในตารางอยู่แล้วแต่เดิม export ออกไม่ได้เลย
     "offset_opx":    {"label": "Offset X",      "group": "ข้อมูลการวัด",
+                      "values": ["OK", "NG"], "state": lambda r: _offset_axis_state(r, "x"),
                       "get": lambda r: _fmt_num(r.get("offset_opx"))},
     "offset_opy":    {"label": "Offset Y",      "group": "ข้อมูลการวัด",
+                      "values": ["OK", "NG"], "state": lambda r: _offset_axis_state(r, "y"),
                       "get": lambda r: _fmt_num(r.get("offset_opy"))},
     "offset_pos_op": {"label": "Offset Position", "group": "ข้อมูลการวัด",
                       "get": lambda r: r.get("offset_pos_op") or ""},

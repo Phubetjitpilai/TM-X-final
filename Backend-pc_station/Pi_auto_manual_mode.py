@@ -110,7 +110,7 @@ MEASURE_POLL_INTERVAL = float(os.getenv("MEASURE_POLL_INTERVAL", 0.4))
 SOCKET_TIMEOUT   = float(os.getenv("SOCKET_TIMEOUT", 5))
 # ── GM: ดึงค่าที่วัดได้จาก TM-X โดยตรง ──────────────────────────────────────
 GM_POLL_INTERVAL = 0.02                                  # 20 ms
-GM_MAX_WAIT      = float(os.getenv("GM_MAX_WAIT", 2))    # รอค่าสูงสุดต่อชิ้น
+GM_MAX_WAIT      = float(os.getenv("GM_MAX_WAIT", 1))    # รอค่าสูงสุดต่อชิ้น
 NO_VALUE_ABS     = 9999.0        # |ค่า| >= นี้ = TM-X ยังวัดไม่เสร็จ/วัดไม่ติด
 # T1 ที่โดน ER,...,03 (READY ยังไม่กลับมาหลัง RESET ที่พ่วงมากับ PW) ยิงซ้ำได้
 

@@ -1311,18 +1311,6 @@ export default function EditPage() {
               )}
             </div>
             <div className="modal-actions">
-              <div>
-                {editContext.table === "measurements" && isEdit && (
-                  <button
-                    type="button"
-                    className="btn-delete-inline"
-                    disabled={sessionRunning}
-                    onClick={() => editContext.key != null && confirmDeleteMeas(editContext.key)}
-                  >
-                    🗑 Delete
-                  </button>
-                )}
-              </div>
               <div className="modal-actions-right">
                 <button type="button" className="btn-cancel" onClick={closeEditModal}>
                   Cancel

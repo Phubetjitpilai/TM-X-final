@@ -500,7 +500,21 @@ def _cell_out(cell: Dict[str, Any], text: str) -> Dict[str, Any]:
         out["head"] = True
     return out
 
-def _render_report(layout: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+_EXCEL_NUMERIC_FIELDS = {
+    "value_x": "value_x", "value_y": "value_y",
+    "offset_opx": "offset_opx", "offset_opy": "offset_opy",
+    "offset": "offset_tol",
+}
+
+_EXCEL_DATE_FORMATS = {
+    # Excel built-in formats 14 (Short Date) and 21 (Time with seconds).
+    "date": "mm-dd-yy",
+    "time": "h:mm:ss",
+    "datetime": "dd/mm/yyyy hh:mm:ss",
+}
+
+
+def _render_report(layout: Dict[str, Any], rows: List[Dict[str, Any]], *, excel: bool = False) -> Dict[str, Any]:
     """คลี่ผัง + ข้อมูล ออกเป็นตารางพร้อมวาด
 
     คืน {"nCols": int, "rows": [[cell, ...], ...]} โดย cell = {v, s, span?, hidden?}
@@ -566,6 +580,23 @@ def _render_report(layout: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[s
                 text = cell.get("v") or ""
 
             c = _cell_out(cell, str(text))
+            if excel and col and col.get("row_number"):
+                c["xlsx_value"] = item_no
+                c["xlsx_number_format"] = "0"
+            elif excel and key in _EXCEL_NUMERIC_FIELDS:
+                raw = row.get(_EXCEL_NUMERIC_FIELDS[key])
+                if raw is not None:
+                    c["xlsx_value"] = float(raw)
+                    c["xlsx_number_format"] = "0.000"
+            elif excel and key == "timestamp" and row.get("timestamp"):
+                ts = row["timestamp"]
+                fmt = cell.get("fmt") or "datetime"
+                c["xlsx_value"] = ts.date() if fmt == "date" else ts.time() if fmt == "time" else ts
+                c["xlsx_number_format"] = _EXCEL_DATE_FORMATS.get(fmt, _EXCEL_DATE_FORMATS["datetime"])
+            elif excel and key == "recieve_date" and row.get("recieve_date"):
+                received = row["recieve_date"]
+                c["xlsx_value"] = received.date() if hasattr(received, "date") else received
+                c["xlsx_number_format"] = _EXCEL_DATE_FORMATS["date"]
             if "span" in c:
                 c["span"]["r"] = 1
 
@@ -816,7 +847,7 @@ def export_xlsx(
     where, params = _export_filters(filters)
     rows, total = _fetch_export_raw(where, params)
     _guard_report_size(total)
-    rendered = _render_report(tpl["layout"], rows)
+    rendered = _render_report(tpl["layout"], rows, excel=True)
 
     wb = Workbook()
     ws = wb.active
@@ -862,7 +893,9 @@ def export_xlsx(
             if cell.get("hidden"):
                 continue
             s = cell.get("s") or {}
-            x = ws.cell(row=r, column=c, value=cell.get("v") or "")
+            x = ws.cell(row=r, column=c, value=cell.get("xlsx_value", cell.get("v") or ""))
+            if cell.get("xlsx_number_format"):
+                x.number_format = cell["xlsx_number_format"]
             x.font = Font(
                 name=str(s.get("font") or "Tahoma"),
                 size=size_of(s),

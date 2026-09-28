@@ -23,6 +23,7 @@ import { formatAlplRanges } from "../utils/formatAlplRanges";
 
 const PART_ENTRY_STORAGE_KEY = "tmx_part_entry_state_v1";
 const MEAS_PAGE_SIZE = 10;
+const SESSION_STOP_ERROR_EVENTS = new Set(["PI_ERROR", "START_FAILED", "STOP_NOT_DELIVERED"]);
 
 interface SessionState {
   state: "idle" | "running" | "stopped" | "timeout";
@@ -30,6 +31,9 @@ interface SessionState {
   measured_count: number;
   target_count: number;
   queue_state?: any;
+  last_event?: string | null;
+  last_event_detail?: string | null;
+  last_event_at?: string | null;
 }
 
 interface Part {
@@ -610,8 +614,8 @@ export default function DashboardPage() {
    *  ⚠ **ห้ามใส่ `last_seen`** — heartbeat ขยับทุก 5 วิ ใส่แล้วเท่ากับไม่ได้กรอง
    *    อะไรเลย (และไม่มีใครในหน้านี้อ่านค่านั้น)
    *
-   *  `measured_count` ครอบเรื่อง queue_state ให้แล้ว เพราะ position ใน
-   *  queue_state ขยับพร้อมกับตัวนับนี้เสมอ (ดู create_measurement)
+   *  `measured_count` ครอบตำแหน่งคิว ส่วนเหตุการณ์ต้องใส่แยก เพราะอาจถูก
+   *  บันทึกหลัง state เปลี่ยนเป็น stopped แล้ว (เช่น STOP_NOT_DELIVERED)
    */
   const polledQueue = (() => {
     try {
@@ -620,7 +624,10 @@ export default function DashboardPage() {
     } catch { return null; }
   })();
   const sessionSig = polledSession
-    ? `${polledSession.session_id}|${polledSession.state}|${polledSession.measured_count}|${polledSession.target_count}|${polledQueue?.work_closed}|${polledQueue?.run_mode}|${polledQueue?.start_confirmed}`
+    ? [polledSession.session_id, polledSession.state, polledSession.measured_count,
+       polledSession.target_count, polledQueue?.work_closed, polledQueue?.run_mode,
+       polledQueue?.start_confirmed, polledSession.last_event,
+       polledSession.last_event_detail, polledSession.last_event_at].join("|")
     : "";
 
   /* ── ปุ่มจำลองสัญญาณทริกเกอร์ — ใช้ระหว่างที่ยังไม่ได้ต่อ MCU ──────────────
@@ -1760,6 +1767,8 @@ export default function DashboardPage() {
     {isRunning && <button className="btn-stop" onClick={stopSession}>■ Stop</button>}
   </>;
   const canEditQueue = session.state !== "running" && !pendingWork;
+  const sessionStopError = session.state === "stopped" &&
+    !!session.last_event && SESSION_STOP_ERROR_EVENTS.has(session.last_event);
 
   return (
     <div className="layout">
@@ -1804,6 +1813,17 @@ export default function DashboardPage() {
                 </span>
               </div>
             </div>
+            {sessionStopError && (
+              <div className="session-stop-error" role="alert">
+                <div className="session-stop-error-title">⚠ เหตุการณ์ล่าสุด: {session.last_event}</div>
+                {session.last_event_detail && <div className="session-stop-error-detail">{session.last_event_detail}</div>}
+                {session.last_event_at && (
+                  <time className="session-stop-error-time" dateTime={session.last_event_at}>
+                    {session.last_event_at.replace("T", " ").slice(0, 16)}
+                  </time>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── การ์ดขวา — Part Entry + ปุ่มควบคุมทั้งหมด ────────────────────

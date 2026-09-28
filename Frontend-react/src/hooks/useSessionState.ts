@@ -10,6 +10,9 @@ export interface SessionState {
   last_seen?: string;
   started_at?: string;
   ended_at?: string;
+  last_event?: string | null;
+  last_event_detail?: string | null;
+  last_event_at?: string | null;
   queue_state?: unknown;
   /** true = เห็น Pi ภายใน PI_ONLINE_TIMEOUT · false = เงียบเกินเกณฑ์
    *  null = **ไม่ทราบ** (backend เพิ่ง restart ยังไม่เคยได้ heartbeat เลย)

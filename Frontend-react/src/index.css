@@ -1054,6 +1054,18 @@ input[type="number"]::-webkit-outer-spin-button {
   gap: 1.5rem;
   flex-wrap: wrap;
 }
+.session-stop-error {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--ng);
+  border-radius: var(--radius);
+  background: var(--ng-bg);
+  color: var(--ng);
+  overflow-wrap: anywhere;
+}
+.session-stop-error-title { font-size: 0.82rem; font-weight: 700; }
+.session-stop-error-detail { margin-top: 0.25rem; font-size: 0.82rem; white-space: pre-wrap; }
+.session-stop-error-time { display: block; margin-top: 0.3rem; font-size: 0.72rem; }
 
 /* ── Part Entry ที่ยุบเข้ามาอยู่ในแถบ Session Control ───────────────────
    เดิมเป็นการ์ดแยกอยู่ใต้ Live View — operator ต้องเลื่อนลงไปกรอกคิวทุกครั้ง
@@ -1932,7 +1944,7 @@ tr[data-clickable] { cursor: pointer; }
   border-top: 1px solid var(--border);
   padding-top: 1rem;
 }
-.modal-actions-right { display: flex; gap: 0.6rem; }
+.modal-actions-right { display: flex; gap: 0.6rem; margin-left: auto; }
 .btn-save { background: var(--accent); color: #fff; }
 .btn-cancel { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 .btn-delete-inline { background: transparent; border: 1px solid var(--ng); color: var(--ng); }

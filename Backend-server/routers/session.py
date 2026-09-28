@@ -154,7 +154,8 @@ def get_session_state():
             # หน้าเว็บกลาง session ด้วย เพราะอ่านคิวกลับจาก DB ได้ตรงๆ
             cur.execute(
                 "SELECT session_id, state, target_count, measured_count, "
-                "queue_state, last_seen, started_at, ended_at "
+                "queue_state, last_seen, started_at, ended_at, "
+                "last_event, last_event_detail, last_event_at "
                 "FROM sessions ORDER BY session_id DESC LIMIT 1"
             )
             row = cur.fetchone()
