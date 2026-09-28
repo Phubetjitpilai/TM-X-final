@@ -44,6 +44,7 @@ class WorkerTests(unittest.TestCase):
         controller.command("remeasure", 42, {"piece": 1, "measurement_id": 101})
         thread.join(3)
         self.assertEqual(output, [1])
+        self.assertTrue(controller.job["mcu_retry"])
         with self.assertRaises(HTTPException):
             controller.command("remeasure", 42, {"piece": 1, "measurement_id": 101})
         with self.assertRaises(HTTPException):
@@ -55,6 +56,7 @@ class WorkerTests(unittest.TestCase):
         controller.command("resume_queue", 42)
         thread.join(3)
         self.assertEqual(output, [2])
+        self.assertIsNone(controller.job)
         self.assertEqual(next(worker), 3)
         worker.close()
 
@@ -100,8 +102,10 @@ class WorkerTests(unittest.TestCase):
         worker = c.pieces(5, lambda: True)
         self.assertEqual(next(worker), 1)
         self.assertEqual(c.job["measurement_id"], 101)
+        self.assertNotIn("mcu_retry", c.job)
         self.assertEqual(next(worker), 2)
         self.assertEqual(c.job["measurement_id"], 102)
+        self.assertNotIn("mcu_retry", c.job)
         self.assertEqual(next(worker), 3)
         self.assertIsNone(c.job)
         self.assertEqual(list(worker), [4, 5])
@@ -113,6 +117,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(next(worker), 2)
         self.assertEqual(c.session_id, 42)
         self.assertEqual(c.job["measurement_id"], 102)
+        self.assertNotIn("mcu_retry", c.job)
         self.assertEqual(list(worker), [])
 
 

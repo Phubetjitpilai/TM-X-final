@@ -801,6 +801,30 @@ def send_package_size_to_mcu(package_size, number_alpl, handler, session_id, pie
                     break  # กลับไปส่ง PKG ซ้ำ โดยยังจับข้อผิดพลาดได้
     return False
 
+def send_retry_to_mcu(session_id,piece,target_count ):
+    global mega_ser
+    if _trigger_mode != "auto":
+        log.info("   🔀 (manual) ไม่ส่ง RETRY ให้ MCU")
+        return True
+    while is_running:
+        try:
+            ack_msg = "<RETRY>\n"
+            mega_ser.write(ack_msg.encode("utf-8"))
+            log.info(f"   [TX → Mega] {ack_msg.strip()}")
+            return True
+        except Exception as exc:
+            log.error("   ❌ ส่ง RETRY ให้ Mega ไม่สำเร็จ (%s): %s", type(exc).__name__, exc)
+            report("MCU_WRITE_FAILED",
+               f"ส่งค่า RETRY ให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
+               f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่", show_toast=False)
+            _drop_mega("ส่ง RETRY")
+            while is_running:
+                if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
+                    return False
+                if open_mega():
+                    break  # กลับไปส่ง RETRY ซ้ำ โดยยังจับข้อผิดพลาดได้
+    return False
+
 def send_measure_error_to_mcu( session_id,piece,target_count):
     global mega_ser              # ⚠ เหตุผลเดียวกับ send_result_to_mcu ข้างบน
     if _trigger_mode != "auto":
@@ -817,7 +841,7 @@ def send_measure_error_to_mcu( session_id,piece,target_count):
             report("MCU_WRITE_FAILED",
                f"ส่งค่า MEASURE ให้ MCU ไม่สำเร็จ ({type(exc).__name__}) "
                f"— ตรวจสาย USB ของ Arduino แล้วกด Start ใหม่", show_toast=False)
-            _drop_mega("ส่งขนาดชิ้นงาน")
+            _drop_mega("ส่ง Measure error")
             while is_running:
                 if ask_for_mcu_connection(session_id,piece,target_count) != "retry":
                     return False
@@ -1213,6 +1237,10 @@ def command_flow(session_id, groups, target_count, trigger_mode="auto"):
             group = groups[group_of[piece - 1]]
             pkg = group.package_size
             handler = group.handler
+            if queue_review.job and queue_review.job.get("mcu_retry"):
+                if not send_retry_to_mcu(session_id, piece, target_count):
+                    stop_reason = f"ชิ้นที่ {piece}/{target_count}: ส่ง RETRY ให้ MCU ไม่สำเร็จ"
+                    break
             if not send_package_size_to_mcu(pkg, number_alpl, handler, session_id, piece, target_count):
                 stop_reason = (f"ชิ้นที่ {piece}/{target_count}: "
                                f"บอกขนาดชิ้นงาน ({pkg}) ให้ MCU ไม่สำเร็จ "

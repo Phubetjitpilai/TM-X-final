@@ -49,7 +49,7 @@ class QueueReview:
                     raise HTTPException(409, "Pi ยังไม่พร้อมวัดซ้ำ — รอพักคิวก่อน")
                 if not job or not job.get("measurement_id") or not job.get("piece"):
                     raise HTTPException(400, "ไม่มีรายการที่จะวัดซ้ำ")
-                self.pending = job
+                self.pending = {**job, "mcu_retry": True}
                 self.phase = "remeasuring"
             return self.status()
 
