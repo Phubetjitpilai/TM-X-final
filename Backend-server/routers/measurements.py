@@ -266,6 +266,23 @@ _MEAS_HISTORY_SQL = """
     WHERE m.measurement_id = %s
 """
 
+
+def _next_run_piece(queue_state: dict, completed_piece: int):
+    """Advance the display cursor only when the planned piece just finished.
+
+    measured_count stays unchanged while replaying an existing measurement, so
+    it cannot identify the current piece of a replay-all run.
+    """
+    current = queue_state.get("active_piece")
+    if current != completed_piece:
+        return current  # An out-of-band remeasure must not advance the plan.
+    plan = queue_state.get("run_pieces") or []
+    try:
+        index = plan.index(completed_piece)
+    except ValueError:
+        return current
+    return plan[index + 1] if index + 1 < len(plan) else None
+
 @router.post("/api/measurements")
 async def create_measurement(req: MeasurementCreate):
     capture = review.resolve_capture(req)
@@ -383,6 +400,8 @@ async def create_measurement(req: MeasurementCreate):
 
         if qstate is not None:
             qstate["position"] += 1
+            if qstate.get("run_mode") in ("remaining", "all"):
+                qstate["active_piece"] = _next_run_piece(qstate, pos + 1)
             with db.cursor() as cur:
                 cur.execute(
                     "UPDATE sessions SET queue_state = %s WHERE session_id = %s",
@@ -392,7 +411,8 @@ async def create_measurement(req: MeasurementCreate):
         status = "complete" if measured >= target else "continue"
         response = {"measurement_id": measurement_id, "result": result,
                     "offset_pos_op": offset_pos_op, "status": status,
-                    "measured": measured, "target": target}
+                    "measured": measured, "target": target,
+                    "active_piece": qstate.get("active_piece") if qstate else None}
         if capture:
             capture.update(saved=True, response=response, saved_measurement_id=measurement_id)
             review.latest_image_capture[measurement_id] = req.capture_id
@@ -431,6 +451,7 @@ async def create_measurement(req: MeasurementCreate):
                 "lower_tol":      part["lower_tol"],
                 "measured":       measured,
                 "target":         target,
+                "active_piece":  response["active_piece"],
             },
         )
         return response
@@ -448,6 +469,7 @@ async def replace_measurement(req, capture):
     same_session_review = queue_state.get("run_mode") == "single"
     source_sid = capture.get("measurement_session_id", req.session_id)
     completed_queue = None
+    advanced_queue = None
     db = get_db()
     try:
         db.begin()
@@ -497,9 +519,17 @@ async def replace_measurement(req, capture):
                 else:
                     cur.execute("UPDATE sessions SET measured_count=1, state='stopped', ended_at=NOW(), queue_state=%s WHERE session_id=%s",
                                 (json.dumps(completed_queue), req.session_id))
+            elif queue_state.get("run_mode") in ("remaining", "all"):
+                next_piece = _next_run_piece(queue_state, capture["piece"])
+                if next_piece != queue_state.get("active_piece"):
+                    advanced_queue = {**queue_state, "active_piece": next_piece}
+                    cur.execute("UPDATE sessions SET queue_state=%s WHERE session_id=%s",
+                                (json.dumps(advanced_queue), req.session_id))
             cur.execute("SELECT * FROM measurements WHERE measurement_id=%s", (mid,))
             after = cur.fetchone()
         db.commit()
+        if advanced_queue is not None:
+            queue_state.update(advanced_queue)
         capture.update(saved=True, response=response, saved_measurement_id=mid)
         review.latest_image_capture[mid] = req.capture_id
         if single_review:
@@ -513,6 +543,7 @@ async def replace_measurement(req, capture):
         await push_event("measurement_replaced", {
             **response, "session_id": req.session_id, "piece": capture["piece"],
             "measurement_session_id": source_sid,
+            "active_piece": queue_state.get("active_piece"),
             "number_alpl": before["number_alpl"], "measure_type": before["measure_type"],
             "value_x": req.value_x, "value_y": req.value_y,
             "offset_opx": req.offset_opx, "offset_opy": req.offset_opy,

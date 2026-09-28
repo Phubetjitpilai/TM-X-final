@@ -24,6 +24,7 @@ import edit_image
 #   `HTTP Request: GET ... "200 OK"` ทุกครั้งจน log ของจริงจมหายหมด
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [Recv] %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("pyftpdlib").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -161,7 +162,6 @@ def _find_measurement_for_image(timeout: float = TXT_WAIT_TIMEOUT):
         if path:
             with count_lock:
                 if path != _txt_cursor_path:
-                    log.info(f"📄 .txt ไฟล์ใหม่ → {os.path.basename(path)} (เริ่มนับบรรทัดใหม่)")
                     _txt_cursor_path = path
                     _txt_cursor_rows = 0
 
@@ -171,7 +171,6 @@ def _find_measurement_for_image(timeout: float = TXT_WAIT_TIMEOUT):
 
                 if after > before:
                     _txt_cursor_rows = after
-                    log.info(f"   📈 .txt {before} → {after} บรรทัด")
                     parsed = _parse_measurement_line(lines[-1])
                     if parsed is not None:
                         return parsed
@@ -264,17 +263,15 @@ def upload_image_to_backend(measurement_id, image_path, capture_id=None):
             )
         if resp.status_code == 200:
             uploaded = True
-            log.info(f"   🖼 อัปโหลดรูปสำเร็จ (measurement_id={measurement_id})")
+            log.info("[Backend/รูป] ส่งสำเร็จ: measurement_id=%s", measurement_id)
         else:
-            log.info(f"   🖼 อัปโหลดรูปไม่สำเร็จ (measurement_id={measurement_id})")
             report("IMAGE_UPLOAD_FAILED", #warning
-                   f"รูปของ measurement {measurement_id} อัปโหลดไม่สำเร็จ "
+                   f"[Backend/รูป] ส่งไม่สำเร็จ: measurement_id={measurement_id} "
                    f"(HTTP {resp.status_code}): {resp.text[:120]}",
                    persist=False, type="warning")
     except Exception as exc:
-        log.info(f"   🖼 อัปโหลดรูปไม่สำเร็จ (measurement_id={measurement_id})")
         report("IMAGE_UPLOAD_FAILED",  #warning
-               f"รูปของ measurement {measurement_id} อัปโหลดไม่สำเร็จ: {exc}",
+               f"[Backend/รูป] ส่งไม่สำเร็จ: measurement_id={measurement_id}: {exc}",
                persist=False, type="warning")
     finally:
         if not uploaded and capture_id:
@@ -333,11 +330,11 @@ def clear_temp_dir(wait_timeout: float = 5.0):
         # ไฟล์ที่หมุดชี้อยู่ถูกลบไปกับโฟลเดอร์ temp แล้ว ต้องล้างด้วย
         _txt_cursor_path = None
         _txt_cursor_rows = 0
-    log.info("🔄 รีเซ็ตตำแหน่งอ่าน .txt เรียบร้อย")
+    log.debug("รีเซ็ตตำแหน่งอ่าน .txt เรียบร้อย")
 
     if removed_files or removed_dirs:
-        log.info(f"🧹 ล้าง {os.path.basename(TEMP_IMAGE_DIR)} แล้ว "
-                 f"(ไฟล์ {removed_files} · โฟลเดอร์ {removed_dirs})")
+        log.debug("ล้าง %s แล้ว (ไฟล์ %s · โฟลเดอร์ %s)",
+                  os.path.basename(TEMP_IMAGE_DIR), removed_files, removed_dirs)
         
 #Clear เมื่อ Session_id เปลี่ยน และ จบแล้ว
 def session_watcher():
@@ -365,20 +362,22 @@ def session_watcher():
 def _handle_capture(image_path, session_id, capture_id):
     try:
         _handle_capture_inner(image_path, session_id, capture_id)
+    except Exception:
+        log.exception("[Backend] งานของรูป %s (session=%s) หยุดก่อนส่งครบ",
+                      os.path.basename(image_path), session_id)
     finally:
         _job_end()   # ต้องลดตัวนับเสมอ ไม่ว่าจะจบทางไหน ไม่งั้น clear_temp_dir รอค้างตลอด
 
 def _handle_capture_inner(image_path, session_id, capture_id):
     name = os.path.basename(image_path)
-    try:
-        size_mb = os.path.getsize(image_path) / 1_048_576
-    except OSError:
-        size_mb = 0.0
 
     # ── ด่าน 1: จับคู่ค่ากับรูป ──────────────────────────────────────────
     pair = _find_measurement_for_image()
     if pair is None:
-        report("TXT_NOT_FOUND",f"ไม่พบค่าการวัด "f"(รอ {TXT_WAIT_TIMEOUT:.0f} วิแล้ว)", show_toast=False) # Show False
+        report("TXT_NOT_FOUND",
+               f"[.txt] รูป {name} (session={session_id}) ยังจับคู่ค่าจาก .txt ไม่ได้ "
+               f"หลังรอ {TXT_WAIT_TIMEOUT:.0f} วินาที — ไม่ส่ง Backend",
+               show_toast=False)
         return
     
     (
@@ -386,12 +385,14 @@ def _handle_capture_inner(image_path, session_id, capture_id):
     horizon_left, horizon_right, vertical_bottom, vertical_top,
     offset_opx, offset_opy
     ) = pair
+    log.info("[.txt] จับคู่กับรูป %s แล้ว: session=%s X=%.3f Y=%.3f",
+             name, session_id, value_x, value_y)
 
     # ── ด่าน 2: ต้องมี session ที่ running อยู่ ─────────────────────────
     # session/capture ถูกตรึงตอนรับไฟล์ ห้ามอ่านใหม่หลังวาดรูปหรือรอ TXT
     if session_id is None:
         report("NO_SESSION", # show false
-               f"ได้ค่า/รูป {name} มาแต่ไม่มี session ที่ running อยู่ — ทิ้งไป", show_toast=False)
+               f"[Backend] ไม่ส่งค่า/รูป {name}: ไม่มี session ที่กำลังวัด", show_toast=False)
         clear_temp_dir(wait_timeout=0)
         return
     
@@ -419,12 +420,8 @@ def _handle_capture_inner(image_path, session_id, capture_id):
                persist=False, type="warning")
 
     # ── ด่าน 4: ส่งเข้า Backend ─────────────────────────────────────────
-    log.info(
-    f"✅ {name} ({size_mb:.1f} MB) → "
-    f"value_x={value_x:.3f} value_y={value_y:.3f} "
-    f"horizon_left={horizon_left:.3f} horizon_right={horizon_right:.3f} vertical_bottom={vertical_bottom:.3f} vertical_top={vertical_top:.3f} "
-    f"offset_opx={offset_opx:.3f} offset_opy={offset_opy:.3f}"
-    )
+    log.info("[Backend/ค่า] กำลังส่ง: session=%s รูป=%s X=%.3f Y=%.3f",
+             session_id, name, value_x, value_y)
     try:
         resp = post_to_backend(
         session_id,
@@ -434,7 +431,8 @@ def _handle_capture_inner(image_path, session_id, capture_id):
         )
     except Exception as exc:
         report("BACKEND_REJECT",  #Show False
-               f"POST /api/measurements ไม่สำเร็จ: {exc} — เก็บรูปไว้ไม่ลบ",show_toast=False)
+               f"[Backend/ค่า] ส่งไม่สำเร็จ: session={session_id} รูป={name}: "
+               f"{exc} — เก็บรูปไว้ไม่ลบ",show_toast=False)
         return
     
     if resp.status_code != 200:
@@ -444,52 +442,30 @@ def _handle_capture_inner(image_path, session_id, capture_id):
         except Exception:
             detail = resp.text[:200]
         report("BACKEND_REJECT", #Show false
-               f"Backend ปฏิเสธค่านี้ (HTTP {resp.status_code}): {detail}",show_toast=False)
+               f"[Backend/ค่า] ส่งไม่สำเร็จ: session={session_id} รูป={name} "
+               f"HTTP {resp.status_code}: {detail}",show_toast=False)
         _remove_quietly(image_path)
         return
 
     data = resp.json()
-    log.info(f"   → บันทึกแล้ว: result={data.get('result')}  ({data.get('measured')}/{data.get('target')})")
+    log.info("[Backend/ค่า] บันทึกสำเร็จ: session=%s measurement_id=%s "
+             "result=%s (%s/%s)", session_id, data.get("measurement_id"),
+             data.get("result"), data.get("measured"), data.get("target"))
     upload_image_to_backend(data["measurement_id"], image_path, capture_id)
 
 # ทำงานเมื่อ FORWARD_TO_BACKEND = 0 ใช้สำหรับการ Debug
 
 def _log_received_file(path: str, note: str = ""):
-    """โหมดรับอย่างเดียว — รายงานไฟล์ที่เพิ่งได้มา ไม่แตะต้องไฟล์เลย
-
-    ⚠ ต้องตอบให้ตรงกับสิ่งที่โหมดจริงจะทำ ไม่งั้นหมดประโยชน์ —
-      บรรทัดที่โหมดจริงจะข้าม ตรงนี้ก็ต้องบอกว่าจะข้าม
-    """
-    rel  = os.path.relpath(path, TEMP_IMAGE_DIR)
+    """รายงานเฉพาะสถานะการรับไฟล์ที่จำเป็นต่อการไล่ผลวัด"""
     ext  = os.path.splitext(path)[1].lower()
-    when = time.strftime("%H:%M:%S")
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        size = -1
-
-    kind = "รูป" if ext in _IMAGE_EXTS else "ข้อความ"
-    log.info(f"[{when}] ได้ไฟล์ ({kind}): {rel}  ({size:,} bytes){note}")
-
-    if ext in _IMAGE_EXTS:
-        return
-
-    lines = _read_lines(path)
-    log.info(f"           มีทั้งหมด {len(lines)} บรรทัด")
-    if not lines:
-        return
-
-    last = lines[-1]
-    log.info(f"           บรรทัดล่าสุด: {last!r}")
-
-    parsed = _parse_measurement_line(last)
-    if parsed is None:
-        n = len(last.split(","))
-        log.warning(f"           ⚠️ แปลงค่าไม่ได้ — ได้ {n} ช่อง (ต้องการ = 8) ")
-        return
-
-    log.info(f"           แปลงค่าได้: value_x={parsed[0]}  value_y={parsed[1]}  "
-             f"offset_opx={parsed[6]}  offset_opy={parsed[7]}")
+    name = os.path.basename(path)
+    if ext == ".txt":
+        log.info("[.txt] ได้รับจาก TM-X: %s (%s บรรทัด) — รอจับคู่กับรูป",
+                 name, len(_read_lines(path)))
+    elif ext in _IMAGE_EXTS:
+        log.info("[รูป] ได้รับจาก TM-X: %s%s", name, note)
+    else:
+        log.debug("ได้รับไฟล์อื่น: %s", name)
   
 class ReceiverFTPHandler(FTPHandler):
     """TM-X ส่งของมาเป็นชุด: ไฟล์ .txt ผลวัด (ต่อท้ายทีละบรรทัด) + รูป 2 ใบ
@@ -511,8 +487,9 @@ class ReceiverFTPHandler(FTPHandler):
                                      params={"session_id": session_id}, timeout=5)
                 response.raise_for_status()
                 context = (session_id, response.json().get("capture_id"))
-            except Exception:
-                log.exception("อ่านรหัสรอบวัดไม่ได้ — ไม่รับไฟล์โดยเดารายการเป้าหมาย")
+            except Exception as exc:
+                log.error("[รูป] รับ %s ไม่ได้: อ่าน session/capture ไม่สำเร็จ (%s)",
+                          os.path.basename(file), exc)
                 self.respond("451 Measurement context unavailable; retry later.")
                 return
             if not hasattr(self, "_capture_contexts"):
@@ -555,9 +532,12 @@ class ReceiverFTPHandler(FTPHandler):
         #   ที่ clear_temp_dir มองว่าไม่มีงานค้างทั้งที่เธรดกำลังจะเริ่มทำงานพอดี
         context = getattr(self, "_capture_contexts", {}).pop(file, None)
         if context is None:
-            log.warning("ไม่มีรหัสรอบวัดที่ผูกไว้กับไฟล์ %s — ไม่ส่งต่อ", file)
+            log.warning("[รูป] ได้รับ %s แต่ไม่มีรหัสรอบวัด — ไม่ส่ง Backend",
+                        os.path.basename(file))
             return
         session_id, capture_id = context
+        log.info("[รูป] ได้รับจาก TM-X: %s (session=%s capture=%s)",
+                 os.path.basename(file), session_id, capture_id)
         _job_begin()
         # ส่งเวลาที่ไฟล์มาถึงไปด้วย เพื่อจับเวลาแต่ละขั้นตอน (ดู _handle_capture_inner)
         threading.Thread(target=_handle_capture, args=(file, session_id, capture_id), daemon=True).start()
@@ -589,7 +569,7 @@ if __name__ == "__main__":
     mode = ("ส่งต่อเข้า Backend (ใช้งานจริง)" if FORWARD_TO_BACKEND
             else "รับอย่างเดียว — ไม่ยิง Backend / ไม่ลบไฟล์")
     log.info("=" * 70)
-    log.info("Recieve_tm-x.py (PC) — รอรับค่า+รูปจาก TM-X ผ่าน FTP")
+    log.info("Data-receiver.py (PC) — รอรับค่า+รูปจาก TM-X ผ่าน FTP")
     log.info(f"  โหมด          : {mode}")
     log.info(f"                  (.env: FORWARD_TO_BACKEND={'1' if FORWARD_TO_BACKEND else '0'})")
     log.info(f"  FTP รออยู่ที่   : {DATA_RECEIVER_FTP_HOST}:{DATA_RECEIVER_FTP_PORT}   (.env: AGENT_FTP_HOST/PORT)")
@@ -597,7 +577,7 @@ if __name__ == "__main__":
     log.info(f"  เก็บไฟล์ลงที่   : {TEMP_IMAGE_DIR}")
     if FORWARD_TO_BACKEND:
         log.info(f"  Backend ที่    : {BACKEND_URL}   (.env: BACKEND_URL)")
-        log.info("  กติกา         : ใช้รูปนอกโฟลเดอร์ HEAD-A · ข้ามค่า -9999.999")
+        log.info("  กติกา         : ใช้รูปในโฟลเดอร์ HEAD-A · ข้ามค่า -9999.999")
     else:
         log.info("  ** ไฟล์จะกองอยู่ในโฟลเดอร์ข้างบน ไม่ถูกลบ — ตรวจแล้วลบเองด้วย **")
     log.info("=" * 70)

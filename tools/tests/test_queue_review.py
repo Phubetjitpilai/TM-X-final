@@ -189,6 +189,22 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events.call_args.args[0], "measurement_replaced")
         self.assertTrue(review.check_image(101, "ticket-1"))
 
+    async def test_replay_all_advances_display_piece_without_changing_measure_count(self):
+        q = {**self.db.queue, "run_mode": "all", "run_pieces": [1, 2, 3, 4, 5], "active_piece": 1}
+        criteria = {"nominal_x": 8.035, "nominal_y": 8.035,
+                    "upper_tol": .015, "lower_tol": .015, "offset_tol": None}
+        events = AsyncMock()
+        with patch.dict(review.s.session_queues, {42: q}, clear=True), \
+             patch.object(measurements, "get_db", return_value=self.db), \
+             patch.object(measurements, "_load_criteria", return_value=criteria), \
+             patch.object(measurements, "push_event", events), patch.object(measurements, "log_edit"):
+            result = await measurements.create_measurement(self.request)
+        self.assertEqual(result["measured"], 2)
+        self.assertEqual(q["active_piece"], 2)
+        writes = [args for sql, args in self.db.statements if sql.startswith("UPDATE sessions SET queue_state=")]
+        self.assertEqual(json.loads(writes[-1][0])["active_piece"], 2)
+        self.assertEqual(events.call_args.args[1]["active_piece"], 2)
+
     async def test_stopped_session_does_not_overwrite(self):
         self.db.session["state"] = "stopped"
         with patch.object(measurements, "get_db", return_value=self.db):
@@ -332,6 +348,7 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["session_id"], 42)
                 self.assertEqual(result["measured_count"], 2)
                 self.assertEqual(payload["run_pieces"], pieces)
+                self.assertEqual(result["queue_state"]["active_piece"], pieces[0])
                 self.assertEqual(payload["existing_measurements"],
                                  {1: 101, 2: 102} if mode == "all" else {1: 101} if mode == "single" else {})
                 self.assertEqual(payload["target_count"], 5)

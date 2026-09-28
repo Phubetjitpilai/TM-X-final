@@ -1231,6 +1231,31 @@ input[type="number"]::-webkit-outer-spin-button {
 .session-btns { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
 .btn-start   { background: var(--accent); color: #fff; }
 .btn-stop    { background: var(--ng);     color: #fff; }
+.start-action-wrapper { display: inline-flex; position: relative; }
+.start-action-wrapper.review-locked { cursor: not-allowed; }
+.start-action-wrapper.review-locked .btn-start { pointer-events: none; }
+.start-action-tooltip {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius);
+  background: var(--text);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.start-action-wrapper:hover .start-action-tooltip,
+.start-action-wrapper:focus-visible .start-action-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
 
 /* ปุ่มจำลองสัญญาณทริกเกอร์ — ใช้ชั่วคราวจนกว่าจะต่อ MCU จริง
    ใช้สีเตือน (เหลืองอำพัน) ไม่ใช่สีหลัก เพื่อให้เห็นชัดว่า **ไม่ใช่ปุ่มถาวร**

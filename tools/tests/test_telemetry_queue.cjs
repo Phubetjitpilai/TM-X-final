@@ -335,3 +335,22 @@ test('Part Entry continue sends the selected plan without creating a new display
     assert.equal(c.sessionRef.current.session_id, 42);
   }
 });
+
+test('replay-all highlights the planned piece and advances after replacing an old result', async () => {
+  const c = fixture();
+  c.updateStats = async () => {};
+  const state = { session_id: 42, state: 'running', measured_count: 2, target_count: 3,
+    queue_state: { queue: [1, 2, 3], position: 2, run_mode: 'all',
+      run_pieces: [1, 2, 3], active_piece: 1, start_confirmed: true } };
+  c.onSessionStarted(state);
+  assert.equal(c.displayQueueRef.current.map(q => q.state).join(','), 'now,ok,wait');
+  await c.onMeasurementReplaced({ session_id: 42, piece: 1, measurement_id: 101,
+    number_alpl: 1, result: 'NG', measured: 2, target: 3, active_piece: 2 });
+  assert.equal(c.displayQueueRef.current.map(q => q.state).join(','), 'ng,now,wait');
+
+  const restored = fixture();
+  restored.resultsRef.current = c.resultsRef.current;
+  restored.syncQueueStrip({ ...state,
+    queue_state: { ...state.queue_state, active_piece: 2 } });
+  assert.equal(restored.displayQueueRef.current.map(q => q.state).join(','), 'ng,now,wait');
+});

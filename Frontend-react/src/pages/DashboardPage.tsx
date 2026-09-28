@@ -221,7 +221,6 @@ export default function DashboardPage() {
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [reviewPhase, setReviewPhase] = useState("running");
   const [reviewBusy, setReviewBusy] = useState(false);
-  const [continueMode, setContinueMode] = useState<"remaining" | "all">("remaining");
   const reviewBusyRef = useRef(false);
 
   async function resumeLatestTelemetry() {
@@ -626,7 +625,7 @@ export default function DashboardPage() {
   const sessionSig = polledSession
     ? [polledSession.session_id, polledSession.state, polledSession.measured_count,
        polledSession.target_count, polledQueue?.work_closed, polledQueue?.run_mode,
-       polledQueue?.start_confirmed, polledSession.last_event,
+       polledQueue?.start_confirmed, polledQueue?.active_piece, polledSession.last_event,
        polledSession.last_event_detail, polledSession.last_event_at].join("|")
     : "";
 
@@ -953,12 +952,7 @@ export default function DashboardPage() {
   }
 
   // ── SSE handlers ───────────────────────────────────────────────────
-  /** สร้าง/อัปเดตแถบคิวจาก queue_state ที่ backend แนบมากับ session/state
-   *
-   *  ⚠ ตำแหน่งปัจจุบันใช้ measured_count เป็นตัวชี้ ไม่ได้ถาม Pi — เพราะ Pi
-   *    ไม่รู้ด้วยซ้ำว่ากำลังวัด ALPL ตัวไหน (backend เป็นคนจับคู่จากตำแหน่งใน
-   *    คิวของตัวเอง ดู session_queues ใน main.py)
-   */
+  /** สร้าง/อัปเดตแถบคิวจาก queue_state ที่ backend แนบมากับ session/state */
   function syncQueueStrip(st: any) {
     // Session วัดซ้ำแบบชิ้นเดียวใช้ Queue เดิมของหน้าจอเป็นหลัก
     if (reviewDisplayRef.current) return;
@@ -980,14 +974,19 @@ export default function DashboardPage() {
       applyTelemetry(latestTelemetryRef.current);
     }
     const done = st?.measured_count ?? 0;
+    // Replay-all updates old measurement rows, so measured_count stays put.
+    // The persisted active_piece tracks that run independently of the count.
+    const activeIndex = st?.state === "running" && q?.run_mode !== "single"
+      ? (typeof q?.active_piece === "number" ? q.active_piece - 1 : done)
+      : -1;
     setQueueStrip(
       list.map((alpl, i) => ({
         alpl,
         sessionId: st.session_id,
         // ผลของชิ้นที่วัดไปแล้วมาจาก resultsRef ที่สะสมจาก SSE (+ กู้จาก
         // localStorage ตอน mount) — ถ้ายังไม่รู้ผลจริงๆ chipStateFor คืน "done"
-        state: i < done ? chipStateFor(i)
-             : i === done && st?.state === "running" && q?.run_mode !== "single" ? "now"
+        state: i === activeIndex ? "now"
+             : i < done ? chipStateFor(i)
              : "wait",
       })),
     );
@@ -1028,9 +1027,19 @@ export default function DashboardPage() {
     resetTelemetry();
   }
 
+  function leaveReviewWhenContinuing(st: any) {
+    if (sessionRef.current.state === "running" || st.state !== "running") return;
+    let q = st.queue_state;
+    try { if (typeof q === "string") q = JSON.parse(q); } catch { return; }
+    if ((q?.run_mode === "all" || q?.run_mode === "remaining") && selectedQueueRef.current !== null) {
+      followLatestTelemetry();
+    }
+  }
+
   function onSessionStarted(d: any) {
     if (prepareDisplaySession(d) === false) return;
     if (sessionRef.current.session_id === d.session_id && sessionRef.current.state === "running") return;
+    leaveReviewWhenContinuing(d);
     setReviewPhase("running");
     const started = { ...d, state: "running", measured_count: d.measured_count ?? 0 };
     syncQueueStrip(started);
@@ -1091,10 +1100,11 @@ export default function DashboardPage() {
     if (selectedQueueRef.current === null) applyTelemetry(d);
     // เก็บผลรายชิ้นไว้ระบายสีชิปในแถบคิว — d.measured คือลำดับที่ 1..n
     if (d.measured > 0) resultsRef.current[d.measured - 1] = d.result;
+    const activeIndex = typeof d.active_piece === "number" ? d.active_piece - 1 : d.measured;
     setQueueStrip((prev) =>
       prev.map((q, i) =>
-        i < d.measured ? { ...q, state: chipStateFor(i) }
-        : i === d.measured ? { ...q, state: "now" as const }
+        i === activeIndex ? { ...q, state: "now" as const }
+        : i < d.measured ? { ...q, state: chipStateFor(i) }
         : q,
       ),
     );
@@ -1111,9 +1121,16 @@ export default function DashboardPage() {
     const review = reviewDisplayRef.current;
     const index = review?.queueIndex ?? d.piece - 1;
     resultsRef.current[index] = d.result;
-    setQueueStrip(prev => prev.map((q, i) => i === index ? { ...q, state: chipStateFor(i) } : q));
     const q = sessionRef.current.queue_state;
-    const runMode = (typeof q === "string" ? JSON.parse(q) : q)?.run_mode;
+    const queueState = typeof q === "string" ? JSON.parse(q) : q;
+    const runMode = queueState?.run_mode;
+    if (!review && (runMode === "all" || runMode === "remaining")) {
+      const nextQueue = { ...queueState, active_piece: d.active_piece };
+      updateSession({ queue_state: nextQueue });
+      syncQueueStrip({ ...sessionRef.current, queue_state: nextQueue });
+    } else {
+      setQueueStrip(prev => prev.map((item, i) => i === index ? { ...item, state: chipStateFor(i) } : item));
+    }
     const isLatestRunResult = runMode === "all" || runMode === "single";
     if (review || isLatestRunResult || latestTelemetryRef.current?.measurement_id === d.measurement_id) latestTelemetryRef.current = d;
     if (telemetryRef.current?.measurement_id === d.measurement_id || (selectedQueueRef.current === null && (review || isLatestRunResult))) applyTelemetry(d);
@@ -1282,7 +1299,6 @@ export default function DashboardPage() {
   }
 
   function onSessionStopped(d?: { agent_error?: string | null }) {
-    setContinueMode("remaining");
     const review = reviewDisplayRef.current;
     if (review && review.sessionId === sessionRef.current.session_id) {
       review.completed = true;
@@ -1446,6 +1462,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!polledSession) return;
     if (prepareDisplaySession(polledSession) === false) return;
+    leaveReviewWhenContinuing(polledSession);
     syncQueueStrip(polledSession);
     updateSession(polledSession);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1510,6 +1527,7 @@ export default function DashboardPage() {
     !persistedQueue?.work_closed &&
     (session.measured_count ?? 0) < (session.target_count ?? 0);
   const hasQueue = !!entryQueue || pendingWork;
+  const mustExitReviewBeforeContinue = pendingWork && selectedQueueIndex !== null;
 
   /* ── ทำไมเช็ค `!== "offline"` ไม่ใช่ `=== "online"` ──────────────────────
      `stationStatus` เริ่มต้นเป็น "connecting" เสมอ และเปลี่ยนเป็น "online"
@@ -1526,7 +1544,8 @@ export default function DashboardPage() {
      ว่า Pi ยังมีชีวิต ซึ่งพิสูจน์ว่า backend ติดต่อได้แน่นอน ไม่ต้องรอสายที่สอง
      มายืนยันซ้ำ (กติกาเดียวกับป้ายสถานะใน Layout.tsx ที่แก้ไปแล้ว)          */
   const canStart =
-    session.state !== "running" && stationStatus !== "offline" && !dbOffline && piOnline && hasQueue;
+    session.state !== "running" && stationStatus !== "offline" && !dbOffline && piOnline && hasQueue
+    && !mustExitReviewBeforeContinue;
   const reviewUnavailable = dbOffline ? "DB Offline"
     : stationStatus === "offline" ? "Server Offline"
     : !piOnline ? "Pi Offline / Waiting for Pi"
@@ -1553,7 +1572,8 @@ export default function DashboardPage() {
     :                               "▶ Start (กด Save ก่อน)";
 
   const startTitle =
-    dbOffline                     ? "Backend ต่อฐานข้อมูลไม่ได้ — เริ่มการวัดไม่ได้เพราะต้องเขียน session ลง DB ก่อน · ตรวจว่า MySQL ทำงานอยู่ไหม"
+    mustExitReviewBeforeContinue ? "กด 'ออกจากโหมดนี้' ก่อน แล้วจึงกด Start (วัดต่อ)"
+    : dbOffline                   ? "Backend ต่อฐานข้อมูลไม่ได้ — เริ่มการวัดไม่ได้เพราะต้องเขียน session ลง DB ก่อน · ตรวจว่า MySQL ทำงานอยู่ไหม"
     : stationStatus === "offline" ? "ขาดการเชื่อมต่อกับ Backend — ตรวจว่า uvicorn ยังรันอยู่ไหม · ลองรีเฟรชหน้าเว็บ"
     : piStatus === false          ? "ไม่ได้รับสัญญาณจาก Pi เกินเวลาที่กำหนด — ตรวจว่า Pi.py รันอยู่ไหม · สาย LAN"
     : !piOnline                   ? "ยังไม่เคยได้รับ heartbeat จาก Pi ตั้งแต่ Backend เริ่มทำงาน — รอสักครู่ ถ้าไม่หายให้ตรวจว่า Pi.py รันอยู่ไหม"
@@ -1582,17 +1602,18 @@ export default function DashboardPage() {
 
 
   async function startFromQueue() {
+    if (mustExitReviewBeforeContinue) return;
     if (pendingWork) {
       const ok = await dialog.confirm(
         <div>
-          วัดต่อใน Session เดิม: {continueMode === "all" ? "วัดทั้งหมดอีกครั้ง ผลและรูปเดิมจะถูกแทนที่" : `วัดเฉพาะ ${session.target_count - session.measured_count} ชิ้นที่เหลือ`}
+          วัดต่อเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม
         </div>,
         { title: "วัดชิ้นงานต่อ", okLabel: "▶ เริ่มวัดต่อ" },
       );
       if (!ok) return;
       try {
         const data = await apiPost<SessionState>("/api/session/continue", {
-          session_id: session.session_id, mode: continueMode,
+          session_id: session.session_id, mode: "remaining",
         });
         onSessionStarted(data);
       } catch (e) {
@@ -1917,20 +1938,28 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {pendingWork && <div style={{ gridColumn: "1 / -1", display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
-                    <label><input type="radio" name="continueMode" checked={continueMode === "remaining"}
-                      onChange={() => setContinueMode("remaining")} /> วัดเฉพาะชิ้นที่เหลือ</label>
-                    <label><input type="radio" name="continueMode" checked={continueMode === "all"}
-                      onChange={() => setContinueMode("all")} /> วัดทั้งหมดอีกครั้ง</label>
+                  {pendingWork && <div className="session-entry-hint" style={{ gridColumn: "1 / -1", marginTop: "0.5rem" }}>
+                    Start (วัดต่อ) จะวัดเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม
                   </div>}
 
                   {/* ⚠ ปุ่มควบคุมทั้งหมดอยู่ที่นี่ที่เดียว ไม่กระจายไปการ์ดซ้าย —
                       ตอนต้องกด Stop ด่วน คนต้องรู้ทันทีว่ามองที่ไหน ไม่ใช่กวาดตา
                       หาสองที่ · การ์ดซ้ายจึงเป็นจอแสดงสถานะล้วน ๆ ไม่มีปุ่มเลย */}
                   <div className="session-btns">
-                    <button className="btn-start" disabled={!canStart} title={startTitle} onClick={startFromQueue}>
-                      {startLabel}
-                    </button>
+                    <span
+                      className={`start-action-wrapper${mustExitReviewBeforeContinue ? " review-locked" : ""}`}
+                      title={mustExitReviewBeforeContinue ? undefined : startTitle}
+                      tabIndex={mustExitReviewBeforeContinue ? 0 : undefined}
+                    >
+                      <button className="btn-start" disabled={!canStart} onClick={startFromQueue}>
+                        {startLabel}
+                      </button>
+                      {mustExitReviewBeforeContinue && (
+                        <span className="start-action-tooltip" role="tooltip">
+                          กด “ออกจากโหมดนี้” ก่อน แล้วจึง Start (วัดต่อ)
+                        </span>
+                      )}
+                    </span>
                     {pendingWork && (
                       <button type="button" className="btn-stop"
                         disabled={session.state === "timeout" && !piOnline}

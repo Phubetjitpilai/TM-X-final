@@ -881,8 +881,8 @@ async def restart_existing_session(session_id: int, mode: str, trigger_mode: str
                                        q["group_templates"], q["entry_mode"],
                                        preserve_part=q.get("measure_mode") == "New")
                 before = dict(q)
-                q.update(run_mode=mode, run_pieces=run_pieces, trigger_mode=chosen_trigger,
-                         start_confirmed=False)
+                q.update(run_mode=mode, run_pieces=run_pieces, active_piece=run_pieces[0],
+                         trigger_mode=chosen_trigger, start_confirmed=False)
                 tray = 0 if mode == "single" else q.get("tray_capacity")
                 cur.execute("UPDATE sessions SET state='running', ended_at=NULL, last_seen=NOW(), "
                             "last_event=NULL, last_event_detail=NULL, last_event_at=NULL, queue_state=%s WHERE session_id=%s",
