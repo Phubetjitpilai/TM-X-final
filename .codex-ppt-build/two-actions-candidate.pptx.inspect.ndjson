@@ -1,0 +1,51 @@
+{"kind":"deck","id":"pr/ilsdun","name":"Deck"}
+{"kind":"layout","layoutId":"acd69bb2-cd03-45fb-891b-79e6cac04742","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"8b7b1070-0f6e-4fd7-901c-c68ee434c20f","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/jldhpc","slide":1,"title":"Actions","textShapes":17}
+{"kind":"textbox","id":"sh/r2psb6hs","slide":1,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[92,64,150,53]}
+{"kind":"shape","id":"sh/c3y94byd","slide":1,"bbox":[250,64,350,52]}
+{"kind":"textbox","id":"sh/d47adgzy","slide":1,"text":"Action 01","textPreview":"Action 01","textChars":9,"textLines":1,"bbox":[273,70,315,42]}
+{"kind":"textbox","id":"sh/zqpsfqh4","slide":1,"text":"Automate Data Capture and Storage","textPreview":"Automate Data Capture and Storage","textChars":33,"textLines":1,"bbox":[91,137,1110,56]}
+{"kind":"textbox","id":"sh/0ri98vyp","slide":1,"text":"Record each ALPL measurement directly as the machine runs.","textPreview":"Record each ALPL measurement directly as the machine runs.","textChars":58,"textLines":1,"bbox":[92,194,1090,37]}
+{"kind":"shape","id":"sh/1srahgzu","slide":1,"bbox":[0,704,1280,16]}
+{"kind":"shape","id":"sh/utwruh0z","slide":1,"bbox":[70,248,352,269]}
+{"kind":"shape","id":"sh/fu583mhk","slide":1,"bbox":[70,248,352,52]}
+{"kind":"textbox","id":"sh/bixo7i1s","slide":1,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[92,254,37,40]}
+{"kind":"textbox","id":"sh/qhonyd07","slide":1,"text":"Measure","textPreview":"Measure","textChars":7,"textLines":1,"bbox":[138,256,275,38]}
+{"kind":"textbox","id":"sh/dkf698ji","slide":1,"text":"TM-X produces a measurement and camera image for each part.","textPreview":"TM-X produces a measurement and camera image for each part.","textChars":59,"textLines":1,"bbox":[94,328,304,142]}
+{"kind":"shape","id":"sh/cj6503ix","slide":1,"bbox":[465,248,352,269]}
+{"kind":"shape","id":"sh/3ex43y1g","slide":1,"bbox":[465,248,352,52]}
+{"kind":"textbox","id":"sh/2d4nut0v","slide":1,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[487,254,37,40]}
+{"kind":"textbox","id":"sh/pgfm58jm","slide":1,"text":"Capture","textPreview":"Capture","textChars":7,"textLines":1,"bbox":[533,256,275,38]}
+{"kind":"textbox","id":"sh/of65w3i1","slide":1,"text":"The system links the reading and image to the correct part and checks the result.","textPreview":"The system links the reading and image to the correct part and checks the result.","textChars":81,"textLines":1,"bbox":[489,328,304,142]}
+{"kind":"shape","id":"sh/fad4zy1k","slide":1,"bbox":[860,248,352,269]}
+{"kind":"shape","id":"sh/ep4nqt0z","slide":1,"bbox":[860,248,352,52]}
+{"kind":"textbox","id":"sh/ilknit4r","slide":1,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[882,254,37,40]}
+{"kind":"textbox","id":"sh/jmtobelc","slide":1,"text":"Store","textPreview":"Store","textChars":5,"textLines":1,"bbox":[928,256,275,38]}
+{"kind":"textbox","id":"sh/4nm5kjmx","slide":1,"text":"The database keeps the value, result, image, time, and operator together.","textPreview":"The database keeps the value, result, image, time, and operator together.","textChars":73,"textLines":1,"bbox":[884,328,304,142]}
+{"kind":"shape","id":"sh/58v6do3i","slide":1,"bbox":[70,545,1140,2]}
+{"kind":"textbox","id":"sh/6947mt4n","slide":1,"text":"What this removes","textPreview":"What this removes","textChars":17,"textLines":1,"bbox":[70,567,330,34]}
+{"kind":"textbox","id":"sh/radofyl8","slide":1,"text":"Manual copying into separate Excel logs","textPreview":"Manual copying into separate Excel logs","textChars":39,"textLines":1,"bbox":[70,607,500,44]}
+{"kind":"textbox","id":"sh/sbmpo3mt","slide":1,"text":"What this enables","textPreview":"What this enables","textChars":17,"textLines":1,"bbox":[645,567,330,34]}
+{"kind":"textbox","id":"sh/tcv6h83e","slide":1,"text":"Each result can be reviewed with its original image","textPreview":"Each result can be reviewed with its original image","textChars":51,"textLines":1,"bbox":[645,607,525,44]}
+{"kind":"image","id":"im/vmpw7ils","slide":1,"name":"","alt":"Analog Devices and partner logos from supplied presentation","bbox":[1068,37,190,53]}
+{"kind":"notes","id":"nt/jldhpc","slide":1,"text":"Based on the supplied deck: slide 33 says readings and images are kept together; slides 36–37 describe automatic receiving, validation, and storage; slide 42 includes measurement time and operator fields."}
+{"kind":"slide","id":"sl/t3xjfs","slide":2,"title":"Actions","textShapes":9}
+{"kind":"textbox","id":"sh/y1sn61sb","slide":2,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[92,64,150,53]}
+{"kind":"shape","id":"sh/l4jm1gbm","slide":2,"bbox":[250,64,350,52]}
+{"kind":"textbox","id":"sh/k3a58ba1","slide":2,"text":"Action 02","textPreview":"Action 02","textChars":9,"textLines":1,"bbox":[273,70,315,42]}
+{"kind":"textbox","id":"sh/m5snals7","slide":2,"text":"Standardize and Centralize Data Access","textPreview":"Standardize and Centralize Data Access","textChars":38,"textLines":1,"bbox":[91,137,1110,56]}
+{"kind":"textbox","id":"sh/98365gry","slide":2,"text":"Keep one consistent set of ALPL specifications and measurement records.","textPreview":"Keep one consistent set of ALPL specifications and measurement records.","textChars":71,"textLines":1,"bbox":[92,194,1090,37]}
+{"kind":"shape","id":"sh/87a5cvad","slide":2,"bbox":[0,704,1280,16]}
+{"kind":"shape","id":"sh/valo7q9o","slide":2,"bbox":[70,247,540,315]}
+{"kind":"shape","id":"sh/u9cnels3","slide":2,"bbox":[70,247,540,54]}
+{"kind":"textbox","id":"sh/onu1o72d","slide":2,"text":"Standardize the data","textPreview":"Standardize the data","textChars":20,"textLines":1,"bbox":[94,255,490,38]}
+{"kind":"textbox","id":"sh/po3ixcjy","slide":2,"text":"Use consistent fields and naming across ALPL and part sizes.\n\nMaintain specifications in one place, with changes recorded.","textPreview":"Use consistent fields and naming across ALPL and part sizes. |  | Maintain specifications in one place, with changes recorded.","textChars":122,"textLines":3,"bbox":[95,330,486,192]}
+{"kind":"shape","id":"sh/2lcjmxk7","slide":2,"bbox":[670,247,540,315]}
+{"kind":"shape","id":"sh/nml0v21s","slide":2,"bbox":[670,247,540,54]}
+{"kind":"textbox","id":"sh/cru1s729","slide":2,"text":"Make records accessible","textPreview":"Make records accessible","textChars":23,"textLines":1,"bbox":[695,255,485,38]}
+{"kind":"textbox","id":"sh/xc321cju","slide":2,"text":"Authorized users can search results from different work areas.\n\nFilter, review, and export the same current records.","textPreview":"Authorized users can search results from different work areas. |  | Filter, review, and export the same current records.","textChars":116,"textLines":3,"bbox":[695,330,480,192]}
+{"kind":"shape","id":"sh/apcjqhkj","slide":2,"bbox":[70,590,1140,70]}
+{"kind":"textbox","id":"sh/bqlkzm14","slide":2,"text":"Operators, planners, and quality teams work from the same up-to-date information.","textPreview":"Operators, planners, and quality teams work from the same up-to-date information.","textChars":81,"textLines":1,"bbox":[94,601,1094,48]}
+{"kind":"image","id":"im/e94rupwr","slide":2,"name":"","alt":"Analog Devices and partner logos from supplied presentation","bbox":[1068,37,190,53]}
+{"kind":"notes","id":"nt/t3xjfs","slide":2,"text":"Based on the supplied deck: slide 34 describes centrally maintained specifications, controlled corrections, and history; slide 35 describes export; slides 40–41 describe shared filtered and summarized data. Access should be limited to authorized users."}

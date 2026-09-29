@@ -529,6 +529,9 @@ export default function DashboardPage() {
 
   // ── Part Entry modal / toggle ────────────────────────────────────────
   const [peModalOpen, setPeModalOpen] = useState(false);
+  const [resumeTrigger, setResumeTrigger] = useState<{ sessionId: number; mode: TriggerMode } | null>(null);
+  const resumeTriggerRef = useRef(resumeTrigger);
+  resumeTriggerRef.current = resumeTrigger;
   /** มีเส้นไหนของ loadDropdownData() โหลดไม่สำเร็จไหม — ใช้ขึ้นแถบเตือน
    *  ไม่ให้อาการ "ช่องเลือกว่าง" เงียบอีกต่อไป (ดู loadDropdownData) */
   const [dropdownFailed, setDropdownFailed] = useState(false);
@@ -652,6 +655,7 @@ export default function DashboardPage() {
         PART_ENTRY_STORAGE_KEY,
         JSON.stringify({
           entryQueue: entryQueueRef.current,
+          resumeTrigger: resumeTriggerRef.current,
           lastTelemetry: latestTelemetryRef.current,
           lastImageMeasurementId: latestTelemetryRef.current?.measurement_id ?? null,
           // ผล OK/NG รายชิ้น — ต้องรอดการ refresh เหมือน lastTelemetry ไม่งั้น
@@ -1423,6 +1427,11 @@ export default function DashboardPage() {
       if (raw) {
         const d = JSON.parse(raw);
         if (d.entryQueue) { setEntryQueue(d.entryQueue); entryQueueRef.current = d.entryQueue; }
+        if (d.resumeTrigger && Number.isInteger(d.resumeTrigger.sessionId)
+            && (d.resumeTrigger.mode === "auto" || d.resumeTrigger.mode === "manual")) {
+          setResumeTrigger(d.resumeTrigger);
+          resumeTriggerRef.current = d.resumeTrigger;
+        }
         if (d.lastTelemetry) {
           latestTelemetryRef.current = d.lastTelemetry;
           applyTelemetry(d.lastTelemetry);
@@ -1526,6 +1535,9 @@ export default function DashboardPage() {
     !!persistedQueue?.start_confirmed &&
     !persistedQueue?.work_closed &&
     (session.measured_count ?? 0) < (session.target_count ?? 0);
+  const resumeTriggerMode: TriggerMode =
+    resumeTrigger?.sessionId === session.session_id ? resumeTrigger.mode
+    : persistedQueue?.trigger_mode === "manual" ? "manual" : "auto";
   const hasQueue = !!entryQueue || pendingWork;
   const mustExitReviewBeforeContinue = pendingWork && selectedQueueIndex !== null;
 
@@ -1613,9 +1625,12 @@ export default function DashboardPage() {
       if (!ok) return;
       try {
         const data = await apiPost<SessionState>("/api/session/continue", {
-          session_id: session.session_id, mode: "remaining",
+          session_id: session.session_id, mode: "remaining", trigger_mode: resumeTriggerMode,
         });
         onSessionStarted(data);
+        setResumeTrigger(null);
+        resumeTriggerRef.current = null;
+        savePartEntryState();
       } catch (e) {
         dialog.alert(e instanceof ApiError ? e.message : "เริ่มวัดต่อไม่สำเร็จ", { title: "เริ่มวัดต่อไม่สำเร็จ", danger: true });
       }
@@ -1931,7 +1946,7 @@ export default function DashboardPage() {
                         </div>
                       ))}
                       <div className="pe-summary-actions">
-                        {canEditQueue && (
+                        {(canEditQueue || pendingWork) && (
                           <button className="btn-pe-action" onClick={openPeModal}>✎ Edit</button>
                         )}
                       </div>
@@ -1939,7 +1954,7 @@ export default function DashboardPage() {
                   </div>
 
                   {pendingWork && <div className="session-entry-hint" style={{ gridColumn: "1 / -1", marginTop: "0.5rem" }}>
-                    Start (วัดต่อ) จะวัดเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม
+                    Start (วัดต่อ) จะวัดเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม · Trigger: {resumeTriggerMode === "auto" ? "Auto (MCU)" : "Manual (ปุ่มบนเว็บ)"}
                   </div>}
 
                   {/* ⚠ ปุ่มควบคุมทั้งหมดอยู่ที่นี่ที่เดียว ไม่กระจายไปการ์ดซ้าย —
@@ -2568,7 +2583,10 @@ export default function DashboardPage() {
           /* คิวที่ค้างอยู่ — ปุ่ม "✎ Edit" จะได้เปิดมาพร้อมของเดิม ไม่ใช่ฟอร์มเปล่า
              (ตอนไม่มีคิว ปุ่มที่โผล่คือ "+ New Entry" และ entryQueue เป็น null
               อยู่แล้ว จึงได้ฟอร์มเปล่าตามที่ควรเป็นโดยไม่ต้องแยกเงื่อนไข) */
-          initial={entryQueue ?? undefined}
+          initial={pendingWork && partEntryQueue
+            ? { ...partEntryQueue, triggerMode: resumeTriggerMode }
+            : entryQueue ?? undefined}
+          triggerOnly={pendingWork}
           /* โหลดตัวเลือกไม่สำเร็จไหม — โชว์เป็นแถบเตือนในฟอร์ม ไม่ใช่บนการ์ด
              เพราะจุดที่ผู้ใช้เจอปัญหาคือตอนกดเปิด dropdown แล้วไม่มีอะไรให้เลือก
              ระบบยังลองใหม่อยู่เบื้องหลัง พอได้ครบแถบจะหายเอง */
@@ -2635,6 +2653,14 @@ export default function DashboardPage() {
             { title: "ข้อมูลชิ้นงานในกลุ่มไม่ตรงกัน", okLabel: "รับทราบ" },
           )}
           onSave={(q) => {
+            if (pendingWork && session.session_id != null) {
+              const selected = { sessionId: session.session_id, mode: q.triggerMode ?? "auto" };
+              setResumeTrigger(selected);
+              resumeTriggerRef.current = selected;
+              savePartEntryState();
+              setPeModalOpen(false);
+              return;
+            }
             setEntryQueue(q);
             entryQueueRef.current = q;
             savePartEntryState();

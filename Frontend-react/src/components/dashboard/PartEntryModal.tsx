@@ -95,6 +95,8 @@ interface Props {
    *  เข้ามาตรง ๆ จึงถูกทั้งสองกรณีโดยไม่ต้องมีธงบอกโหมด
    */
   initial?: EntryQueue;
+  /** คิวที่เริ่มวัดแล้วแก้ข้อมูลชิ้นงานไม่ได้ แต่เลือก Trigger ของรอบวัดต่อได้ */
+  triggerOnly?: boolean;
 }
 
 const MODES: EntryMode[] = ["IPM", "New", "Rework"];
@@ -123,7 +125,7 @@ function toFormGroups(q: EntryQueue): GroupValues[] {
 export default function PartEntryModal({
   lookupFailed,
   operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, handlerOfPartNumber,
-  onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onGroupConflict, onNotify, initial,
+  onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onGroupConflict, onNotify, initial, triggerOnly = false,
 }: Props) {
   /* ตั้งค่าเริ่มต้นจาก `initial` ครั้งเดียวตอน mount — พอเพียงเพราะหน้าแม่วาด
      modal นี้แบบ `{peModalOpen && <PartEntryModal .../>}` ทุกครั้งที่เปิดใหม่
@@ -208,6 +210,10 @@ export default function PartEntryModal({
   }
 
   async function handleSave() {
+    if (triggerOnly) {
+      if (initial) onSave({ ...initial, triggerMode });
+      return;
+    }
     const errs: Record<number, Record<string, string>> = {};
     const capacity = triggerMode === "auto" && trayCapacity.trim() !== "" ? Number(trayCapacity) : null;
     const capacityError = capacity !== null && (!Number.isSafeInteger(capacity) || capacity < 0)
@@ -332,6 +338,7 @@ export default function PartEntryModal({
               key={m}
               type="button"
               className={`entry-toggle-btn${mode === m ? " active" : ""}`}
+              disabled={triggerOnly}
               /* ⚠ switchMode เป็น async (รอคำตอบจาก dialog) — ต้อง catch เอง
                  ไม่งั้นถ้ามันโยน exception จะกลายเป็น unhandled rejection ที่
                  ไม่มีอะไรแสดงบนจอเลย ผู้ใช้เห็นแค่ปุ่มกดแล้วไม่เกิดอะไรขึ้น */
@@ -343,8 +350,9 @@ export default function PartEntryModal({
         </div>
 
         <div className="entry-session-hint">
-          ℹ️ ลำดับ ALPL ที่กรอก (ไล่จากกลุ่มบนลงล่าง) คือลำดับที่ค่าที่วัดได้จะถูก map เข้าไป —
-          1 กลุ่มคือ ALPL ที่ใช้ข้อมูลชุดเดียวกัน
+          {triggerOnly
+            ? "ข้อมูลชิ้นงานถูกล็อกไว้ เปลี่ยนได้เฉพาะ Trigger และจะใช้ค่าที่เลือกเมื่อกด Start (วัดต่อ)"
+            : "ℹ️ ลำดับ ALPL ที่กรอก (ไล่จากกลุ่มบนลงล่าง) คือลำดับที่ค่าที่วัดได้จะถูก map เข้าไป — 1 กลุ่มคือ ALPL ที่ใช้ข้อมูลชุดเดียวกัน"}
         </div>
 
         {/* ⚠ แถบนี้คือสิ่งที่ทำให้อาการ "ช่องเลือกว่าง" ไม่เงียบอีกต่อไป
@@ -353,7 +361,7 @@ export default function PartEntryModal({
 
             ไม่มีปุ่ม "ลองใหม่" โดยตั้งใจ — ระบบลองให้เองอยู่แล้วไม่จำกัดครั้ง
             ปุ่มจะทำให้เข้าใจผิดว่าต้องกดถึงจะทำงาน */}
-        {lookupFailed && (
+        {lookupFailed && !triggerOnly && (
           <div className="entry-session-hint warn">
             ⚠️ โหลดตัวเลือกบางชุดไม่สำเร็จ (Operator / Package Size / Handler / Part Number)
             — <strong>ระบบกำลังลองใหม่ให้อัตโนมัติ</strong> ข้อความนี้จะหายไปเองเมื่อโหลดครบ
@@ -370,10 +378,12 @@ export default function PartEntryModal({
           <select
             className={operatorError ? "invalid" : undefined}
             value={operator}
+            disabled={triggerOnly}
             onChange={(e) => setOperator(e.target.value)}
           >
             {/* disabled hidden = โชว์ตอนยังไม่ได้เลือก แต่ไม่โผล่ในรายการตอนกดเปิด */}
             <option value="" disabled hidden>-- เลือก Operator --</option>
+            {triggerOnly && operator && !operators.includes(operator) && <option value={operator}>{operator}</option>}
             {operators.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
           <div className="field-error">{operatorError}</div>
@@ -412,12 +422,13 @@ export default function PartEntryModal({
           </div>
         </div>
 
-        {triggerMode === "auto" && (
+        {(triggerMode === "auto" || triggerOnly) && (
           <div className="form-group" style={{ marginBottom: "1rem" }}>
             <label htmlFor="pe-tray-capacity">Tray Capacity</label>
             <input id="pe-tray-capacity" type="number" min="0" step="1"
               className={trayCapacityError ? "invalid" : undefined}
               value={trayCapacity}
+              disabled={triggerOnly}
               aria-invalid={!!trayCapacityError} aria-describedby="pe-tray-capacity-hint"
               onChange={e => { setTrayCapacity(e.target.value); setTrayCapacityError(""); }} />
             <div id="pe-tray-capacity-hint" className="entry-session-hint" style={{ marginTop: ".4rem" }}>
@@ -436,6 +447,7 @@ export default function PartEntryModal({
           key={mode}
           mode={mode}
           groups={groups}
+          disabled={triggerOnly}
           onChange={setGroups}
           errors={errors}
           onOverwrite={(message) => onNotify(message, undefined, "warning")}

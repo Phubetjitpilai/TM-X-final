@@ -1,0 +1,59 @@
+{"kind":"deck","id":"pr/dtqa3f","name":"Deck"}
+{"kind":"layout","layoutId":"1d474dac-efb1-4bde-9c7d-6d8f03e4b518","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"ba8a1398-27c2-4349-8126-089181ca7008","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/e19yyd","slide":1,"title":"Actions","textShapes":17}
+{"kind":"textbox","id":"sh/xwrmh0nm","slide":1,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[92,64,150,54]}
+{"kind":"shape","id":"sh/at036l4b","slide":1,"bbox":[250,64,440,52]}
+{"kind":"textbox","id":"sh/bu94fq5w","slide":1,"text":"Operator Workflow","textPreview":"Operator Workflow","textChars":17,"textLines":1,"bbox":[273,70,402,42]}
+{"kind":"shape","id":"sh/lkbml0ny","slide":1,"bbox":[0,704,1280,16]}
+{"kind":"textbox","id":"sh/yx03a547","slide":1,"text":"One workflow from setup to report","textPreview":"One workflow from setup to report","textChars":33,"textLines":1,"bbox":[91,139,1100,54]}
+{"kind":"textbox","id":"sh/zyt4ja5s","slide":1,"text":"Operators use one place to prepare, monitor, and retrieve ALPL measurements.","textPreview":"Operators use one place to prepare, monitor, and retrieve ALPL measurements.","textChars":76,"textLines":1,"bbox":[92,189,1100,33]}
+{"kind":"shape","id":"sh/03yl0bm9","slide":1,"bbox":[70,232,350,247]}
+{"kind":"shape","id":"sh/1o7m9gnu","slide":1,"bbox":[70,232,350,51]}
+{"kind":"textbox","id":"sh/10ja1k3y","slide":1,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[89,237,38,40]}
+{"kind":"textbox","id":"sh/0za9sfmd","slide":1,"text":"Prepare","textPreview":"Prepare","textChars":7,"textLines":1,"bbox":[136,238,270,38]}
+{"kind":"textbox","id":"sh/fy1szal8","slide":1,"text":"Select the ALPL and specifications.\nBuild the part queue before the run.","textPreview":"Select the ALPL and specifications. | Build the part queue before the run.","textChars":72,"textLines":2,"bbox":[94,303,302,140]}
+{"kind":"shape","id":"sh/exsrq54n","slide":1,"bbox":[465,232,350,247]}
+{"kind":"shape","id":"sh/p43a5k3a","slide":1,"bbox":[465,232,350,51]}
+{"kind":"textbox","id":"sh/o3utwzmp","slide":1,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[484,237,38,40]}
+{"kind":"textbox","id":"sh/n2ls3ul4","slide":1,"text":"Measure","textPreview":"Measure","textChars":7,"textLines":1,"bbox":[531,238,270,38]}
+{"kind":"textbox","id":"sh/21sbup4j","slide":1,"text":"See each value, pass/fail result, camera image, and queue progress live.","textPreview":"See each value, pass/fail result, camera image, and queue progress live.","textChars":72,"textLines":1,"bbox":[489,303,302,140]}
+{"kind":"shape","id":"sh/xs3a9436","slide":1,"bbox":[860,232,350,247]}
+{"kind":"shape","id":"sh/crut0zml","slide":1,"bbox":[860,232,350,51]}
+{"kind":"textbox","id":"sh/wb2dw3ax","slide":1,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[879,237,38,40]}
+{"kind":"textbox","id":"sh/xcbu58bi","slide":1,"text":"Review & share","textPreview":"Review & share","textChars":14,"textLines":1,"bbox":[926,238,270,38]}
+{"kind":"textbox","id":"sh/a9kvudsr","slide":1,"text":"Search records by ALPL or date. Export filtered results to Excel, PDF, or CSV.","textPreview":"Search records by ALPL or date. Export filtered results to Excel, PDF, or CSV.","textChars":78,"textLines":1,"bbox":[884,303,302,140]}
+{"kind":"shape","id":"sh/vatc3ytc","slide":1,"bbox":[70,507,1140,2]}
+{"kind":"textbox","id":"sh/kzmd0nat","slide":1,"text":"Saved automatically","textPreview":"Saved automatically","textChars":19,"textLines":1,"bbox":[70,531,285,32]}
+{"kind":"textbox","id":"sh/50vu9sbe","slide":1,"text":"Every measurement and its image are kept together, without a handwritten result log.","textPreview":"Every measurement and its image are kept together, without a handwritten result log.","textChars":84,"textLines":1,"bbox":[70,570,500,76]}
+{"kind":"textbox","id":"sh/ix4vyds3","slide":1,"text":"Changes remain traceable","textPreview":"Changes remain traceable","textChars":24,"textLines":1,"bbox":[645,531,430,32]}
+{"kind":"textbox","id":"sh/jydc7ito","slide":1,"text":"Corrections are logged. Measured values stay locked, and deleted records can be recovered for 30 days.","textPreview":"Corrections are logged. Measured values stay locked, and deleted records can be recovered for 30 days.","textChars":102,"textLines":1,"bbox":[645,570,540,76]}
+{"kind":"image","id":"im/x0vehg3y","slide":1,"name":"","alt":"Analog Devices and partner logos from source presentation","bbox":[1068,37,190,53]}
+{"kind":"notes","id":"nt/e19yyd","slide":1,"text":"Condensed from source slides 33–35. The 30-day recovery and locked measured values are stated on source slide 34."}
+{"kind":"slide","id":"sl/q3dct3","slide":2,"title":"Actions","textShapes":13}
+{"kind":"textbox","id":"sh/ulojqto3","slide":2,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[92,64,150,54]}
+{"kind":"shape","id":"sh/hof2lo7e","slide":2,"bbox":[250,64,440,52]}
+{"kind":"textbox","id":"sh/wn6lsj6t","slide":2,"text":"Delivery Status","textPreview":"Delivery Status","textChars":15,"textLines":1,"bbox":[273,70,402,42]}
+{"kind":"shape","id":"sh/ip83utoz","slide":2,"bbox":[0,704,1280,16]}
+{"kind":"textbox","id":"sh/5sz2p8nq","slide":2,"text":"Traceable records are ready","textPreview":"Traceable records are ready","textChars":27,"textLines":1,"bbox":[91,139,1100,54]}
+{"kind":"textbox","id":"sh/4rqlw365","slide":2,"text":"Automated sorting and management reporting remain on track.","textPreview":"Automated sorting and management reporting remain on track.","textChars":59,"textLines":1,"bbox":[92,189,1090,34]}
+{"kind":"shape","id":"sh/rehkri5g","slide":2,"bbox":[71,245,1138,112]}
+{"kind":"shape","id":"sh/6d83ydov","slide":2,"bbox":[71,245,14,112]}
+{"kind":"textbox","id":"sh/s3ml4va9","slide":2,"text":"Measurement records & traceability","textPreview":"Measurement records & traceability","textChars":34,"textLines":1,"bbox":[110,261,750,35]}
+{"kind":"textbox","id":"sh/t4vmx0ru","slide":2,"text":"Readings and images are linked, invalid results are excluded, and records can be searched, exported, and audited.","textPreview":"Readings and images are linked, invalid results are excluded, and records can be searched, exported, and audited.","textChars":113,"textLines":1,"bbox":[110,301,845,43]}
+{"kind":"shape","id":"sh/6h432lsj","slide":2,"bbox":[1000,273,180,52]}
+{"kind":"textbox","id":"sh/rid4vq9o","slide":2,"text":"Completed","textPreview":"Completed","textChars":9,"textLines":1,"bbox":[1008,280,164,39]}
+{"kind":"shape","id":"sh/g76l8val","slide":2,"bbox":[71,373,1138,112]}
+{"kind":"shape","id":"sh/18fm10r6","slide":2,"bbox":[71,373,14,112]}
+{"kind":"textbox","id":"sh/e54365sf","slide":2,"text":"Automatic pass/fail & sorting","textPreview":"Automatic pass/fail & sorting","textChars":29,"textLines":1,"bbox":[110,389,750,35]}
+{"kind":"textbox","id":"sh/f6d4za90","slide":2,"text":"The system is being finalized to confirm each result and direct the sorter to the correct output.","textPreview":"The system is being finalized to confirm each result and direct the sorter to the correct output.","textChars":97,"textLines":1,"bbox":[110,429,845,43]}
+{"kind":"shape","id":"sh/ob65cfah","slide":2,"bbox":[1000,401,180,52]}
+{"kind":"textbox","id":"sh/pcfm5kr2","slide":2,"text":"On track","textPreview":"On track","textChars":8,"textLines":1,"bbox":[1008,408,164,39]}
+{"kind":"shape","id":"sh/xsbmpkj6","slide":2,"bbox":[71,501,1138,112]}
+{"kind":"shape","id":"sh/cr2lgf2l","slide":2,"bbox":[71,501,14,112]}
+{"kind":"textbox","id":"sh/bqt4na10","slide":2,"text":"Management dashboard","textPreview":"Management dashboard","textChars":20,"textLines":1,"bbox":[110,517,750,35]}
+{"kind":"textbox","id":"sh/apk3e5kv","slide":2,"text":"Filtered records, Good/Fail summaries, and yield trends are being prepared for reporting.","textPreview":"Filtered records, Good/Fail summaries, and yield trends are being prepared for reporting.","textChars":89,"textLines":1,"bbox":[110,557,845,43]}
+{"kind":"shape","id":"sh/lwvmtkji","slide":2,"bbox":[1000,529,180,52]}
+{"kind":"textbox","id":"sh/kvmlkf2x","slide":2,"text":"On track","textPreview":"On track","textChars":8,"textLines":1,"bbox":[1008,536,164,39]}
+{"kind":"image","id":"im/61sj250v","slide":2,"name":"","alt":"Analog Devices and partner logos from source presentation","bbox":[1068,37,190,53]}
+{"kind":"notes","id":"nt/q3dct3","slide":2,"text":"Condensed from source slides 36–42. Source 36: validation and decision on track; other core service functions completed. Source 37–38: data receiver and image access completed. Source 39: judging and sending to sorter on track; other edge controls completed. Source 40–41: dashboards on track. Database schema on source 42 intentionally omitted."}

@@ -402,7 +402,9 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                         {required && <span className="req">*</span>}
                       </label>
 
-                      {def.type === "select" ? (
+                      {disabled ? (
+                        <input type="text" value={val} disabled />
+                      ) : def.type === "select" ? (
                         <select
                           className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
                           disabled={disabled || locked}

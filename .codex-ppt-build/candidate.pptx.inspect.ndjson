@@ -1,0 +1,222 @@
+{"kind":"deck","id":"pr/ykt4jg","name":"Deck"}
+{"kind":"layout","layoutId":"4ad81152-a873-4b77-8ade-5bcfa40e0867","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"6658cab4-a13f-4718-b86d-f205bae420ea","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/nkz5i3","slide":1,"title":"Problem Statements","textShapes":90}
+{"kind":"textbox","id":"sh/kva9gze5","slide":1,"name":"Slide title","text":"Problem Statements","textPreview":"Problem Statements","textChars":18,"textLines":1,"bbox":[72,52,700,74]}
+{"kind":"textbox","id":"sh/juhs7edk","slide":1,"name":"Section heading","text":"Data Management & Reliability","textPreview":"Data Management & Reliability","textChars":29,"textLines":1,"bbox":[72,139,900,52]}
+{"kind":"textbox","id":"sh/yt8re9wz","slide":1,"text":"Current ALPL data collection using Excel is manual, unstandardized, and prone to human error.","textPreview":"Current ALPL data collection using Excel is manual, unstandardized, and prone to human error.","textChars":93,"textLines":1,"bbox":[72,188,1455,38]}
+{"kind":"shape","id":"sh/8ja9kje1","slide":1,"name":"Problem 1 panel","bbox":[63,244,744,102]}
+{"kind":"textbox","id":"sh/6hsri9wb","slide":1,"text":"Records in separate Excel sheets","textPreview":"Records in separate Excel sheets","textChars":32,"textLines":1,"bbox":[196,251,600,37]}
+{"kind":"textbox","id":"sh/ho3ahovy","slide":1,"text":"Split by part size (e.g. HT9046, MX9046) with no standardized\nformat.","textPreview":"Split by part size (e.g. HT9046, MX9046) with no standardized | format.","textChars":69,"textLines":2,"bbox":[196,286,605,56]}
+{"kind":"shape","id":"sh/gnu98jed","slide":1,"name":"Problem 2 panel","bbox":[63,354,744,88]}
+{"kind":"textbox","id":"sh/jex83ado","slide":1,"text":"ALPL specifications are not centrally stored","textPreview":"ALPL specifications are not centrally stored","textChars":44,"textLines":1,"bbox":[196,361,600,37]}
+{"kind":"textbox","id":"sh/kf69cfu9","slide":1,"text":"Need to search or ask operator at the PM Kit room.","textPreview":"Need to search or ask operator at the PM Kit room.","textChars":50,"textLines":1,"bbox":[196,396,605,42]}
+{"kind":"shape","id":"sh/lgfq5kvu","slide":1,"name":"Problem 3 panel","bbox":[63,452,744,87]}
+{"kind":"textbox","id":"sh/7ix87ud0","slide":1,"text":"Data access depends on operator","textPreview":"Data access depends on operator","textChars":31,"textLines":1,"bbox":[196,459,600,37]}
+{"kind":"textbox","id":"sh/8j69gzul","slide":1,"text":"No direct or immediate access.","textPreview":"No direct or immediate access.","textChars":30,"textLines":1,"bbox":[196,494,605,41]}
+{"kind":"shape","id":"sh/t4fq94vq","slide":1,"name":"Problem 4 panel","bbox":[63,548,744,87]}
+{"kind":"textbox","id":"sh/nmd8vqdg","slide":1,"text":"No timestamp or operator identity","textPreview":"No timestamp or operator identity","textChars":33,"textLines":1,"bbox":[196,555,600,37]}
+{"kind":"textbox","id":"sh/rq9o36t8","slide":1,"text":"When a result is questioned, root cause cannot be traced.","textPreview":"When a result is questioned, root cause cannot be traced.","textChars":57,"textLines":1,"bbox":[196,590,605,41]}
+{"kind":"shape","id":"sh/qp0na1s3","slide":1,"name":"Problem 5 panel","bbox":[63,644,744,91]}
+{"kind":"textbox","id":"sh/sri5crat","slide":1,"text":"Manual recording causes frequent human error","textPreview":"Manual recording causes frequent human error","textChars":44,"textLines":1,"bbox":[196,651,600,37]}
+{"kind":"textbox","id":"sh/3mp4zmtc","slide":1,"text":"Result entries do not always match the measured values.","textPreview":"Result entries do not always match the measured values.","textChars":55,"textLines":1,"bbox":[196,686,605,45]}
+{"kind":"shape","id":"sh/ilgn6hsr","slide":1,"name":"Error metric panel","bbox":[64,746,743,155]}
+{"kind":"shape","id":"sh/5or61wbi","slide":1,"bbox":[99,814,18,30]}
+{"kind":"shape","id":"sh/4ni58rax","slide":1,"bbox":[124,796,18,48]}
+{"kind":"shape","id":"sh/nitobqtg","slide":1,"bbox":[149,778,18,66]}
+{"kind":"textbox","id":"sh/2hknilsv","slide":1,"text":"700 / 1,978 parts","textPreview":"700 / 1,978 parts","textChars":17,"textLines":1,"bbox":[211,757,570,62]}
+{"kind":"textbox","id":"sh/k3elw3qd","slide":1,"text":"35.39%","textPreview":"35.39%","textChars":6,"textLines":1,"bbox":[211,819,160,43]}
+{"kind":"textbox","id":"sh/l4n258ry","slide":1,"text":"incorrect Result entries","textPreview":"incorrect Result entries","textChars":24,"textLines":1,"bbox":[380,823,410,39]}
+{"kind":"textbox","id":"sh/y1c3ud8n","slide":1,"text":"Based on HT9046 / HT9046MX Excel log review","textPreview":"Based on HT9046 / HT9046MX Excel log review","textChars":43,"textLines":1,"bbox":[211,867,554,26]}
+{"kind":"shape","id":"sh/j2lk3i98","slide":1,"name":"Excel format panel","bbox":[834,240,797,365]}
+{"kind":"shape","id":"sh/8rel0nqp","slide":1,"bbox":[840,244,48,48]}
+{"kind":"textbox","id":"sh/tsn29sra","slide":1,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[840,246,48,43]}
+{"kind":"textbox","id":"sh/6pw3yd8j","slide":1,"text":"Unstandardized Excel Format","textPreview":"Unstandardized Excel Format","textChars":27,"textLines":1,"bbox":[912,244,395,50]}
+{"kind":"shape","id":"sh/7q5k7i94","slide":1,"bbox":[1327,251,250,40]}
+{"kind":"textbox","id":"sh/gvyl47ql","slide":1,"text":"Missing Column Headers","textPreview":"Missing Column Headers","textChars":22,"textLines":1,"bbox":[1343,256,224,30]}
+{"kind":"shape","id":"sh/hw72dsr6","slide":1,"bbox":[857,303,736,218]}
+{"kind":"shape","id":"sh/hsfuxora","slide":1,"bbox":[857,303,31,27]}
+{"kind":"shape","id":"sh/grmt4jqp","slide":1,"bbox":[857,304,31,25]}
+{"kind":"shape","id":"sh/fqdcvy94","slide":1,"bbox":[888,303,94,27]}
+{"kind":"textbox","id":"sh/up4b2t8j","slide":1,"text":"A","textPreview":"A","textChars":1,"textLines":1,"bbox":[888,304,94,25]}
+{"kind":"shape","id":"sh/tovutory","slide":1,"bbox":[982,303,67,27]}
+{"kind":"textbox","id":"sh/snmt0jat","slide":1,"text":"B","textPreview":"B","textChars":1,"textLines":1,"bbox":[982,304,67,25]}
+{"kind":"shape","id":"sh/7mdcre98","slide":1,"bbox":[1049,303,70,27]}
+{"kind":"textbox","id":"sh/6l4by9sn","slide":1,"text":"C","textPreview":"C","textChars":1,"textLines":1,"bbox":[1049,304,70,25]}
+{"kind":"shape","id":"sh/dkzu58ri","slide":1,"bbox":[1119,303,135,27]}
+{"kind":"textbox","id":"sh/cjqdc3qx","slide":1,"text":"D","textPreview":"D","textChars":1,"textLines":1,"bbox":[1119,304,135,25]}
+{"kind":"shape","id":"sh/a50r658f","slide":1,"bbox":[1254,303,185,27]}
+{"kind":"textbox","id":"sh/v698zap0","slide":1,"text":"E","textPreview":"E","textChars":1,"textLines":1,"bbox":[1254,304,185,25]}
+{"kind":"shape","id":"sh/wri98f6l","slide":1,"bbox":[1439,303,88,27]}
+{"kind":"textbox","id":"sh/xsra1k7q","slide":1,"text":"F","textPreview":"F","textChars":1,"textLines":1,"bbox":[1439,304,88,25]}
+{"kind":"shape","id":"sh/m10r2583","slide":1,"bbox":[1527,303,66,27]}
+{"kind":"textbox","id":"sh/n298vapo","slide":1,"text":"G","textPreview":"G","textChars":1,"textLines":1,"bbox":[1527,304,66,25]}
+{"kind":"shape","id":"sh/o3i94vq9","slide":1,"bbox":[857,330,31,32]}
+{"kind":"textbox","id":"sh/94rqx07u","slide":1,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[859,332,27,28]}
+{"kind":"shape","id":"sh/6xkrepon","slide":1,"bbox":[888,330,94,32]}
+{"kind":"textbox","id":"sh/7yts7up8","slide":1,"text":"หมายเลข","textPreview":"หมายเลข","textChars":7,"textLines":1,"bbox":[890,332,90,28]}
+{"kind":"shape","id":"sh/325ozm5k","slide":1,"bbox":[982,330,67,32]}
+{"kind":"textbox","id":"sh/21cn6hoz","slide":1,"text":"X","textPreview":"X","textChars":1,"textLines":1,"bbox":[984,332,63,28]}
+{"kind":"shape","id":"sh/p4n61wna","slide":1,"bbox":[1049,330,70,32]}
+{"kind":"textbox","id":"sh/43e58r65","slide":1,"text":"Y","textPreview":"Y","textChars":1,"textLines":1,"bbox":[1051,332,66,28]}
+{"kind":"shape","id":"sh/r65o365g","slide":1,"bbox":[1119,330,135,32]}
+{"kind":"textbox","id":"sh/q5w7a1ov","slide":1,"text":"X3.00-Y3.05","textPreview":"X3.00-Y3.05","textChars":11,"textLines":1,"bbox":[1121,332,131,28]}
+{"kind":"shape","id":"sh/d8n65wnm","slide":1,"bbox":[1254,330,185,32]}
+{"kind":"shape","id":"sh/c7epcb61","slide":1,"bbox":[1256,332,181,28]}
+{"kind":"shape","id":"sh/zapo765s","slide":1,"bbox":[1439,330,88,32]}
+{"kind":"shape","id":"sh/e9g7e147","slide":1,"bbox":[1441,332,84,28]}
+{"kind":"shape","id":"sh/wzy5ob25","slide":1,"bbox":[1527,330,66,32]}
+{"kind":"shape","id":"sh/x076xg3q","slide":1,"bbox":[1529,332,62,28]}
+{"kind":"shape","id":"sh/adgnm1kf","slide":1,"bbox":[857,362,31,29]}
+{"kind":"textbox","id":"sh/bepov6lk","slide":1,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[859,364,27,25]}
+{"kind":"shape","id":"sh/oby5kb29","slide":1,"bbox":[888,362,94,29]}
+{"kind":"textbox","id":"sh/9c7mtg3u","slide":1,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[890,364,90,25]}
+{"kind":"shape","id":"sh/m9gni1k3","slide":1,"bbox":[982,362,67,29]}
+{"kind":"textbox","id":"sh/nap4r6lo","slide":1,"text":"3.090","textPreview":"3.090","textChars":5,"textLines":1,"bbox":[984,364,63,25]}
+{"kind":"shape","id":"sh/07e5gr2x","slide":1,"bbox":[1049,362,70,29]}
+{"kind":"textbox","id":"sh/18nmpw3i","slide":1,"text":"3.097","textPreview":"3.097","textChars":5,"textLines":1,"bbox":[1051,364,66,25]}
+{"kind":"shape","id":"sh/t4ruto36","slide":1,"bbox":[1119,362,135,29]}
+{"kind":"textbox","id":"sh/sjid0jml","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1121,364,131,25]}
+{"kind":"shape","id":"sh/ri9c7el0","slide":1,"bbox":[1254,362,185,29]}
+{"kind":"textbox","id":"sh/6h0vy94v","slide":1,"text":"SAWN","textPreview":"SAWN","textChars":4,"textLines":1,"bbox":[1256,364,181,25]}
+{"kind":"shape","id":"sh/18buxo3i","slide":1,"bbox":[1439,362,88,29]}
+{"kind":"shape","id":"sh/g72d43mx","slide":1,"bbox":[1441,364,84,25]}
+{"kind":"shape","id":"sh/f69cvylc","slide":1,"bbox":[1527,362,66,29]}
+{"kind":"shape","id":"sh/e50v2t4r","slide":1,"bbox":[1529,364,62,25]}
+{"kind":"shape","id":"sh/pcbe183e","slide":1,"bbox":[857,391,31,29]}
+{"kind":"textbox","id":"sh/ob2d83mt","slide":1,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[859,393,27,25]}
+{"kind":"shape","id":"sh/mhwr25kb","slide":1,"bbox":[888,391,94,29]}
+{"kind":"textbox","id":"sh/ni5sva1w","slide":1,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[890,393,90,25]}
+{"kind":"shape","id":"sh/8je94f2h","slide":1,"bbox":[982,391,67,29]}
+{"kind":"textbox","id":"sh/9knaxkj2","slide":1,"text":"3.076","textPreview":"3.076","textChars":5,"textLines":1,"bbox":[984,393,63,25]}
+{"kind":"shape","id":"sh/ulwr65kn","slide":1,"bbox":[1049,391,70,29]}
+{"kind":"textbox","id":"sh/vm5sza1s","slide":1,"text":"3.103","textPreview":"3.103","textChars":5,"textLines":1,"bbox":[1051,393,66,25]}
+{"kind":"shape","id":"sh/wne98f2d","slide":1,"bbox":[1119,391,135,29]}
+{"kind":"textbox","id":"sh/ho7a1kjy","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1121,393,131,25]}
+{"kind":"shape","id":"sh/ipgbapkj","slide":1,"bbox":[1254,391,185,29]}
+{"kind":"textbox","id":"sh/japs3u14","slide":1,"text":"SAWN","textPreview":"SAWN","textChars":4,"textLines":1,"bbox":[1256,393,181,25]}
+{"kind":"shape","id":"sh/ofa983it","slide":1,"bbox":[1439,391,88,29]}
+{"kind":"shape","id":"sh/9gjahoje","slide":1,"bbox":[1441,393,84,25]}
+{"kind":"shape","id":"sh/md8r6t03","slide":1,"bbox":[1527,391,66,29]}
+{"kind":"shape","id":"sh/nehsfy18","slide":1,"bbox":[1529,393,62,25]}
+{"kind":"shape","id":"sh/wja9c3i5","slide":1,"bbox":[857,420,31,29]}
+{"kind":"textbox","id":"sh/xkjal8jq","slide":1,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[859,422,27,25]}
+{"kind":"shape","id":"sh/ahsrat0z","slide":1,"bbox":[888,420,94,29]}
+{"kind":"textbox","id":"sh/bi1sjy1k","slide":1,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[890,422,90,25]}
+{"kind":"shape","id":"sh/sn690jil","slide":1,"bbox":[982,420,67,29]}
+{"kind":"textbox","id":"sh/doza94j6","slide":1,"text":"3.054","textPreview":"3.054","textChars":5,"textLines":1,"bbox":[984,422,63,25]}
+{"kind":"shape","id":"sh/v25cfmlo","slide":1,"bbox":[1049,420,70,29]}
+{"kind":"textbox","id":"sh/u1wv6hk3","slide":1,"text":"3.068","textPreview":"3.068","textChars":5,"textLines":1,"bbox":[1051,422,66,25]}
+{"kind":"shape","id":"sh/h4nuhc3u","slide":1,"bbox":[1119,420,135,29]}
+{"kind":"textbox","id":"sh/g3ed8729","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1121,422,131,25]}
+{"kind":"shape","id":"sh/7elcb2ls","slide":1,"bbox":[1254,420,185,29]}
+{"kind":"textbox","id":"sh/6dcv2xk7","slide":1,"text":"SAWN","textPreview":"SAWN","textChars":4,"textLines":1,"bbox":[1256,422,181,25]}
+{"kind":"shape","id":"sh/t0nudc3y","slide":1,"bbox":[1439,420,88,29]}
+{"kind":"shape","id":"sh/8fed472d","slide":1,"bbox":[1441,422,84,25]}
+{"kind":"shape","id":"sh/jalc72lg","slide":1,"bbox":[1527,420,66,29]}
+{"kind":"shape","id":"sh/y9cbyxkb","slide":1,"bbox":[1529,422,62,25]}
+{"kind":"shape","id":"sh/m5svqxo3","slide":1,"bbox":[857,449,31,29]}
+{"kind":"textbox","id":"sh/n61wji5o","slide":1,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[859,451,27,25]}
+{"kind":"shape","id":"sh/o7udsn69","slide":1,"bbox":[888,449,94,29]}
+{"kind":"textbox","id":"sh/983elsne","slide":1,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[890,451,90,25]}
+{"kind":"shape","id":"sh/a9cvuxoz","slide":1,"bbox":[982,449,67,29]}
+{"kind":"textbox","id":"sh/balwn25k","slide":1,"text":"3.063","textPreview":"3.063","textChars":5,"textLines":1,"bbox":[984,451,63,25]}
+{"kind":"shape","id":"sh/wbudw765","slide":1,"bbox":[1049,449,70,29]}
+{"kind":"textbox","id":"sh/xc3epcnq","slide":1,"text":"3.088","textPreview":"3.088","textChars":5,"textLines":1,"bbox":[1051,451,66,25]}
+{"kind":"shape","id":"sh/ydcvyhob","slide":1,"bbox":[1119,449,135,29]}
+{"kind":"textbox","id":"sh/jylwr25w","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1121,451,131,25]}
+{"kind":"shape","id":"sh/ts7yhg7y","slide":1,"bbox":[1254,449,185,29]}
+{"kind":"textbox","id":"sh/87yhobqd","slide":1,"text":"SAWN","textPreview":"SAWN","textChars":4,"textLines":1,"bbox":[1256,451,181,25]}
+{"kind":"shape","id":"sh/765gf6ps","slide":1,"bbox":[1439,449,88,29]}
+{"kind":"shape","id":"sh/65wzm187","slide":1,"bbox":[1441,451,84,25]}
+{"kind":"shape","id":"sh/hw7ylg7u","slide":1,"bbox":[1527,449,66,29]}
+{"kind":"shape","id":"sh/gvyhsbq9","slide":1,"bbox":[1529,451,62,25]}
+{"kind":"shape","id":"sh/vupgj6p4","slide":1,"bbox":[857,478,31,29]}
+{"kind":"textbox","id":"sh/utgzq18j","slide":1,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[859,480,27,25]}
+{"kind":"shape","id":"sh/50ryp076","slide":1,"bbox":[888,478,94,29]}
+{"kind":"textbox","id":"sh/4zihwv6l","slide":1,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[890,480,90,25]}
+{"kind":"shape","id":"sh/07mt4je5","slide":1,"bbox":[982,478,67,29]}
+{"kind":"textbox","id":"sh/l8vadovq","slide":1,"text":"3.090","textPreview":"3.090","textChars":5,"textLines":1,"bbox":[984,480,63,25]}
+{"kind":"shape","id":"sh/e54b29wz","slide":1,"bbox":[1049,478,70,29]}
+{"kind":"textbox","id":"sh/z6dsbedk","slide":1,"text":"3.117","textPreview":"3.117","textChars":5,"textLines":1,"bbox":[1051,480,66,25]}
+{"kind":"shape","id":"sh/c3m90jet","slide":1,"bbox":[1119,478,135,29]}
+{"kind":"textbox","id":"sh/d4va9ove","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1121,480,131,25]}
+{"kind":"shape","id":"sh/q1kry9wn","slide":1,"bbox":[1254,478,185,29]}
+{"kind":"textbox","id":"sh/r2ts7ed8","slide":1,"text":"SAWN","textPreview":"SAWN","textChars":4,"textLines":1,"bbox":[1256,480,181,25]}
+{"kind":"shape","id":"sh/wz6tc3ud","slide":1,"bbox":[1439,478,88,29]}
+{"kind":"shape","id":"sh/x0fal8vi","slide":1,"bbox":[1441,480,84,25]}
+{"kind":"shape","id":"sh/7u1wb2x0","slide":1,"bbox":[1527,478,66,29]}
+{"kind":"shape","id":"sh/6t8v2xwf","slide":1,"bbox":[1529,480,62,25]}
+{"kind":"shape","id":"sh/twjedcfq","slide":1,"bbox":[897,330,645,32]}
+{"kind":"shape","id":"sh/svad47el","slide":1,"bbox":[857,520,754,35]}
+{"kind":"textbox","id":"sh/fy1wfmxw","slide":1,"text":"‹   ›   ···","textPreview":"‹   ›   ···","textChars":11,"textLines":1,"bbox":[870,522,73,30]}
+{"kind":"textbox","id":"sh/uxsv6hwb","slide":1,"text":"ALPL Dual AE04 3.5x3.75","textPreview":"ALPL Dual AE04 3.5x3.75","textChars":23,"textLines":1,"bbox":[943,522,214,30]}
+{"kind":"textbox","id":"sh/hkjehwf2","slide":1,"text":"ALPL HT 6X6","textPreview":"ALPL HT 6X6","textChars":11,"textLines":1,"bbox":[1156,522,122,30]}
+{"kind":"textbox","id":"sh/gjad8reh","slide":1,"text":"HT 6X6 DEMPLE","textPreview":"HT 6X6 DEMPLE","textChars":13,"textLines":1,"bbox":[1277,522,138,30]}
+{"kind":"textbox","id":"sh/v2hc3ixs","slide":1,"text":"ALPL HT DUAL 3.5X3.75","textPreview":"ALPL HT DUAL 3.5X3.75","textChars":21,"textLines":1,"bbox":[1415,522,190,30]}
+{"kind":"shape","id":"sh/a1ovadg7","slide":1,"bbox":[857,520,754,35]}
+{"kind":"shape","id":"sh/ehwzilgv","slide":1,"bbox":[1170,563,444,37]}
+{"kind":"textbox","id":"sh/zi5gbqhg","slide":1,"text":"Inconsistent Sheet Naming (No Standardized Format)","textPreview":"Inconsistent Sheet Naming (No Standardized Format)","textChars":50,"textLines":1,"bbox":[1182,568,420,27]}
+{"kind":"shape","id":"sh/0jehkvyl","slide":1,"bbox":[1444,291,0,33]}
+{"kind":"shape","id":"sh/1knyd0z6","slide":1,"bbox":[1438,320,12,12]}
+{"kind":"shape","id":"sh/qdwfelgj","slide":1,"bbox":[1142,555,0,28]}
+{"kind":"shape","id":"sh/re5g7qh4","slide":1,"bbox":[1142,583,21,0]}
+{"kind":"shape","id":"sh/cfehgvyp","slide":1,"bbox":[1159,577,13,13]}
+{"kind":"shape","id":"sh/dgny9gza","slide":1,"name":"Result entries panel","bbox":[834,613,797,285]}
+{"kind":"shape","id":"sh/2pcfa10n","slide":1,"bbox":[841,615,51,51]}
+{"kind":"textbox","id":"sh/3qlg36h8","slide":1,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[841,618,51,44]}
+{"kind":"textbox","id":"sh/54b294jq","slide":1,"text":"Inconsistent Result Entries","textPreview":"Inconsistent Result Entries","textChars":27,"textLines":1,"bbox":[915,618,460,43]}
+{"kind":"shape","id":"sh/k3i1gzi5","slide":1,"bbox":[880,675,117,34]}
+{"kind":"textbox","id":"sh/j29k7e1k","slide":1,"text":"4.050","textPreview":"4.050","textChars":5,"textLines":1,"bbox":[883,676,111,32]}
+{"kind":"shape","id":"sh/ih0je90z","slide":1,"bbox":[997,675,117,34]}
+{"kind":"textbox","id":"sh/xgri54je","slide":1,"text":"4.036","textPreview":"4.036","textChars":5,"textLines":1,"bbox":[1000,676,111,32]}
+{"kind":"shape","id":"sh/wfi1czit","slide":1,"bbox":[1114,675,197,34]}
+{"kind":"textbox","id":"sh/ve903u1o","slide":1,"text":"GOOD","textPreview":"GOOD","textChars":4,"textLines":1,"bbox":[1117,676,191,32]}
+{"kind":"shape","id":"sh/ad0jap03","slide":1,"bbox":[880,709,117,34]}
+{"kind":"textbox","id":"sh/9cri1kji","slide":1,"text":"4.049","textPreview":"4.049","textChars":5,"textLines":1,"bbox":[883,710,111,32]}
+{"kind":"shape","id":"sh/oby18fix","slide":1,"bbox":[997,709,117,34]}
+{"kind":"textbox","id":"sh/0ra5kvu5","slide":1,"text":"4.056","textPreview":"4.056","textChars":5,"textLines":1,"bbox":[1000,710,111,32]}
+{"kind":"shape","id":"sh/lsj6t0vq","slide":1,"bbox":[1114,709,197,34]}
+{"kind":"textbox","id":"sh/ypsnilcz","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1117,710,191,32]}
+{"kind":"shape","id":"sh/zq1orqdk","slide":1,"bbox":[880,743,117,34]}
+{"kind":"textbox","id":"sh/8fupofuh","slide":1,"text":"4.044","textPreview":"4.044","textChars":5,"textLines":1,"bbox":[883,744,111,32]}
+{"kind":"shape","id":"sh/9g36xkvm","slide":1,"bbox":[997,743,117,34]}
+{"kind":"textbox","id":"sh/mds7m5cb","slide":1,"text":"4.049","textPreview":"4.049","textChars":5,"textLines":1,"bbox":[1000,744,111,32]}
+{"kind":"shape","id":"sh/nelovadw","slide":1,"bbox":[1114,743,197,34]}
+{"kind":"textbox","id":"sh/wjupsfud","slide":1,"text":"GOOD","textPreview":"GOOD","textChars":4,"textLines":1,"bbox":[1117,744,191,32]}
+{"kind":"shape","id":"sh/xk361kvy","slide":1,"bbox":[880,777,117,34]}
+{"kind":"textbox","id":"sh/7ep8rex0","slide":1,"text":"4.133","textPreview":"4.133","textChars":5,"textLines":1,"bbox":[883,778,111,32]}
+{"kind":"shape","id":"sh/6dwri9wf","slide":1,"bbox":[997,777,117,34]}
+{"kind":"textbox","id":"sh/tg7atof6","slide":1,"text":"4.160","textPreview":"4.160","textChars":5,"textLines":1,"bbox":[1000,778,111,32]}
+{"kind":"shape","id":"sh/sfy9kjel","slide":1,"bbox":[1114,777,197,34]}
+{"kind":"textbox","id":"sh/ja58nex4","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1117,778,191,32]}
+{"kind":"shape","id":"sh/i9wru9wj","slide":1,"bbox":[880,811,117,34]}
+{"kind":"textbox","id":"sh/5cnqp4fu","slide":1,"text":"4.152","textPreview":"4.152","textChars":5,"textLines":1,"bbox":[883,812,111,32]}
+{"kind":"shape","id":"sh/kbe9wjep","slide":1,"bbox":[997,811,117,34]}
+{"kind":"textbox","id":"sh/369szyx8","slide":1,"text":"4.167","textPreview":"4.167","textChars":5,"textLines":1,"bbox":[1000,812,111,32]}
+{"kind":"shape","id":"sh/250rqtwn","slide":1,"bbox":[1114,811,197,34]}
+{"kind":"textbox","id":"sh/nmt43q1k","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1117,812,191,32]}
+{"kind":"shape","id":"sh/2lk3ulkz","slide":1,"bbox":[880,845,117,34]}
+{"kind":"textbox","id":"sh/pobm50jq","slide":1,"text":"4.057","textPreview":"4.057","textChars":5,"textLines":1,"bbox":[883,846,111,32]}
+{"kind":"shape","id":"sh/on2lwv25","slide":1,"bbox":[997,845,117,34]}
+{"kind":"textbox","id":"sh/bqd47q1g","slide":1,"text":"4.060","textPreview":"4.060","textChars":5,"textLines":1,"bbox":[1000,846,111,32]}
+{"kind":"shape","id":"sh/apk3ylkb","slide":1,"bbox":[1114,845,197,34]}
+{"kind":"textbox","id":"sh/xsvm90jm","slide":1,"text":"FAIL","textPreview":"FAIL","textChars":4,"textLines":1,"bbox":[1117,846,191,32]}
+{"kind":"shape","id":"sh/crm50v21","slide":1,"bbox":[880,709,431,34]}
+{"kind":"shape","id":"sh/zud4ba1s","slide":1,"bbox":[880,845,431,34]}
+{"kind":"shape","id":"sh/yt4n25k7","slide":1,"bbox":[1368,676,235,80]}
+{"kind":"textbox","id":"sh/wj6lsfy5","slide":1,"text":"Result recorded as FAIL\neven though the value\nis within range","textPreview":"Result recorded as FAIL | even though the value | is within range","textChars":61,"textLines":3,"bbox":[1386,684,210,65]}
+{"kind":"shape","id":"sh/hkfmlkzq","slide":1,"bbox":[1368,799,235,81]}
+{"kind":"textbox","id":"sh/uxo3q5gf","slide":1,"text":"Result recorded as FAIL\neven though the value\nis within range","textPreview":"Result recorded as FAIL | even though the value | is within range","textChars":61,"textLines":3,"bbox":[1386,807,210,65]}
+{"kind":"shape","id":"sh/vyxkjah0","slide":1,"bbox":[1320,713,47,12]}
+{"kind":"shape","id":"sh/8vmlovy9","slide":1,"bbox":[1312,719,13,13]}
+{"kind":"shape","id":"sh/9wv2h0zu","slide":1,"bbox":[1320,837,47,17]}
+{"kind":"shape","id":"sh/mt43m5g3","slide":1,"bbox":[1312,848,13,13]}
+{"kind":"shape","id":"sh/7udkfqho","slide":1,"bbox":[0,918,1670,24]}
+{"kind":"image","id":"im/or29cja9","slide":1,"name":"","alt":"Analog Devices and partner logos","bbox":[1388,44,234,69]}
+{"kind":"image","id":"im/2p0ra9s3","slide":1,"name":"","alt":"Problem 1 icon","bbox":[82,252,79,79]}
+{"kind":"image","id":"im/xofypon6","slide":1,"name":"","alt":"Problem 2 icon","bbox":[82,362,79,79]}
+{"kind":"image","id":"im/pkfylona","slide":1,"name":"","alt":"Problem 3 icon","bbox":[82,460,79,79]}
+{"kind":"image","id":"im/9gzyx8ne","slide":1,"name":"","alt":"Problem 4 icon","bbox":[82,556,79,79]}
+{"kind":"image","id":"im/6xgzyhwz","slide":1,"name":"","alt":"Problem 5 icon","bbox":[82,652,79,79]}
+{"kind":"notes","id":"nt/nkz5i3","slide":1,"text":"Recreated from the image supplied by the user. Values and wording follow that image; the logo and five icons are cropped from it."}
