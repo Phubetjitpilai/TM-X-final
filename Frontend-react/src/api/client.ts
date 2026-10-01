@@ -33,8 +33,17 @@ async function handleResponse<T>(res: Response): Promise<T> {
     let body: unknown;
     try {
       body = await res.json();
-      const d = (body as { detail?: string })?.detail;
-      if (d) detail = d;
+      const d = (body as { detail?: unknown })?.detail;
+      if (typeof d === "string" && d) detail = d;
+      else if (Array.isArray(d)) {
+        const messages = d.map((item: unknown) => {
+          if (!item || typeof item !== "object") return "ข้อมูลที่ส่งไม่ถูกต้อง";
+          const error = item as { loc?: unknown; msg?: unknown };
+          const field = Array.isArray(error.loc) ? error.loc.slice(1).join(".") : "";
+          return `${field ? `${field}: ` : ""}${typeof error.msg === "string" ? error.msg : "ข้อมูลไม่ถูกต้อง"}`;
+        });
+        detail = messages.join("; ") || "ข้อมูลที่ส่งไม่ถูกต้อง";
+      }
     } catch {
       // response ไม่ใช่ JSON (เช่น 500 ดิบๆ) — ใช้ statusText ต่อไป
     }

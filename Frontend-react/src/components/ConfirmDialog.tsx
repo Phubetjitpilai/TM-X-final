@@ -14,7 +14,7 @@ interface ConfirmDialogProps {
 export default function ConfirmDialog({
   title = "ยืนยันการดำเนินการ",
   message,
-  confirmLabel = "ยืนยัน",
+  confirmLabel = "Confirm",
   danger = false,
   onConfirm,
   onCancel,
@@ -24,7 +24,7 @@ export default function ConfirmDialog({
       <div style={{ fontSize: "0.9rem", lineHeight: 1.6, marginBottom: "1.25rem" }}>{message}</div>
       <div className="modal-actions">
         <button type="button" className="btn-ghost" onClick={onCancel}>
-          ยกเลิก
+          Cancel
         </button>
         <button type="button" className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>
           {confirmLabel}

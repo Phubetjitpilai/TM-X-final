@@ -60,12 +60,10 @@ def list_handlers():
 
 @router.get("/api/package-sizes")
 def list_package_sizes():
-    """คืนรายการ package_size ทั้งหมด พร้อม nominal/tolerance + template_name
-    + รายชื่อ handler ที่ขนาดนี้ลงได้ — ใช้เติม datalist ของช่อง Package Size
+    """คืนรายการ package_size พร้อมรายชื่อ handler ที่ตั้ง Template ไว้
     และเป็นแหล่งข้อมูลของตาราง Lookup Tables → Package Size
 
-    **package_size เป็นแหล่งเกณฑ์ OK/NG เดียวของทั้งระบบ** ทุกโหมด (ดู
-    `_load_criteria` ใน shared.py) — ทั้ง 5 คอลัมน์ตัวเลขเป็น NOT NULL
+    เกณฑ์ OK/NG อยู่ใน package_size_tolerance ซึ่งมีได้หลายชุดต่อขนาด
 
     ⚠ `handlers` คืนเป็น **ลิสต์ของสตริง** ไม่ใช่สตริงคั่นคอมมา — แตกที่นี่
       ไม่ปล่อยให้ฝั่ง React ไป `split(",")` เอง เพราะวันหลังถ้ามีชื่อ handler
@@ -78,14 +76,11 @@ def list_package_sizes():
         with db.cursor() as cur:
             cur.execute(
                 "SELECT ps.package_size_id, ps.package_size, "
-                "       ps.nominal_x, ps.nominal_y, ps.upper_tol, ps.lower_tol, ps.offset_tol, "
-                "       t.template_name, "
                 # LEFT JOIN + GROUP BY: ขนาดที่ไม่มี handler เลยต้องยังอยู่ในผลลัพธ์
                 # (ถ้าใช้ JOIN ธรรมดาจะหายไปทั้งแถว แล้วแก้ฟิลด์อื่นของมันไม่ได้เลย)
                 "       GROUP_CONCAT(h.handler_name ORDER BY h.handler_name) AS handlers "
                 "FROM package_size ps "
-                "LEFT JOIN template t ON ps.template_id = t.template_id "
-                "LEFT JOIN package_size_handler psh ON psh.package_size_id = ps.package_size_id "
+                "LEFT JOIN package_size_handler_template psh ON psh.package_size_id = ps.package_size_id "
                 "LEFT JOIN handler h ON h.handler_id = psh.handler_id "
                 "GROUP BY ps.package_size_id "
                 "ORDER BY ps.package_size"
@@ -94,6 +89,23 @@ def list_package_sizes():
             for r in rows:
                 r["handlers"] = r["handlers"].split(",") if r["handlers"] else []
             return rows
+    finally:
+        db.close()
+
+@router.get("/api/package-size-tolerances")
+def list_package_size_tolerances():
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT pst.tolerance_id, pst.package_size_id, ps.package_size, "
+                "       pst.nominal_x, pst.nominal_y, pst.upper_tol, "
+                "       pst.lower_tol, pst.offset_tol "
+                "FROM package_size_tolerance pst "
+                "JOIN package_size ps ON ps.package_size_id = pst.package_size_id "
+                "ORDER BY ps.package_size, pst.tolerance_id"
+            )
+            return cur.fetchall()
     finally:
         db.close()
 
@@ -125,8 +137,7 @@ def list_part_numbers(package_size: str = Query(..., min_length=1)):
 @router.get("/api/templates")
 def list_templates():
     """คืนรายการ template ทั้งหมด — ใช้โดย Database Editor (edit.html) ตอน
-    จัดการตาราง template (Add/Rename/Delete) และตอนสร้าง/แก้ package_size
-    (เลือก template ที่จะผูกให้)
+    จัดการตาราง template และตอนผูก Package Size + Handler กับ Template
     """
     db = get_db()
     try:
@@ -209,6 +220,8 @@ def _delete_lookup(table: str, id_col: str, id_value: int, references: List[tupl
     db = get_db()
     try:
         with db.cursor() as cur:
+            if table == "package_size_tolerance":
+                _block_if_session_running(cur, "ลบ Tolerance")
             for ref_table, ref_col in references:
                 cur.execute(f"SELECT 1 FROM {ref_table} WHERE {ref_col} = %s LIMIT 1", (id_value,))
                 if cur.fetchone():
@@ -303,7 +316,7 @@ def delete_handler(handler_id: int):
     _delete_lookup("handler", "handler_id", handler_id, [
         ("part_number", "handler_id"),
         ("parts_specifications", "handler_id"),
-        ("package_size_handler", "handler_id"),
+        ("package_size_handler_template", "handler_id"),
     ])
     return {"ok": True}
 
@@ -318,8 +331,8 @@ def rename_template(template_id: int, body: LookupUpdate):
 
 @router.delete("/api/templates/{template_id}")
 def delete_template(template_id: int):
-    # template ถูกอ้างอิงจาก package_size.template_id เท่านั้น
-    _delete_lookup("template", "template_id", template_id, [("package_size", "template_id")])
+    _delete_lookup("template", "template_id", template_id,
+                   [("package_size_handler_template", "template_id")])
     return {"ok": True}
 
 @router.post("/api/package-sizes", status_code=201)
@@ -327,135 +340,288 @@ def create_package_size(body: PackageSizeCreate):
     db = get_db()
     try:
         with db.cursor() as cur:
-            template_id = _lookup_id(cur, "template", "template_id", "template_name", body.template_name)
-            if template_id is None:
-                raise HTTPException(400, "ต้องเลือก Template — Package Size ที่ไม่มี "
-                                         "Template จะกด Start วัดไม่ได้")
             try:
-                cur.execute(
-                    "INSERT INTO package_size "
-                    "(package_size, nominal_x, nominal_y, upper_tol, lower_tol, offset_tol, template_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        body.package_size,
-                        *(getattr(body, f) for f in _PKG_NUM_FIELDS),
-                        template_id,
-                    ),
-                )
-            except pymysql.MySQLError as exc:
-                raise HTTPException(409, f"เพิ่ม Package Size ไม่สำเร็จ (ชื่อนี้อาจมีอยู่แล้ว): {exc}")
+                cur.execute("INSERT INTO package_size (package_size) VALUES (%s)", (body.package_size,))
+            except pymysql.IntegrityError as exc:
+                if exc.args[0] == 1062:
+                    raise HTTPException(409, "มี Package Size นี้ในระบบแล้ว") from exc
+                raise
             new_id = cur.lastrowid
-            if body.handlers:
-                _set_package_handlers(cur, new_id, body.handlers)
-            log_edit("package_size", "add", body.package_size, after={
-                "package_size": body.package_size,
-                **{f: getattr(body, f) for f in _PKG_NUM_FIELDS},
-                "template_name": body.template_name,
-                "handlers": ", ".join(body.handlers) or "—",
-            })
+            log_edit("package_size", "add", body.package_size, after={"package_size": body.package_size})
             return {"package_size_id": new_id}
     finally:
         db.close()
 
-def _set_package_handlers(cur, package_size_id: int, names: List[str]) -> None:
-    """เขียนชุด handler ของ package size นี้ใหม่ทั้งชุด — ลบของเดิมแล้วใส่ที่ส่งมา
-
-    ทำไมลบทิ้งแล้วใส่ใหม่ ไม่ใช่หาว่าอันไหนเพิ่ม/อันไหนลบ: ชุดนี้มีสมาชิกไม่กี่ตัว
-    การเทียบ diff เขียนยากกว่าและพลาดง่ายกว่ามาก โดยไม่ได้เร็วขึ้นเลยในทางปฏิบัติ
-
-    ⚠ **ไม่ได้อยู่ใน transaction** — `shared.py` ตั้ง `autocommit=True` ไว้ แปลว่า
-      `DELETE` คอมมิตทันที ถ้า `INSERT` พังกลางทาง (เช่นชื่อ handler ไม่มีจริง)
-      package size นั้นจะเหลือ 0 เครื่องแทนที่จะคงของเดิมไว้
-      → จึงต้อง **แปลงชื่อเป็น id ให้ครบก่อน** แล้วค่อยแตะตาราง เพื่อให้กรณี
-        ชื่อผิดตกม้าตายตั้งแต่ยังไม่ได้ลบอะไร (เป็นสาเหตุที่เป็นไปได้มากที่สุด)
-    """
-    ids = []
-    for name in names:
-        hid = _lookup_id(cur, "handler", "handler_id", "handler_name", name)
-        if hid is None:
-            raise HTTPException(400, f"ไม่พบเครื่อง '{name}' ในระบบ")
-        ids.append(hid)
-
-    cur.execute("DELETE FROM package_size_handler WHERE package_size_id = %s", (package_size_id,))
-    for hid in ids:
-        cur.execute(
-            "INSERT INTO package_size_handler (package_size_id, handler_id) VALUES (%s, %s)",
-            (package_size_id, hid),
-        )
-
-
 @router.patch("/api/package-sizes/{package_size_id}")
 def update_package_size(package_size_id: int, body: PackageSizeUpdate):
+    if body.package_size is None:
+        raise HTTPException(400, "ต้องระบุ Package Size")
     db = get_db()
     try:
         with db.cursor() as cur:
-            set_parts, values = [], []
-            if body.package_size is not None:
-                set_parts.append("package_size = %s")
-                values.append(body.package_size)
-            for f in _PKG_NUM_FIELDS:
-                v = getattr(body, f)
-                if v is not None:
-                    set_parts.append(f"{f} = %s")
-                    values.append(v)
-            if body.template_name is not None:
-                template_id = _lookup_id(cur, "template", "template_id", "template_name", body.template_name)
-                set_parts.append("template_id = %s")
-                values.append(template_id)
-            # ⚠ แก้ handler อย่างเดียวโดยไม่แตะฟิลด์อื่นต้องผ่านได้ — จึงเช็ค
-            #   `body.handlers is None` ด้วย ไม่ใช่ดูแค่ set_parts ว่างไหม
-            if not set_parts and body.handlers is None:
-                raise HTTPException(400, "No valid fields provided")
-            # อ่านค่าเดิม (พร้อมชื่อ template ที่ join มาแล้ว) ก่อน UPDATE
-            # เก็บเป็น "ชื่อ" ไม่ใช่ id เพราะประวัติต้องอ่านรู้เรื่องด้วยตาเปล่า
-            old = _fetch_one(cur,
-                "SELECT ps.package_size, ps.nominal_x, ps.nominal_y, ps.upper_tol, "
-                "       ps.lower_tol, ps.offset_tol, t.template_name, "
-                "       GROUP_CONCAT(h.handler_name ORDER BY h.handler_name) AS handlers "
-                "FROM package_size ps "
-                "LEFT JOIN template t ON ps.template_id = t.template_id "
-                "LEFT JOIN package_size_handler psh ON psh.package_size_id = ps.package_size_id "
-                "LEFT JOIN handler h ON h.handler_id = psh.handler_id "
-                "WHERE ps.package_size_id = %s "
-                "GROUP BY ps.package_size_id", (package_size_id,))
-            if old and old.get("handlers") is None:
-                old["handlers"] = "—"          # ให้ประวัติอ่านรู้เรื่องแทนช่องว่าง
-            if set_parts:
-                try:
-                    cur.execute(
-                        f"UPDATE package_size SET {', '.join(set_parts)} WHERE package_size_id = %s",
-                        (*values, package_size_id),
-                    )
-                except pymysql.MySQLError as exc:
-                    raise HTTPException(409, f"แก้ไข Package Size ไม่สำเร็จ (ชื่อใหม่นี้อาจมีอยู่แล้ว): {exc}")
-                if cur.rowcount == 0 and not old:
-                    raise HTTPException(404, "Package Size not found")
-            elif not old:
-                raise HTTPException(404, "Package Size not found")
-            if body.handlers is not None:
-                _set_package_handlers(cur, package_size_id, body.handlers)
-            if old:
-                # ส่งเฉพาะฟิลด์ที่ผู้ใช้ส่งมาจริง (ที่เหลือ = ไม่ได้แตะ)
-                new = {k: v for k, v in old.items()}
-                if body.package_size is not None: new["package_size"] = body.package_size
-                for f in _PKG_NUM_FIELDS:
-                    if getattr(body, f) is not None: new[f] = getattr(body, f)
-                if body.template_name is not None: new["template_name"] = body.template_name
-                if body.handlers is not None: new["handlers"] = ", ".join(body.handlers) or "—"
-                log_edit("package_size", "edit", new.get("package_size") or str(package_size_id),
-                         before=old, after=new)
-        return {"ok": True}
+            _block_if_session_running(cur, "แก้ไข Package Size")
+            old = _fetch_one(cur, "SELECT package_size FROM package_size WHERE package_size_id=%s", (package_size_id,))
+            if old is None:
+                raise HTTPException(404, "ไม่พบ Package Size")
+            try:
+                cur.execute("UPDATE package_size SET package_size=%s WHERE package_size_id=%s",
+                            (body.package_size, package_size_id))
+            except pymysql.IntegrityError as exc:
+                if exc.args[0] == 1062:
+                    raise HTTPException(409, "มี Package Size นี้ในระบบแล้ว") from exc
+                raise
+            log_edit("package_size", "edit", body.package_size, before=old,
+                     after={"package_size": body.package_size})
+            return {"ok": True}
     finally:
         db.close()
 
 @router.delete("/api/package-sizes/{package_size_id}")
 def delete_package_size(package_size_id: int):
-    # ⚠ เหตุผลเดียวกับ delete_handler — ต้องครบทุกตารางที่มี FK ชี้มา ไม่งั้นได้
-    #   500 ดิบแทน 409 ที่อ่านรู้เรื่อง (เดิมเช็คแค่ part_number)
     _delete_lookup("package_size", "package_size_id", package_size_id, [
         ("part_number", "package_size_id"),
         ("parts_specifications", "package_size_id"),
-        ("package_size_handler", "package_size_id"),
+        ("package_size_handler_template", "package_size_id"),
+        ("package_size_tolerance", "package_size_id"),
+    ])
+    return {"ok": True}
+
+@router.get("/api/package-size-handler-templates")
+def list_package_size_handler_templates():
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT CONCAT(psht.package_size_id, '-', psht.handler_id) AS mapping_key, "
+                "ps.package_size, h.handler_name AS handler, t.template_name "
+                "FROM package_size_handler_template psht "
+                "JOIN package_size ps ON ps.package_size_id=psht.package_size_id "
+                "JOIN handler h ON h.handler_id=psht.handler_id "
+                "JOIN template t ON t.template_id=psht.template_id "
+                "ORDER BY ps.package_size, h.handler_name"
+            )
+            return cur.fetchall()
+    finally:
+        db.close()
+
+def _mapping_ids(cur, body):
+    package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", body.package_size)
+    handler_id = _lookup_id(cur, "handler", "handler_id", "handler_name", body.handler)
+    template_id = _lookup_id(cur, "template", "template_id", "template_name", body.template_name)
+    if None in (package_size_id, handler_id, template_id):
+        raise HTTPException(400, "ต้องเลือก Package Size, Handler และ Template ที่มีในระบบ")
+    return package_size_id, handler_id, template_id
+
+@router.post("/api/package-size-handler-templates", status_code=201)
+def create_package_size_handler_template(body: PackageHandlerTemplateCreate = Body(...)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            _block_if_session_running(cur, "เพิ่ม Template ของ Handler")
+            ids = _mapping_ids(cur, body)
+            try:
+                cur.execute("INSERT INTO package_size_handler_template "
+                            "(package_size_id, handler_id, template_id) VALUES (%s,%s,%s)", ids)
+            except pymysql.IntegrityError as exc:
+                if exc.args[0] == 1062:
+                    raise HTTPException(409, "Package Size และ Handler คู่นี้มี Template ในระบบแล้ว") from exc
+                raise
+            log_edit("package_size_handler_template", "add", f"{body.package_size} / {body.handler}",
+                     after=body.dict())
+            return {"mapping_key": f"{ids[0]}-{ids[1]}"}
+    finally:
+        db.close()
+
+def _parse_mapping_key(mapping_key: str):
+    try:
+        package_size_id, handler_id = (int(value) for value in mapping_key.split("-", 1))
+        if package_size_id < 1 or handler_id < 1:
+            raise ValueError
+        return package_size_id, handler_id
+    except ValueError:
+        raise HTTPException(400, "รหัส Package Size / Handler ไม่ถูกต้อง")
+
+def _mapping_has_measurements(cur, package_size_id: int, handler_id: int) -> bool:
+    cur.execute(
+        "SELECT 1 FROM measurements m "
+        "JOIN parts_specifications p ON p.part_id=m.part_id "
+        "LEFT JOIN part_number pn ON pn.part_number_id=p.part_number_id "
+        "WHERE COALESCE(p.package_size_id,pn.package_size_id)=%s "
+        "AND COALESCE(p.handler_id,pn.handler_id)=%s LIMIT 1",
+        (package_size_id, handler_id),
+    )
+    return bool(cur.fetchone())
+
+def _mapping_has_parts(cur, package_size_id: int, handler_id: int) -> bool:
+    cur.execute(
+        "SELECT 1 FROM parts_specifications p "
+        "LEFT JOIN part_number pn ON pn.part_number_id=p.part_number_id "
+        "WHERE COALESCE(p.package_size_id,pn.package_size_id)=%s "
+        "AND COALESCE(p.handler_id,pn.handler_id)=%s LIMIT 1",
+        (package_size_id, handler_id),
+    )
+    return bool(cur.fetchone())
+
+@router.patch("/api/package-size-handler-templates/{mapping_key}")
+def update_package_size_handler_template(mapping_key: str, body: PackageHandlerTemplateUpdate = Body(...)):
+    package_size_id, handler_id = _parse_mapping_key(mapping_key)
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข Template ของ Handler")
+            old = _fetch_one(cur,
+                "SELECT ps.package_size, h.handler_name AS handler, t.template_name "
+                "FROM package_size_handler_template psht "
+                "JOIN package_size ps ON ps.package_size_id=psht.package_size_id "
+                "JOIN handler h ON h.handler_id=psht.handler_id "
+                "JOIN template t ON t.template_id=psht.template_id "
+                "WHERE psht.package_size_id=%s AND psht.handler_id=%s",
+                (package_size_id, handler_id))
+            if old is None:
+                raise HTTPException(404, "ไม่พบคู่ Package Size / Handler")
+            if ((body.package_size is not None and body.package_size != old["package_size"])
+                    or (body.handler is not None and body.handler != old["handler"])):
+                raise HTTPException(400, "เปลี่ยน Package Size หรือ Handler ของคู่นี้ไม่ได้; ให้ลบแล้วเพิ่มคู่ใหม่")
+            if not body.template_name:
+                raise HTTPException(400, "ต้องเลือก Template")
+            if body.template_name == old["template_name"]:
+                return {"ok": True}
+            if _mapping_has_measurements(cur, package_size_id, handler_id):
+                raise HTTPException(409, "คู่นี้มีผลวัดอ้างอิงแล้ว เปลี่ยน Template จะทำให้ประวัติคลาดเคลื่อน")
+            template_id = _lookup_id(cur, "template", "template_id", "template_name", body.template_name)
+            cur.execute("UPDATE package_size_handler_template SET template_id=%s "
+                        "WHERE package_size_id=%s AND handler_id=%s",
+                        (template_id, package_size_id, handler_id))
+            log_edit("package_size_handler_template", "edit", f"{old['package_size']} / {old['handler']}",
+                     before=old, after={**old, "template_name": body.template_name})
+            return {"ok": True}
+    finally:
+        db.close()
+
+@router.delete("/api/package-size-handler-templates/{mapping_key}")
+def delete_package_size_handler_template(mapping_key: str):
+    package_size_id, handler_id = _parse_mapping_key(mapping_key)
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            _block_if_session_running(cur, "ลบ Template ของ Handler")
+            old = _fetch_one(cur,
+                "SELECT ps.package_size, h.handler_name AS handler, t.template_name "
+                "FROM package_size_handler_template psht "
+                "JOIN package_size ps ON ps.package_size_id=psht.package_size_id "
+                "JOIN handler h ON h.handler_id=psht.handler_id "
+                "JOIN template t ON t.template_id=psht.template_id "
+                "WHERE psht.package_size_id=%s AND psht.handler_id=%s",
+                (package_size_id, handler_id))
+            if old is None:
+                raise HTTPException(404, "ไม่พบคู่ Package Size / Handler")
+            cur.execute("SELECT 1 FROM part_number WHERE package_size_id=%s AND handler_id=%s LIMIT 1",
+                        (package_size_id, handler_id))
+            if cur.fetchone() or _mapping_has_parts(cur, package_size_id, handler_id):
+                raise HTTPException(409, "คู่นี้ถูกใช้งานแล้ว ลบไม่ได้")
+            cur.execute("DELETE FROM package_size_handler_template "
+                        "WHERE package_size_id=%s AND handler_id=%s", (package_size_id, handler_id))
+            log_edit("package_size_handler_template", "delete",
+                     f"{old['package_size']} / {old['handler']}", before=old)
+            return {"ok": True}
+    finally:
+        db.close()
+
+@router.post("/api/package-size-tolerances", status_code=201)
+def create_package_size_tolerance(body: PackageToleranceCreate = Body(...)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", body.package_size)
+            if package_size_id is None:
+                raise HTTPException(400, "ไม่พบ Package Size ที่เลือก")
+            values = {field: getattr(body, field) for field in _PKG_NUM_FIELDS}
+            _reject_duplicate_tolerance(cur, package_size_id, values)
+            try:
+                cur.execute(
+                    "INSERT INTO package_size_tolerance "
+                    "(package_size_id, nominal_x, nominal_y, upper_tol, lower_tol, offset_tol) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (package_size_id, *(values[field] for field in _PKG_NUM_FIELDS)),
+                )
+            except pymysql.IntegrityError as exc:
+                if exc.args[0] == 1062:
+                    raise HTTPException(409, "มีข้อมูล Tolerance ชุดนี้ในระบบแล้ว") from exc
+                raise
+            tolerance_id = cur.lastrowid
+            log_edit("package_size_tolerance", "add", f"{body.package_size} / #{tolerance_id}", after=body.dict())
+            return {"tolerance_id": tolerance_id}
+    finally:
+        db.close()
+
+def _reject_duplicate_tolerance(cur, package_size_id: int, values: Dict[str, float], exclude_id: Optional[int] = None) -> None:
+    # ฟอร์มและผลวัดใช้ความละเอียด 0.001; FLOAT อาจเก็บ 4.27 เป็น 4.269999…
+    checks = " AND ".join(f"ROUND({field}, 3) = ROUND(%s, 3)" for field in _PKG_NUM_FIELDS)
+    sql = f"SELECT tolerance_id FROM package_size_tolerance WHERE package_size_id = %s AND {checks}"
+    params: List[Any] = [package_size_id, *(values[field] for field in _PKG_NUM_FIELDS)]
+    if exclude_id is not None:
+        sql += " AND tolerance_id <> %s"
+        params.append(exclude_id)
+    sql += " LIMIT 1"
+    cur.execute(sql, params)
+    if cur.fetchone():
+        raise HTTPException(409, "มีข้อมูล Tolerance ชุดนี้ในระบบแล้ว")
+
+@router.patch("/api/package-size-tolerances/{tolerance_id}")
+def update_package_size_tolerance(tolerance_id: int, body: PackageToleranceUpdate = Body(...)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            _block_if_session_running(cur, "แก้ไข Tolerance")
+            old = _fetch_one(cur, "SELECT * FROM package_size_tolerance WHERE tolerance_id = %s", (tolerance_id,))
+            if old is None:
+                raise HTTPException(404, "ไม่พบ Tolerance")
+            changes, values = [], []
+            if body.package_size is not None:
+                package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", body.package_size)
+                if package_size_id is None:
+                    raise HTTPException(400, "ไม่พบ Package Size ที่เลือก")
+                if package_size_id != old["package_size_id"]:
+                    cur.execute("SELECT 1 FROM parts_specifications WHERE tolerance_id = %s LIMIT 1", (tolerance_id,))
+                    if cur.fetchone():
+                        raise HTTPException(409, "Tolerance นี้ถูกใช้โดย ALPL แล้ว ย้ายไป Package Size อื่นไม่ได้")
+                changes.append("package_size_id = %s")
+                values.append(package_size_id)
+            for field in _PKG_NUM_FIELDS:
+                value = getattr(body, field)
+                if value is not None:
+                    changes.append(f"{field} = %s")
+                    values.append(value)
+            if any(getattr(body, field) is not None and abs(getattr(body, field) - float(old[field])) > 1e-6
+                   for field in _PKG_NUM_FIELDS):
+                cur.execute("SELECT 1 FROM measurements WHERE tolerance_id = %s LIMIT 1", (tolerance_id,))
+                if cur.fetchone():
+                    raise HTTPException(409, "Tolerance นี้มีผลวัดอ้างอิงแล้ว กรุณาเพิ่ม Tolerance ชุดใหม่แทน")
+            if not changes:
+                raise HTTPException(400, "No valid fields provided")
+            target_package_size_id = package_size_id if body.package_size is not None else old["package_size_id"]
+            candidate = {field: getattr(body, field) if getattr(body, field) is not None else old[field]
+                         for field in _PKG_NUM_FIELDS}
+            _reject_duplicate_tolerance(cur, target_package_size_id, candidate, exclude_id=tolerance_id)
+            try:
+                cur.execute(
+                    f"UPDATE package_size_tolerance SET {', '.join(changes)} WHERE tolerance_id = %s",
+                    (*values, tolerance_id),
+                )
+            except pymysql.IntegrityError as exc:
+                if exc.args[0] == 1062:
+                    raise HTTPException(409, "มีข้อมูล Tolerance ชุดนี้ในระบบแล้ว") from exc
+                raise
+            new = _fetch_one(cur, "SELECT * FROM package_size_tolerance WHERE tolerance_id = %s", (tolerance_id,))
+            log_edit("package_size_tolerance", "edit", f"Tolerance #{tolerance_id}", before=old, after=new)
+        return {"ok": True}
+    finally:
+        db.close()
+
+@router.delete("/api/package-size-tolerances/{tolerance_id}")
+def delete_package_size_tolerance(tolerance_id: int):
+    _delete_lookup("package_size_tolerance", "tolerance_id", tolerance_id, [
+        ("parts_specifications", "tolerance_id"), ("measurements", "tolerance_id"),
     ])
     return {"ok": True}
 

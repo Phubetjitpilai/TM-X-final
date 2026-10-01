@@ -26,7 +26,7 @@ export default function RemeasureStartOptions({ alpl, initialMode, onModeChange 
         </button>
         <button type="button" className={`entry-toggle-btn${mode === "manual" ? " active" : ""}`}
           aria-pressed={mode === "manual"} onClick={() => selectMode("manual")}>
-          Manual (ปุ่มบนเว็บ)
+          Manual (Web)
         </button>
       </div>
       <div className="entry-session-hint" style={{ marginTop: ".4rem" }}>

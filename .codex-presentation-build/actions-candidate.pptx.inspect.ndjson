@@ -1,43 +1,65 @@
-{"kind":"deck","id":"pr/gziahx","name":"Deck"}
-{"kind":"layout","layoutId":"5558ab6e-54c3-4288-853b-792711720438","name":"Master","type":"master"}
-{"kind":"layout","layoutId":"b16c7272-0865-4e00-ac54-6ee36c4a2a83","name":"Title Slide","type":"title"}
-{"kind":"slide","id":"sl/asw5ul","slide":1,"title":"Actions","textShapes":12}
-{"kind":"textbox","id":"sh/1gjal8ri","slide":1,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[90,62,160,65]}
-{"kind":"shape","id":"sh/etsbat8r","slide":1,"bbox":[250,64,760,55]}
-{"kind":"textbox","id":"sh/fu1sjy9c","slide":1,"text":"Automate Data Capture and Storage","textPreview":"Automate Data Capture and Storage","textChars":33,"textLines":1,"bbox":[270,68,725,52]}
-{"kind":"shape","id":"sh/tsjahor6","slide":1,"bbox":[0,699,1280,21]}
-{"kind":"textbox","id":"sh/6p8r6t8v","slide":1,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[90,230,85,62]}
-{"kind":"textbox","id":"sh/7qhsfe9g","slide":1,"text":"Enter part details","textPreview":"Enter part details","textChars":18,"textLines":1,"bbox":[90,300,320,55]}
-{"kind":"textbox","id":"sh/knq94jqp","slide":1,"text":"The operator enters ALPL and part information in the web app.","textPreview":"The operator enters ALPL and part information in the web app.","textChars":61,"textLines":1,"bbox":[90,366,320,132]}
-{"kind":"textbox","id":"sh/5ozadora","slide":1,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[470,230,85,62]}
-{"kind":"textbox","id":"sh/107ap4bu","slide":1,"text":"Measure with TM-X","textPreview":"Measure with TM-X","textChars":17,"textLines":1,"bbox":[470,300,320,55]}
-{"kind":"textbox","id":"sh/0zytwzu9","slide":1,"text":"TM-X sends the measurement values and part image.","textPreview":"TM-X sends the measurement values and part image.","textChars":49,"textLines":1,"bbox":[470,366,320,132]}
-{"kind":"textbox","id":"sh/fypsnuto","slide":1,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[850,230,85,62]}
-{"kind":"textbox","id":"sh/exwbupc3","slide":1,"text":"Save immediately","textPreview":"Save immediately","textChars":16,"textLines":1,"bbox":[850,300,320,55]}
-{"kind":"textbox","id":"sh/dwnalkby","slide":1,"text":"The system stores the result with the correct part record.","textPreview":"The system stores the result with the correct part record.","textChars":58,"textLines":1,"bbox":[850,366,320,132]}
-{"kind":"shape","id":"sh/svetsfud","slide":1,"bbox":[445,236,1.5,290]}
-{"kind":"shape","id":"sh/ru5sjats","slide":1,"bbox":[825,236,1.5,290]}
-{"kind":"shape","id":"sh/qtwbqpc7","slide":1,"bbox":[90,564,1120,1.5]}
-{"kind":"textbox","id":"sh/5snahkbm","slide":1,"text":"Each measured part has a complete record.","textPreview":"Each measured part has a complete record.","textChars":41,"textLines":1,"bbox":[90,592,1120,60]}
-{"kind":"image","id":"im/pwzuxkfq","slide":1,"name":"","alt":"Analog Devices and partner logos","bbox":[1070,43,178,50]}
-{"kind":"notes","id":"nt/asw5ul","slide":1,"text":"Action: operator enters part information on the web; TM-X supplies values and image; the system stores each result immediately."}
-{"kind":"slide","id":"sl/qij3kz","slide":2,"title":"Actions","textShapes":12}
-{"kind":"textbox","id":"sh/65wzmlgb","slide":2,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[90,62,160,65]}
-{"kind":"shape","id":"sh/t8nyxgzm","slide":2,"bbox":[250,64,760,55]}
-{"kind":"textbox","id":"sh/87ehovy1","slide":2,"text":"Standardize and Centralize Data Access","textPreview":"Standardize and Centralize Data Access","textChars":38,"textLines":1,"bbox":[270,68,725,52]}
-{"kind":"shape","id":"sh/utgzqlg7","slide":2,"bbox":[0,699,1280,21]}
-{"kind":"textbox","id":"sh/hw7y10zy","slide":2,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[90,230,85,62]}
-{"kind":"textbox","id":"sh/gvyhsvyd","slide":2,"text":"Connect the records","textPreview":"Connect the records","textChars":19,"textLines":1,"bbox":[90,300,320,55]}
-{"kind":"textbox","id":"sh/3yp03aho","slide":2,"text":"Part details and measurements stay linked in one relational database.","textPreview":"Part details and measurements stay linked in one relational database.","textChars":69,"textLines":1,"bbox":[90,366,320,132]}
-{"kind":"textbox","id":"sh/2xgzu5g3","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[470,230,85,62]}
-{"kind":"textbox","id":"sh/crmlsnmp","slide":2,"text":"Update Power BI daily","textPreview":"Update Power BI daily","textChars":21,"textLines":1,"bbox":[470,300,320,55]}
-{"kind":"textbox","id":"sh/dsvm1sna","slide":2,"text":"The quality summary refreshes from the database each day.","textPreview":"The quality summary refreshes from the database each day.","textChars":57,"textLines":1,"bbox":[470,366,320,132]}
-{"kind":"textbox","id":"sh/qp43qd4z","slide":2,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[850,230,85,62]}
-{"kind":"textbox","id":"sh/bqd4zi54","slide":2,"text":"See the quality picture","textPreview":"See the quality picture","textChars":23,"textLines":1,"bbox":[850,300,320,55]}
-{"kind":"textbox","id":"sh/0f6lwnm1","slide":2,"text":"Teams see Good/Fail counts by part and package size, plus yield trends.","textPreview":"Teams see Good/Fail counts by part and package size, plus yield trends.","textChars":71,"textLines":1,"bbox":[850,366,320,132]}
-{"kind":"shape","id":"sh/lgfm5snm","slide":2,"bbox":[445,236,1.5,290]}
-{"kind":"shape","id":"sh/yt43ux4v","slide":2,"bbox":[825,236,1.5,290]}
-{"kind":"shape","id":"sh/zex4325g","slide":2,"bbox":[90,564,1120,1.5]}
-{"kind":"textbox","id":"sh/8j6507mx","slide":2,"text":"One daily view of results for production and quality teams.","textPreview":"One daily view of results for production and quality teams.","textChars":59,"textLines":1,"bbox":[90,592,1120,60]}
-{"kind":"image","id":"im/q5g3ipkb","slide":2,"name":"","alt":"Analog Devices and partner logos","bbox":[1070,43,178,50]}
-{"kind":"notes","id":"nt/qij3kz","slide":2,"text":"Power BI is refreshed daily, so the dashboard is a daily summary rather than a live measurement feed. The source deck describes Good/Fail counts by package size and part number and a yield trend."}
+{"kind":"deck","id":"pr/c5arwr","name":"Deck"}
+{"kind":"layout","layoutId":"453599c8-cf9d-4234-8139-2b7681732985","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"cc98e681-cd8e-4fd4-ba47-4b1e6372f26c","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/ibtctm","slide":1,"title":"Actions","textShapes":17}
+{"kind":"textbox","id":"sh/dc7edknq","slide":1,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[90,62,160,65]}
+{"kind":"shape","id":"sh/q9gvi5oz","slide":1,"bbox":[250,64,760,55]}
+{"kind":"textbox","id":"sh/rapwba5k","slide":1,"text":"Automate Measurement and Data Recording","textPreview":"Automate Measurement and Data Recording","textChars":39,"textLines":1,"bbox":[270,68,725,52]}
+{"kind":"shape","id":"sh/1grehknm","slide":1,"bbox":[0,699,1280,21]}
+{"kind":"textbox","id":"sh/ed0fmpob","slide":1,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[90,174,85,62]}
+{"kind":"textbox","id":"sh/fe9wfu5w","slide":1,"text":"Web Application","textPreview":"Web Application","textChars":15,"textLines":1,"bbox":[90,243,320,65]}
+{"kind":"textbox","id":"sh/gjedcv6x","slide":1,"text":"The operator enters part details and starts a run on the web.","textPreview":"The operator enters part details and starts a run on the web.","textChars":61,"textLines":1,"bbox":[90,316,320,103]}
+{"kind":"shape","id":"sh/hkne50ni","slide":1,"bbox":[90,445,320,178]}
+{"kind":"shape","id":"sh/5ob21w36","slide":1,"bbox":[90,445,320,6]}
+{"kind":"textbox","id":"sh/kni18rml","slide":1,"text":"IMAGE 01","textPreview":"IMAGE 01","textChars":8,"textLines":1,"bbox":[110,487,280,33]}
+{"kind":"textbox","id":"sh/jm9kzml0","slide":1,"text":"Part entry screen","textPreview":"Part entry screen","textChars":17,"textLines":1,"bbox":[110,523,280,60]}
+{"kind":"textbox","id":"sh/il0j614f","slide":1,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[470,174,85,62]}
+{"kind":"textbox","id":"sh/tsb25g32","slide":1,"text":"TM-X Control","textPreview":"TM-X Control","textChars":12,"textLines":1,"bbox":[470,243,320,65]}
+{"kind":"textbox","id":"sh/sr2lcb2h","slide":1,"text":"The system directs TM-X to measure each part and receives the values.","textPreview":"The system directs TM-X to measure each part and receives the values.","textChars":69,"textLines":1,"bbox":[470,316,320,103]}
+{"kind":"shape","id":"sh/7qtk36lw","slide":1,"bbox":[470,445,320,178]}
+{"kind":"shape","id":"sh/6pk3a1kb","slide":1,"bbox":[470,445,320,6]}
+{"kind":"textbox","id":"sh/hgv29g3y","slide":1,"text":"IMAGE 02","textPreview":"IMAGE 02","textChars":8,"textLines":1,"bbox":[490,487,280,33]}
+{"kind":"textbox","id":"sh/gv2lgb2t","slide":1,"text":"TM-X measuring the part","textPreview":"TM-X measuring the part","textChars":23,"textLines":1,"bbox":[490,523,280,60]}
+{"kind":"textbox","id":"sh/0budsje1","slide":1,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[850,174,85,62]}
+{"kind":"textbox","id":"sh/1c3e1ofm","slide":1,"text":"Result Decision\n& Auto Save","textPreview":"Result Decision | & Auto Save","textChars":27,"textLines":2,"bbox":[850,243,320,65]}
+{"kind":"textbox","id":"sh/e9cvq9wv","slide":1,"text":"The system decides OK/NG and automatically saves each result and its part details in the database.","textPreview":"The system decides OK/NG and automatically saves each result and its part details in the database.","textChars":98,"textLines":1,"bbox":[850,316,320,103]}
+{"kind":"shape","id":"sh/zalwzexg","slide":1,"bbox":[850,445,320,178]}
+{"kind":"shape","id":"sh/8zedw3ex","slide":1,"bbox":[850,445,320,6]}
+{"kind":"textbox","id":"sh/90ne58fi","slide":1,"text":"IMAGE 03","textPreview":"IMAGE 03","textChars":8,"textLines":1,"bbox":[870,487,280,33]}
+{"kind":"textbox","id":"sh/mdwvutw7","slide":1,"text":"OK / NG result screen","textPreview":"OK / NG result screen","textChars":21,"textLines":1,"bbox":[870,523,280,60]}
+{"kind":"shape","id":"sh/ny5w3yxs","slide":1,"bbox":[445,180,1.5,445]}
+{"kind":"shape","id":"sh/43adkzet","slide":1,"bbox":[825,180,1.5,445]}
+{"kind":"image","id":"im/5cfa583u","slide":1,"name":"","alt":"Analog Devices and partner logos","bbox":[1070,43,178,50]}
+{"kind":"notes","id":"nt/ibtctm","slide":1,"text":"Action: operator enters part information on the web; TM-X supplies values and image; the system stores each result immediately."}
+{"kind":"slide","id":"sl/6wak84","slide":2,"title":"Actions","textShapes":17}
+{"kind":"textbox","id":"sh/reh0by9s","slide":2,"text":"Actions","textPreview":"Actions","textChars":7,"textLines":1,"bbox":[90,62,160,65]}
+{"kind":"shape","id":"sh/sfq1k3qd","slide":2,"bbox":[250,64,760,55]}
+{"kind":"textbox","id":"sh/dgjid8ry","slide":2,"text":"Standardize and Centralize Data Access","textPreview":"Standardize and Centralize Data Access","textChars":38,"textLines":1,"bbox":[270,68,725,52]}
+{"kind":"shape","id":"sh/fi10fi94","slide":2,"bbox":[0,699,1280,21]}
+{"kind":"textbox","id":"sh/03a1onq9","slide":2,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[90,174,85,62]}
+{"kind":"textbox","id":"sh/14jihsru","slide":2,"text":"Database","textPreview":"Database","textChars":8,"textLines":1,"bbox":[90,243,490,55]}
+{"kind":"textbox","id":"sh/ulozatsz","slide":2,"text":"Part details and measurements stay linked in one relational database.","textPreview":"Part details and measurements stay linked in one relational database.","textChars":69,"textLines":1,"bbox":[90,316,490,96]}
+{"kind":"textbox","id":"sh/vmx03e9k","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[670,174,85,62]}
+{"kind":"textbox","id":"sh/b2t43ips","slide":2,"text":"Dashboard","textPreview":"Dashboard","textChars":9,"textLines":1,"bbox":[670,243,490,55]}
+{"kind":"textbox","id":"sh/a1k3ud87","slide":2,"text":"The dashboard summarizes data for all parts, refreshes daily, and is instantly accessible via a link.","textPreview":"The dashboard summarizes data for all parts, refreshes daily, and is instantly accessible via a link.","textChars":101,"textLines":1,"bbox":[670,316,490,96]}
+{"kind":"shape","id":"sh/x4bm5s7i","slide":2,"bbox":[625,180,1.5,445]}
+{"kind":"shape","id":"sh/w32lwnqd","slide":2,"bbox":[297,527,68,3]}
+{"kind":"textbox","id":"sh/ne94zipg","slide":2,"text":"1 : N","textPreview":"1 : N","textChars":5,"textLines":1,"bbox":[308,541,48,24]}
+{"kind":"shape","id":"sh/md03qd8v","slide":2,"bbox":[90,450,208,168]}
+{"kind":"shape","id":"sh/90rm1s7m","slide":2,"bbox":[90,450,208,7]}
+{"kind":"textbox","id":"sh/ozilsnq1","slide":2,"text":"PART DETAILS","textPreview":"PART DETAILS","textChars":12,"textLines":1,"bbox":[108,471,175,32]}
+{"kind":"shape","id":"sh/za9kvypk","slide":2,"bbox":[102,513,184,28]}
+{"kind":"textbox","id":"sh/e9g3mt8z","slide":2,"text":"ALPL Number","textPreview":"ALPL Number","textChars":11,"textLines":1,"bbox":[110,514,173,27]}
+{"kind":"textbox","id":"sh/25gnytsr","slide":2,"text":"Package Size\nHandler  ·  Operator","textPreview":"Package Size | Handler  ·  Operator","textChars":33,"textLines":2,"bbox":[108,551,175,55]}
+{"kind":"shape","id":"sh/36p47ytc","slide":2,"bbox":[364,450,208,168]}
+{"kind":"shape","id":"sh/47y503ax","slide":2,"bbox":[364,450,208,7]}
+{"kind":"textbox","id":"sh/p87m98bi","slide":2,"text":"MEASUREMENTS","textPreview":"MEASUREMENTS","textChars":12,"textLines":1,"bbox":[382,471,180,30]}
+{"kind":"shape","id":"sh/q9gn2ds3","slide":2,"bbox":[376,513,184,28]}
+{"kind":"textbox","id":"sh/ra94bito","slide":2,"text":"ALPL Number","textPreview":"ALPL Number","textChars":11,"textLines":1,"bbox":[384,514,173,27]}
+{"kind":"textbox","id":"sh/cbi54nat","slide":2,"text":"Value X/Y  ·  OK/NG\nDate  ·  Result image","textPreview":"Value X/Y  ·  OK/NG | Date  ·  Result image","textChars":41,"textLines":2,"bbox":[382,551,175,55]}
+{"kind":"shape","id":"sh/dcrmd8be","slide":2,"bbox":[670,450,500,168]}
+{"kind":"shape","id":"sh/ex0n6dsz","slide":2,"bbox":[670,450,500,7]}
+{"kind":"textbox","id":"sh/zy94fitk","slide":2,"text":"DASHBOARD SCREENSHOT","textPreview":"DASHBOARD SCREENSHOT","textChars":20,"textLines":1,"bbox":[694,475,445,35]}
+{"kind":"textbox","id":"sh/94vylgzy","slide":2,"text":"Daily results  ·  OK/NG summary  ·  Trends","textPreview":"Daily results  ·  OK/NG summary  ·  Trends","textChars":42,"textLines":1,"bbox":[694,521,445,48]}
+{"kind":"image","id":"im/36tc7y9s","slide":2,"name":"","alt":"Analog Devices and partner logos","bbox":[1070,43,178,50]}
+{"kind":"notes","id":"nt/6wak84","slide":2,"text":"Power BI is refreshed daily, so the dashboard is a daily summary rather than a live measurement feed. The source deck describes Good/Fail counts by package size and part number and a yield trend."}

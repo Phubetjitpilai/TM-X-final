@@ -14,6 +14,7 @@ import IpmSummaryModal, { type IpmSummaryRow } from "../components/dashboard/Ipm
 import PartEntryModal, { type EntryQueue, type TriggerMode } from "../components/dashboard/PartEntryModal";
 import RemeasureStartOptions from "../components/dashboard/RemeasureStartOptions";
 import { formatAlplRanges } from "../utils/formatAlplRanges";
+import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, type FilterState, type MultiKey } from "../components/export/ExportFilters";
 
 // DashboardPage — พอร์ตจาก Frontend/index.html (TM-X Dashboard) แบบยึด
 // โครงสร้าง/ข้อความ/พฤติกรรมตามต้นฉบับเป๊ะๆ (ไม่ใช่ดีไซน์ใหม่ของตัวเอง) —
@@ -37,6 +38,7 @@ interface SessionState {
 }
 
 interface Part {
+  part_id: number;
   number_alpl: number;
   part_number: string | null;
   description: string | null;
@@ -55,6 +57,8 @@ interface Part {
 
 interface Measurement {
   measurement_id: number;
+  part_id: number;
+  package_size?: string | null;
   session_id: number | null;
   number_alpl: number;
   value_x: number | null;
@@ -102,6 +106,8 @@ interface Measurement {
 
 interface Telemetry {
   number_alpl?: number;
+  part_id?: number;
+  package_size?: string | null;
   value_x: number;
   value_y: number;
   /** เกณฑ์ + ผลรายแกนที่ backend ส่งมากับ event — ใช้ ok_* ก่อนเสมอ (แม่นที่สุด)
@@ -180,7 +186,7 @@ const MT_RETRY: MtView = {
   hint: <>สาเหตุที่พบบ่อย — TM-X วัดไม่ติด (ชิ้นงานวางไม่เข้าที่ / เลนส์สกปรก)
         หรือ TM-X ยังไม่พร้อมรับคำสั่งวัด</>,
   action: "retry",
-  actionLabel: "ลองใหม่",
+  actionLabel: "Retry Measurement",
 };
 
 const MT_ACCEPT: MtView = {
@@ -191,7 +197,7 @@ const MT_ACCEPT: MtView = {
         <br />สาเหตุที่พบบ่อย — <strong>Recieve_tm-x.py</strong> ไม่ได้รันอยู่
         หรือ TM-X ส่งไฟล์มาไม่ถึงเครื่อง PC</>,
   action: "accept",
-  actionLabel: "รับค่าจาก Pi",
+  actionLabel: "Use Pi Value",
 };
 
 const mtView = (event?: string | null): MtView =>
@@ -256,7 +262,7 @@ export default function DashboardPage() {
           ? `วางชิ้นงาน ALPL ${selected.number_alpl} ให้พร้อม แล้วเริ่มวัดใหม่ ผลและรูปใหม่จะแทนที่รายการเดิม`
           : <RemeasureStartOptions alpl={selected.number_alpl} initialMode={triggerMode}
               onModeChange={mode => { triggerMode = mode; }} />,
-        { title: "วัดชิ้นงานใหม่", okLabel: running ? "เริ่มวัดใหม่" : "▶ Start" },
+        { title: "วัดชิ้นงานใหม่", okLabel: "Remeasure" },
       )) return;
       if (sid !== sessionRef.current.session_id || running !== (sessionRef.current.state === "running")) {
         showToast("สถานะ Session เปลี่ยนแล้ว กรุณาเลือกชิ้นงานอีกครั้ง", undefined, "warning");
@@ -322,7 +328,8 @@ export default function DashboardPage() {
         setReviewPhase(status.phase);
       }
       const params = { number_alpl: alpl, limit: 1,
-        session_id: displayQueueRef.current[index]?.sessionId ?? sid };
+        session_id: displayQueueRef.current[index]?.sessionId ?? sid,
+        package_size: displayQueueRef.current[index]?.packageSize };
       const data = await apiGet<{ items: Telemetry[] }>("/api/measurements", params);
       if (request !== telemetryRequestRef.current || sessionRef.current.session_id !== sid) return;
       if (!data.items[0]) {
@@ -420,6 +427,9 @@ export default function DashboardPage() {
   >(null);
   const [mtLeft, setMtLeft] = useState(MT_ANSWER_TIMEOUT);
   const mtTimerRef = useRef<number | null>(null);
+  const mtReplyBusyRef = useRef(false);
+  const [mtReplyBusy, setMtReplyBusy] = useState(false);
+  const mtStopAfterReplyRef = useRef(false);
 
   /** modal "ถาดเต็ม" — Pi หยุดรอให้คนมาเคลียร์ถาดก่อนวัดชิ้นถัดไป
    *  (ทำงานเมื่อ `TRAY_CAPACITY` ใน .env > 0 · ค่าปัจจุบัน 8 ชิ้น)
@@ -434,12 +444,16 @@ export default function DashboardPage() {
   const [trayModal, setTrayModal] = useState<
     { session_id: number; piece?: number; target?: number; capacity?: number } | null
   >(null);
+  const trayReplyBusyRef = useRef(false);
+  const [trayReplyBusy, setTrayReplyBusy] = useState(false);
 
 
   const [mcuModal, setMcuModal] = useState<
     { session_id: number; piece?: number | null; target?: number | null } | null
   >(null);
   const mcuFailRef = useRef(0);
+  const mcuReplyBusyRef = useRef(false);
+  const [mcuReplyBusy, setMcuReplyBusy] = useState(false);
   
   /** นับว่าส่งคำตอบใน modal ไปที่ Pi ไม่สำเร็จติดกันกี่ครั้ง
    *
@@ -453,7 +467,7 @@ export default function DashboardPage() {
    *  ซ่อนทั้งแถบเมื่อคิวมีตัวเดียว (เช่น IPM ชิ้นเดียว) เพราะไม่มีอะไรให้ดู
    *
    *  ⚠ `done` มีไว้เพื่อ **ห้ามเดาผลเป็นเขียว** — ดู chipStateFor() ข้างล่าง */
-  type QueueItem = { alpl: number; state: "ok" | "ng" | "done" | "now" | "wait"; sessionId: number };
+  type QueueItem = { alpl: number; packageSize?: string; state: "ok" | "ng" | "done" | "now" | "wait"; sessionId: number };
   const [queueStrip, setQueueStripState] = useState<QueueItem[]>([]);
   const displayQueueRef = useRef<QueueItem[]>([]);
   const displaySessionIdRef = useRef<number | null>(null);
@@ -506,12 +520,17 @@ export default function DashboardPage() {
   const [operatorOptions, setOperatorOptions] = useState<string[]>([]);
   const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
   const [vendorOptions, setVendorOptions] = useState<string[]>([]);
+  const [handlerOptions, setHandlerOptions] = useState<string[]>([]);
   const [packageSizeOptions, setPackageSizeOptions] = useState<string[]>([]);
   /** แถวเต็มของ package_size — ต้องเก็บทั้งก้อนเพราะช่อง Handler ในฟอร์ม
    *  ต้องใช้ `handlers` ที่แนบมาด้วย ถ้าเก็บแค่ชื่อเหมือนเดิมจะต้องยิง API
    *  เพิ่มทุกครั้งที่เปลี่ยน Package Size */
   const [packageSizeCatalog, setPackageSizeCatalog] =
     useState<{ package_size: string; handlers: string[] }[]>([]);
+  const [toleranceCatalog, setToleranceCatalog] = useState<{
+    package_size: string; tolerance_id: number; nominal_x: number; nominal_y: number;
+    upper_tol: number; lower_tol: number; offset_tol: number;
+  }[]>([]);
   const [partNumberCatalog, setPartNumberCatalog] =
     useState<{ part_number_name: string; package_size: string; handler: string }[]>([]);
 
@@ -554,10 +573,10 @@ export default function DashboardPage() {
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [measTotal, setMeasTotal] = useState(0);
   const [measPage, setMeasPage] = useState(1);
-  const [measFilterAlplInput, setMeasFilterAlplInput] = useState("");
-  const measFilterAlplRef = useRef("");
-  const [measFilterDate, setMeasFilterDate] = useState("");
+  const [measFilters, setMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const measFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const measSearchTimer = useRef<number | null>(null);
+  const measRequestRef = useRef(0);
   const [highlightId, setHighlightId] = useState<number | null>(null);
 
   // ── Report modal ───────────────────────────────────────────────────────
@@ -709,15 +728,15 @@ export default function DashboardPage() {
   }
 
 
-  async function loadMeasurementsPage(page = measPage, alpl = measFilterAlplRef.current, date = measFilterDate) {
-    const params: Record<string, string | number> = { limit: MEAS_PAGE_SIZE, offset: (page - 1) * MEAS_PAGE_SIZE };
-    if (alpl) params.number_alpl = alpl;
-    if (date) {
-      params.date_from = `${date} 00:00:00`;
-      params.date_to = `${date} 23:59:59`;
-    }
+  async function loadMeasurementsPage(page = measPage, filters = measFiltersRef.current) {
+    if (validateAlpl(filters.alpl)) return;
+    const request = ++measRequestRef.current;
+    const params = toParams(filters, null);
+    params.set("limit", String(MEAS_PAGE_SIZE));
+    params.set("offset", String((page - 1) * MEAS_PAGE_SIZE));
     try {
-      const d = await apiGet<{ items: Measurement[]; total: number }>("/api/measurements", params);
+      const d = await apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${params}`);
+      if (request !== measRequestRef.current) return;
       setMeasurements(d.items ?? []);
       setMeasTotal(d.total ?? 0);
     } catch (e) {
@@ -747,8 +766,8 @@ export default function DashboardPage() {
             ? (review.completed || sessionRef.current.measured_count >= 1
                 ? rows.find(r => r.sessionId === review.originSessionId)?.items.find(m => m.measurement_id === review.measurementId)
                 : undefined)
-            : rows.find(r => r.sessionId === review.sessionId)?.items.find(m => m.number_alpl === q.alpl);
-          const measurement = replacement ?? rows.find(r => r.sessionId === q.sessionId)?.items.find(m => m.number_alpl === q.alpl);
+            : rows.find(r => r.sessionId === review.sessionId)?.items.find(m => m.number_alpl === q.alpl && (!q.packageSize || m.package_size === q.packageSize));
+          const measurement = replacement ?? rows.find(r => r.sessionId === q.sessionId)?.items.find(m => m.number_alpl === q.alpl && (!q.packageSize || m.package_size === q.packageSize));
           if (!measurement) return q;
           resultsRef.current[index] = measurement.result;
           if (replacement && JSON.stringify(latestTelemetryRef.current) !== JSON.stringify(replacement)) {
@@ -820,11 +839,13 @@ export default function DashboardPage() {
     // พลาดครั้งไหนก็ขึ้นเตือนทันที ไม่ต้องรอให้ครบทุกเส้น — ระหว่างนั้นระบบ
     // ยังลองต่ออยู่เบื้องหลัง พอได้ครบธงจะถูกล้างเองด้านล่าง
     const onFail = () => setDropdownFailed(true);
-    const [operators, owners, vendors, packageSizes, partNumbers] = await Promise.all([
+    const [operators, owners, vendors, handlers, packageSizes, tolerances, partNumbers] = await Promise.all([
       apiGetRetry<{ operator_name: string }>("/api/operators", { signal, onFail }),
       apiGetRetry<{ owner_name: string }>("/api/owners", { signal, onFail }),
       apiGetRetry<{ vendor_name: string }>("/api/vendors", { signal, onFail }),
+      apiGetRetry<{ handler_name: string }>("/api/handlers", { signal, onFail }),
       apiGetRetry<{ package_size: string; handlers: string[] }>("/api/package-sizes", { signal, onFail }),
+      apiGetRetry<{ package_size: string; tolerance_id: number; nominal_x: number; nominal_y: number; upper_tol: number; lower_tol: number; offset_tol: number }>("/api/package-size-tolerances", { signal, onFail }),
       // catalog part number พร้อม package size — ใช้กรอง Part Number ตามขนาด
       // ที่เลือกในกลุ่มนั้น (cascade) ดู partNumbersFor ที่ส่งให้ PartEntryModal
       apiGetRetry<{ part_number_name: string; package_size: string; handler: string }>(
@@ -841,8 +862,10 @@ export default function DashboardPage() {
     setOperatorOptions((operators ?? []).map((o) => o.operator_name));
     setOwnerOptions((owners ?? []).map((o) => o.owner_name));
     setVendorOptions((vendors ?? []).map((v) => v.vendor_name));
+    setHandlerOptions((handlers ?? []).map((h) => h.handler_name));
     setPackageSizeOptions((packageSizes ?? []).map((p) => p.package_size));
     setPackageSizeCatalog(packageSizes ?? []);
+    setToleranceCatalog(tolerances ?? []);
     setPartNumberCatalog(partNumbers ?? []);
   }
 
@@ -915,8 +938,8 @@ export default function DashboardPage() {
   async function endIncompleteWork() {
     if (!pendingWork || session.session_id == null) return;
     if (!await dialog.confirm(
-      "จบการทำงานนี้หรือไม่? ชิ้นที่ยังไม่ได้วัดจะถูกซ่อนจาก Queue ส่วนผลที่วัดแล้วจะยังอยู่และวัดซ้ำได้",
-      { title: "จบการทำงาน", okLabel: "■ จบการทำงาน", danger: true },
+      "ต้องการจบ session นี้หรือไม่? ชิ้นที่ยังไม่ได้วัดจะถูกซ่อนจาก Queue ส่วนผลที่วัดแล้วจะยังอยู่และวัดซ้ำได้",
+      { title: "End Session", okLabel: "■ End Session", danger: true },
     )) return;
     try {
       const result = await apiPost<{ queue_state: any; target_count: number }>("/api/session/end-work", { session_id: session.session_id });
@@ -948,7 +971,7 @@ export default function DashboardPage() {
         <br />
         <span style={{ color: "var(--muted)" }}>ไม่กระทบข้อมูลที่บันทึกลงฐานข้อมูลแล้ว</span>
       </>,
-      { title: "ล้างข้อมูล Part Entry", okLabel: "🧹 ล้างข้อมูล", danger: true },
+      { title: "ล้างข้อมูล Part Entry", okLabel: "🧹 Clear", danger: true },
     )) return;
     setEntryQueue(null);
     entryQueueRef.current = null;
@@ -986,6 +1009,7 @@ export default function DashboardPage() {
     setQueueStrip(
       list.map((alpl, i) => ({
         alpl,
+        packageSize: q?.groups?.[q?.group_of?.[i] ?? 0]?.package_size,
         sessionId: st.session_id,
         // ผลของชิ้นที่วัดไปแล้วมาจาก resultsRef ที่สะสมจาก SSE (+ กู้จาก
         // localStorage ตอน mount) — ถ้ายังไม่รู้ผลจริงๆ chipStateFor คืน "done"
@@ -1114,8 +1138,8 @@ export default function DashboardPage() {
     );
     savePartEntryState();
     updateStats(sessionRef.current.session_id);
-    if (measPage === 1 && !measFilterAlplRef.current && !measFilterDate) {
-      await loadMeasurementsPage(1, "", measFilterDate);
+    if (measPage === 1 && !hasAnyFilter(measFiltersRef.current)) {
+      await loadMeasurementsPage(1);
       setHighlightId(d.measurement_id);
       window.setTimeout(() => setHighlightId((h) => (h === d.measurement_id ? null : h)), 2600);
     }
@@ -1148,6 +1172,7 @@ export default function DashboardPage() {
   function onMeasureTimeout(d: any) {
     setMtModal(d);
     setMtLeft(MT_ANSWER_TIMEOUT);
+    mtStopAfterReplyRef.current = false;
     // คำถามใหม่ = เริ่มนับใหม่ · ไม่งั้นความล้มเหลวจากชิ้นก่อนหน้าจะสะสมข้ามชิ้น
     // แล้วเด้ง dialog "เครื่องไม่ตอบสนอง" ตั้งแต่กดพลาดครั้งแรกของชิ้นใหม่
     mtFailRef.current = 0;
@@ -1163,7 +1188,13 @@ export default function DashboardPage() {
       setMtLeft(left);
       if (left <= 0) {
         if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
-        resolveMeasureTimeout("stop");
+        if (mtReplyBusyRef.current) mtStopAfterReplyRef.current = true;
+        else {
+          // callback นี้ถูกสร้างก่อน setMtModal(d) จะ render เสร็จ จึงห้ามอ่าน
+          // mtModal จาก closure เดิม (เป็น null) ใช้ session_id ของ event นี้ตรงๆ
+          setMtModal((current) => current === d ? null : current);
+          void doStopSession(d.session_id);
+        }
       }
     }, 1000);
   }
@@ -1191,10 +1222,14 @@ export default function DashboardPage() {
   //   `Pi.py` ไม่เคยรองรับ action นั้นเลย (ตอบ 400) กดแล้ว backend ขยับตำแหน่ง
   //   คิวไปเรียบร้อยแต่สั่ง Pi ไม่ผ่าน → คิวเหลื่อมหนึ่งช่องถาวรโดยไม่มีใครรู้
   async function resolveMeasureTimeout(action: "stop" | "retry" | "accept") {
-    if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
+    if (mtReplyBusyRef.current) return;
+    const prompt = mtModal;
+    const promptTimer = mtTimerRef.current;
     const sid = mtModal?.session_id ?? null;
-    setMtModal(null);
     if (sid == null) return;
+    mtReplyBusyRef.current = true;
+    setMtReplyBusy(true);
+    let delivered = false;
 
     // เลือกหยุด (หรือหมดเวลา) → วิ่งเข้า POST /api/session/stop เส้นเดียวกับ
     // ปุ่ม Stop ทุกประการ ตั้งใจไม่ให้มีทางที่สองที่ปิด session ได้
@@ -1204,15 +1239,34 @@ export default function DashboardPage() {
     //   ตลอดกาล ไม่มีอะไรหยุดเลย) และกด "หยุดการวัด" ในโมดัล (เพิ่งเลือกไปหมาด ๆ)
     //   ⚠ ส่ง sid ของโมดัลไปด้วย ไม่ใช้ `session.session_id` จาก state เพราะ
     //     closure อาจถือค่าเก่าอยู่ ณ จังหวะที่ timer ยิง
-    if (action === "stop") { await doStopSession(sid); return; }
-
     try {
+      if (action === "stop") {
+        if (promptTimer && mtTimerRef.current === promptTimer) {
+          window.clearInterval(promptTimer); mtTimerRef.current = null;
+        }
+        setMtModal(null);
+        await doStopSession(sid);
+        return;
+      }
       await apiPost(`/api/session/${action}`, { session_id: sid });
+      delivered = true;
+      if (promptTimer && mtTimerRef.current === promptTimer) {
+        window.clearInterval(promptTimer); mtTimerRef.current = null;
+      }
+      setMtModal((current) => current === prompt ? null : current);
       mtFailRef.current = 0;        // ส่งผ่านแล้ว เริ่มนับใหม่
     } catch (e: any) {
+      if (e instanceof ApiError && e.status === 404) {
+        if (promptTimer && mtTimerRef.current === promptTimer) {
+          window.clearInterval(promptTimer); mtTimerRef.current = null;
+        }
+        setMtModal((current) => current === prompt ? null : current);
+        showToast("ไม่พบคำถามรอผลของ Session นี้แล้ว กรุณาตรวจสถานะการวัด");
+        return;
+      }
       // 502 = backend ยิง /command ไปแล้วแต่ Pi ไม่รับ — Pi ยังบล็อกรอคำตอบอยู่
       // เฉย ๆ ไม่มีอะไรเดินหน้า ถ้าเงียบไว้ผู้ใช้จะยืนรอเครื่องที่ไม่มีวันขยับ
-      // (backend คืนคำถามค้างให้แล้ว กดซ้ำได้)
+      // (backend ยังเก็บคำถามค้างไว้ กดซ้ำได้)
       mtFailRef.current += 1;
 
       /* ── 2 ครั้งแรกให้ลองใหม่ · ครั้งที่ 3 เลิกแนะนำให้กดซ้ำ ────────────────
@@ -1234,59 +1288,71 @@ export default function DashboardPage() {
       } else {
         showToast(`ส่งคำตอบไม่สำเร็จ: ${e?.message ?? ""} — กดใหม่อีกครั้ง หรือกด Stop`);
       }
+    } finally {
+      mtReplyBusyRef.current = false;
+      setMtReplyBusy(false);
+      if (mtStopAfterReplyRef.current) {
+        mtStopAfterReplyRef.current = false;
+        if (!delivered && action !== "stop") {
+          setMtModal((current) => current === prompt ? null : current);
+          await doStopSession(sid);
+        }
+      }
     }
   }
 
   /** ตอบ modal "ถาดเต็ม" — วัดต่อ หรือ หยุด
-   *
-   *  ⚠ ปิด modal **หลัง** request สำเร็จเท่านั้น ต่างจาก `resolveMeasureTimeout`
-   *    ที่ปิดก่อนได้เพราะมีตัวนับถอยหลังบังคับปิดอยู่แล้ว · ตัวนี้ถ้าปิดไปก่อน
-   *    แล้วคำสั่งส่งไม่ถึง Pi ผู้ใช้จะเหลือหน้าจอเปล่าที่ไม่มีปุ่มอะไรให้กด
-   *    ทั้งที่เครื่องยังยืนรอคำตอบอยู่จริง — ไม่มีทางไปต่อนอกจากกด Stop
+   *  ปิด modal หลัง Pi รับคำสั่งแล้ว; ถ้าส่งไม่ถึงยังต้องมีปุ่มให้กดใหม่
    */
 
   
   async function resolveTrayFull(action: "resume" | "stop") {
+    if (trayReplyBusyRef.current) return;
     const sid = trayModal?.session_id ?? null;
     if (sid == null) { setTrayModal(null); return; }
-
-    // หยุด = เดินเส้นทางเดียวกับปุ่ม Stop ทุกประการ (ทางหยุด session มีทางเดียว)
-    if (action === "stop") { setTrayModal(null); await doStopSession(sid); return; }
+    trayReplyBusyRef.current = true;
+    setTrayReplyBusy(true);
 
     try {
+      // หยุด = เดินเส้นทางเดียวกับปุ่ม Stop ทุกประการ (ทางหยุด session มีทางเดียว)
+      if (action === "stop") { setTrayModal(null); await doStopSession(sid); return; }
       await apiPost("/api/session/resume", { session_id: sid });
       setTrayModal(null);
     } catch (e: any) {
       const msg = String(e?.message ?? "");
-      // 404 = คำถามหมดอายุ (session ถูกหยุดจากที่อื่นไปแล้ว) — ปิด modal ได้เลย
-      //       ไม่มีใครรออยู่แล้ว ค้างไว้มีแต่ให้กดแล้วได้ 404 ซ้ำ ๆ
-      if (msg.includes("404")) {
+      // คำขอ 404 มี detail แทนรหัสใน e.message จึงต้องดู ApiError.status
+      if (e instanceof ApiError && e.status === 404) {
         setTrayModal(null);
-        showToast("session นี้ถูกหยุดไปแล้ว");
+        showToast("ไม่พบคำถามเคลียร์ถาดของ Session นี้แล้ว กรุณาตรวจสถานะการวัด");
         return;
       }
       // 502 = backend ยิง /command ไปแล้วแต่ Pi ไม่รับ — Pi ยังบล็อกรออยู่จริง
       //       ต้องคง modal ไว้ให้กดซ้ำได้ ไม่งั้นเครื่องค้างโดยไม่มีทางสั่งต่อ
-      showToast(`สั่งวัดต่อไม่สำเร็จ: ${msg} — กดใหม่อีกครั้ง หรือกดหยุดการวัด`);
+      showToast(`สั่งวัดต่อไม่สำเร็จ: ${msg} — กด Tray Cleared · Continue อีกครั้ง หรือกด Stop`);
+    } finally {
+      trayReplyBusyRef.current = false;
+      setTrayReplyBusy(false);
     }
   }
 
   async function resolveMcuDisconnected(action: "retry" | "stop") {
+    if (mcuReplyBusyRef.current) return;
     const sid = mcuModal?.session_id ?? null;
     if (sid == null) { setMcuModal(null); return; }
-
-    if (action === "stop") { setMcuModal(null); await doStopSession(sid); return; }
+    mcuReplyBusyRef.current = true;
+    setMcuReplyBusy(true);
 
     try {
+      if (action === "stop") { setMcuModal(null); await doStopSession(sid); return; }
       await apiPost("/api/session/mcu-retry", { session_id: sid });
       // Pi อาจแจ้งล้มเหลวรอบใหม่ก่อน response นี้กลับมา อย่าปิดคำถามใหม่
       setMcuModal((current) => current === mcuModal ? null : current);
       mcuFailRef.current = 0;
     } catch (e: any) {
       const msg = String(e?.message ?? "");
-      if (msg.includes("404")) {
+      if (e instanceof ApiError && e.status === 404) {
         setMcuModal(null);
-        showToast("session นี้ถูกหยุดไปแล้ว");
+        showToast("ไม่พบคำถาม MCU ของ Session นี้แล้ว กรุณาตรวจสถานะการวัด");
         return;
       }
       mcuFailRef.current += 1;
@@ -1297,8 +1363,11 @@ export default function DashboardPage() {
           { title: "⚠ MCU ยังเชื่อมต่อไม่ได้", danger: true },
         );
       } else {
-        showToast(`สั่งลองใหม่ไม่สำเร็จ: ${msg} — กดใหม่อีกครั้ง หรือกดหยุดการวัด`);
+        showToast(`สั่งลองใหม่ไม่สำเร็จ: ${msg} — กด Retry อีกครั้ง หรือกด Stop`);
       }
+    } finally {
+      mcuReplyBusyRef.current = false;
+      setMcuReplyBusy(false);
     }
   }
 
@@ -1458,12 +1527,16 @@ export default function DashboardPage() {
     const dropdownAbort = new AbortController();
     (async () => {
       await Promise.all([
-        loadMeasurementsPage(1, "", ""),
+        loadMeasurementsPage(1),
         refreshParts(),
         loadDropdownData(dropdownAbort.signal),
       ]);
     })();
-    return () => dropdownAbort.abort();
+    return () => {
+      dropdownAbort.abort();
+      if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
+      ++measRequestRef.current;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1478,39 +1551,39 @@ export default function DashboardPage() {
   }, [sessionSig]);
 
   // ── Measurements filter/pagination handlers ───────────────────────────
-  function onMeasSearchChange(value: string) {
-    setMeasFilterAlplInput(value);
+  function onMeasFiltersChange(next: FilterState) {
+    setMeasFilters(next);
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-    measSearchTimer.current = window.setTimeout(async () => {
-      measFilterAlplRef.current = value.trim();
+    measFiltersRef.current = next;
+    ++measRequestRef.current;
+    if (validateAlpl(next.alpl)) {
+      return;
+    }
+    // ช่องข้อความพิมพ์ต่อเนื่องได้โดยไม่ยิง API ทุกตัวอักษร
+    measSearchTimer.current = window.setTimeout(() => {
       setMeasPage(1);
-      await loadMeasurementsPage(1, measFilterAlplRef.current, measFilterDate);
+      void loadMeasurementsPage(1, next);
     }, 300);
   }
-  async function onMeasDateChange(value: string) {
-    setMeasFilterDate(value);
-    setMeasPage(1);
-    await loadMeasurementsPage(1, measFilterAlplRef.current, value);
-  }
-  async function onMeasClearFilter() {
+  function onMeasClearFilter() {
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-    setMeasFilterAlplInput("");
-    measFilterAlplRef.current = "";
-    setMeasFilterDate("");
+    const empty: FilterState = { ...EMPTY_FILTERS, multi: { ...EMPTY_FILTERS.multi }, latestOnly: false };
+    setMeasFilters(empty);
+    measFiltersRef.current = empty;
     setMeasPage(1);
-    await loadMeasurementsPage(1, "", "");
+    void loadMeasurementsPage(1, empty);
   }
   async function onMeasPrev() {
     if (measPage <= 1) return;
     const p = measPage - 1;
     setMeasPage(p);
-    await loadMeasurementsPage(p, measFilterAlplRef.current, measFilterDate);
+    await loadMeasurementsPage(p);
   }
   async function onMeasNext() {
     if ((measPage - 1) * MEAS_PAGE_SIZE + measurements.length >= measTotal) return;
     const p = measPage + 1;
     setMeasPage(p);
-    await loadMeasurementsPage(p, measFilterAlplRef.current, measFilterDate);
+    await loadMeasurementsPage(p);
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -1579,12 +1652,12 @@ export default function DashboardPage() {
     : stationStatus === "offline" ? "▶ Start (Server Offline)"
     : piStatus === false          ? "▶ Start (Pi Offline)"
     : !piOnline                   ? "▶ Start (Waiting for Pi)"
-    : pendingWork                ? "▶ Start (วัดต่อ)"
+    : pendingWork                ? "▶ Continue"
     : entryQueue                  ? `▶ Start (${entryQueue.mode} ×${entryQueue.list.length})`
-    :                               "▶ Start (กด Save ก่อน)";
+    :                               "▶ Start (Save First)";
 
   const startTitle =
-    mustExitReviewBeforeContinue ? "กด 'ออกจากโหมดนี้' ก่อน แล้วจึงกด Start (วัดต่อ)"
+    mustExitReviewBeforeContinue ? "กด 'Exit Remeasure Mode' ก่อน แล้วจึงกด Continue"
     : dbOffline                   ? "Backend ต่อฐานข้อมูลไม่ได้ — เริ่มการวัดไม่ได้เพราะต้องเขียน session ลง DB ก่อน · ตรวจว่า MySQL ทำงานอยู่ไหม"
     : stationStatus === "offline" ? "ขาดการเชื่อมต่อกับ Backend — ตรวจว่า uvicorn ยังรันอยู่ไหม · ลองรีเฟรชหน้าเว็บ"
     : piStatus === false          ? "ไม่ได้รับสัญญาณจาก Pi เกินเวลาที่กำหนด — ตรวจว่า Pi.py รันอยู่ไหม · สาย LAN"
@@ -1620,7 +1693,7 @@ export default function DashboardPage() {
         <div>
           วัดต่อเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม
         </div>,
-        { title: "วัดชิ้นงานต่อ", okLabel: "▶ เริ่มวัดต่อ" },
+        { title: "วัดชิ้นงานต่อ", okLabel: "▶ Continue" },
       );
       if (!ok) return;
       try {
@@ -1656,7 +1729,7 @@ export default function DashboardPage() {
           );
         })}
       </>,
-      { title: "เริ่มการวัด", okLabel: "▶ เริ่มวัด" },
+      { title: "เริ่มการวัด", okLabel: "▶ Start" },
     );
     if (!ok) return;
 
@@ -1730,7 +1803,7 @@ export default function DashboardPage() {
   /** ปุ่ม Stop บน Session Control — ถามยืนยันก่อน เพราะกดโดนง่ายระหว่างวัดอยู่ */
   async function stopSession() {
     if (!await dialog.confirm("หยุด session ที่กำลังวัดอยู่ตอนนี้",
-                              { title: "หยุดการวัด", okLabel: "■ หยุด", danger: true })) return;
+                              { title: "หยุดการวัด", okLabel: "■ Stop", danger: true })) return;
     await doStopSession();
   }
 
@@ -1753,9 +1826,9 @@ export default function DashboardPage() {
     if (!m) return;
     let part: Part | null = null;
     try {
-      part = await apiGet<Part>(`/api/parts/${m.number_alpl}`);
+      part = await apiGet<Part>(`/api/parts/${m.part_id}`);
     } catch {
-      part = partsRef.current.find((p) => p.number_alpl === m.number_alpl) ?? null;
+      part = partsRef.current.find((p) => p.part_id === m.part_id) ?? null;
     }
     setReportModal({ measurement: m, part, imageUrl: null, imageState: m.image_path ? "loading" : "none" });
     if (m.image_path) {
@@ -1800,7 +1873,7 @@ export default function DashboardPage() {
           : "ยังไม่ถึงจังหวะ — ระบบกำลังโหลดโปรแกรมวัด หรือกำลังรอผลของชิ้นก่อนหน้าอยู่"}
         onClick={sendManualTrigger}>⚡ Trigger</button>
     )}
-    {isRunning && <button className="btn-stop" onClick={stopSession}>■ Stop</button>}
+    {isRunning && <button className="btn-stop" onClick={stopSession}><span className="btn-stop-square" aria-hidden="true" />Stop</button>}
   </>;
   const canEditQueue = session.state !== "running" && !pendingWork;
   const sessionStopError = session.state === "stopped" &&
@@ -1905,7 +1978,7 @@ export default function DashboardPage() {
                     type="button"
                     className="btn-clear"
                     disabled={isRunning || pendingWork}
-                    title={isRunning || pendingWork ? "คิวเดิมยังเปิดอยู่ — วัดต่อหรือจบการทำงานก่อน"
+                    title={isRunning || pendingWork ? "คิวเดิมยังเปิดอยู่ — วัดต่อหรือกด End Session ก่อน"
                                      : "ล้างคิว Part Entry ที่กรอกไว้ทั้งหมด"}
                     onClick={clearPartEntry}
                   >
@@ -1954,7 +2027,7 @@ export default function DashboardPage() {
                   </div>
 
                   {pendingWork && <div className="session-entry-hint" style={{ gridColumn: "1 / -1", marginTop: "0.5rem" }}>
-                    Start (วัดต่อ) จะวัดเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม · Trigger: {resumeTriggerMode === "auto" ? "Auto (MCU)" : "Manual (ปุ่มบนเว็บ)"}
+                    Continue จะวัดเฉพาะ {session.target_count - session.measured_count} ชิ้นที่เหลือใน Session เดิม · Trigger: {resumeTriggerMode === "auto" ? "Auto (MCU)" : "Manual (ปุ่มบนเว็บ)"}
                   </div>}
 
                   {/* ⚠ ปุ่มควบคุมทั้งหมดอยู่ที่นี่ที่เดียว ไม่กระจายไปการ์ดซ้าย —
@@ -1971,7 +2044,7 @@ export default function DashboardPage() {
                       </button>
                       {mustExitReviewBeforeContinue && (
                         <span className="start-action-tooltip" role="tooltip">
-                          กด “ออกจากโหมดนี้” ก่อน แล้วจึง Start (วัดต่อ)
+                          กด “Exit Remeasure Mode” ก่อน แล้วจึงกด Continue
                         </span>
                       )}
                     </span>
@@ -1979,10 +2052,10 @@ export default function DashboardPage() {
                       <button type="button" className="btn-stop"
                         disabled={session.state === "timeout" && !piOnline}
                         title={session.state === "timeout" && !piOnline
-                          ? "รอ Pi กลับมา Online ก่อนจบงาน"
-                          : "จบงานและซ่อนชิ้นที่ยังไม่ได้วัด"}
+                          ? "รอ Pi กลับมา Online ก่อนกด End Session"
+                          : "จบ session และซ่อนชิ้นที่ยังไม่ได้วัด"}
                         onClick={endIncompleteWork}>
-                        ■ จบการทำงาน
+                        <span className="btn-stop-square" aria-hidden="true" />End Session
                       </button>
                     )}
                     {runningControls}
@@ -2007,7 +2080,7 @@ export default function DashboardPage() {
                     && (!isRunning || (reviewPhase !== "remeasuring" && reviewPhase !== "unknown")) && (
                     <button type="button" className="btn-clear" onClick={resumeLatestTelemetry}
                       disabled={reviewBusy}>
-                      {isRunning ? "ออกจากโหมดนี้" : "ออกจากโหมดนี้"}
+                      Exit Remeasure Mode
                     </button>
                   )}
                   {/* ล้างเฉพาะสิ่งที่แสดงบนจอ ไม่แตะฐานข้อมูล — ผลวัดที่บันทึกไปแล้ว
@@ -2019,7 +2092,7 @@ export default function DashboardPage() {
                     className="btn-clear"
                     disabled={isRunning || pendingWork}
                     title={pendingWork
-                      ? "คิวยังวัดไม่ครบ — วัดต่อหรือจบการทำงานก่อนล้างหน้าจอ"
+                      ? "คิวยังวัดไม่ครบ — วัดต่อหรือกด End Session ก่อนล้างหน้าจอ"
                       : "ล้างค่าที่แสดงอยู่ ไม่กระทบข้อมูลที่บันทึกแล้ว"}
                     onClick={clearTelemetry}
                   >
@@ -2031,7 +2104,7 @@ export default function DashboardPage() {
                 <div style={{ marginBottom: "0.5rem" }}>
                   <span title={reviewUnavailable} style={{ display: "inline-block" }}>
                     <button type="button" className="btn-start" disabled={!!reviewUnavailable || !telemetry?.measurement_id}
-                      onClick={remeasureSelected}>วัดชิ้นนี้อีกรอบ</button>
+                      onClick={remeasureSelected}>Remeasure</button>
                   </span>
                   {isRunning && <span role="status" style={{ marginLeft: "0.5rem" }}>
                     {reviewPhase === "paused" ? "พักคิวแล้ว — วางชิ้นงานที่เลือกก่อนวัดใหม่"
@@ -2213,12 +2286,24 @@ export default function DashboardPage() {
               Measurements History <span className="count">({measTotal})</span>
               </div>
             </div>
-            <div className="filter-bar">
-              <input type="text" placeholder="ค้นหาด้วย ALPL Number..." value={measFilterAlplInput} onChange={(e) => onMeasSearchChange(e.target.value)} />
-              <input type="date" title="กรองตาม Timestamp (วันที่)" value={measFilterDate} onChange={(e) => onMeasDateChange(e.target.value)} />
-              <button className="btn-clear-filter" onClick={onMeasClearFilter}>
-                ✕ Clear Filter
-              </button>
+            <div className="measurement-history-filters">
+              <ExportFilters
+                value={measFilters}
+                onChange={onMeasFiltersChange}
+                onClear={onMeasClearFilter}
+                showLatestOnly={false}
+                options={{
+                  result: ["OK", "NG"],
+                  package_size: packageSizeOptions,
+                  part_number: [],
+                  handler: handlerOptions,
+                  operator: operatorOptions,
+                  measure_type: ["IPM", "New"],
+                  vendor: vendorOptions,
+                  owner: ownerOptions,
+                } satisfies Record<MultiKey, string[]>}
+                partNumberCatalog={partNumberCatalog}
+              />
             </div>
             <div className="table-wrap">
               <table>
@@ -2255,7 +2340,7 @@ export default function DashboardPage() {
                 <tbody>
                   {measurements.length === 0 ? (
                     <tr className="empty-row">
-                      <td colSpan={12}>{measFilterAlplRef.current || measFilterDate ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "No measurements"}</td>
+                      <td colSpan={12}>{hasAnyFilter(measFilters) ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "No measurements"}</td>
                     </tr>
                   ) : (
                     measurements.map((m) => {
@@ -2364,7 +2449,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.9rem", lineHeight: 1.7, marginBottom: "0.75rem" }}>
               วัดครบ <strong>{trayModal.capacity ?? "—"}</strong> ชิ้นแล้ว
               {" "}(สะสม <strong>{trayModal.piece ?? "—"}/{trayModal.target ?? "—"}</strong> ชิ้น)
-              <br />กรุณาเคลียร์ถาดรับชิ้นงาน แล้วกด &ldquo;วัดต่อ&rdquo;
+              <br />กรุณาเคลียร์ถาดรับชิ้นงาน แล้วกด &ldquo;Tray Cleared · Continue&rdquo;
             </div>
             <div style={{
               fontSize: "0.8rem", lineHeight: 1.6, color: "var(--muted)",
@@ -2375,11 +2460,11 @@ export default function DashboardPage() {
               ชิ้นที่วัดไปแล้วถูกบันทึกครบแล้ว
             </div>
             <div className="entry-actions" style={{ justifyContent: "flex-end" }}>
-              <button type="button" className="btn-edit-entry" onClick={() => resolveTrayFull("stop")}>
-                หยุดการวัด
+              <button type="button" className="btn-edit-entry" disabled={trayReplyBusy} onClick={() => resolveTrayFull("stop")}>
+                Stop
               </button>
-              <button type="button" className="btn-submit-entry" onClick={() => resolveTrayFull("resume")}>
-                ▶ เคลียร์ถาดแล้ว วัดต่อ
+              <button type="button" className="btn-submit-entry" disabled={trayReplyBusy} onClick={() => resolveTrayFull("resume")}>
+                {trayReplyBusy ? "Sending…" : "▶ Tray Cleared · Continue"}
               </button>
             </div>
           </div>
@@ -2397,7 +2482,7 @@ export default function DashboardPage() {
               {mcuModal.piece != null && mcuModal.target != null && (
                 <> ระหว่างวัดชิ้นที่ <strong>{mcuModal.piece}/{mcuModal.target}</strong></>
               )}
-              <br />กรุณาตรวจสอบสาย/เครื่องที่หน้างาน แล้วกด &ldquo;ลองใหม่&rdquo;
+              <br />กรุณาตรวจสอบสาย/เครื่องที่หน้างาน แล้วกด &ldquo;Retry&rdquo;
             </div>
             <div style={{
               fontSize: "0.8rem", lineHeight: 1.6, color: "var(--muted)",
@@ -2407,11 +2492,11 @@ export default function DashboardPage() {
               เครื่องหยุดรออยู่ <strong>ไม่มีกำหนดเวลา</strong> — ใช้เวลาได้ตามต้องการ
             </div>
             <div className="entry-actions" style={{ justifyContent: "flex-end" }}>
-              <button type="button" className="btn-edit-entry" onClick={() => resolveMcuDisconnected("stop")}>
-                หยุดการวัด
+              <button type="button" className="btn-edit-entry" disabled={mcuReplyBusy} onClick={() => resolveMcuDisconnected("stop")}>
+                Stop
               </button>
-              <button type="button" className="btn-submit-entry" onClick={() => resolveMcuDisconnected("retry")}>
-                🔁 ลองใหม่
+              <button type="button" className="btn-submit-entry" disabled={mcuReplyBusy} onClick={() => resolveMcuDisconnected("retry")}>
+                {mcuReplyBusy ? "Sending…" : "🔁 Retry"}
               </button>
             </div>
           </div>
@@ -2451,11 +2536,11 @@ export default function DashboardPage() {
               {v.hint}
             </div>
             <div className="entry-actions" style={{ justifyContent: "flex-end" }}>
-              <button type="button" className="btn-edit-entry" onClick={() => resolveMeasureTimeout("stop")}>
-                หยุดการวัด
+              <button type="button" className="btn-edit-entry" disabled={mtReplyBusy} onClick={() => resolveMeasureTimeout("stop")}>
+                Stop
               </button>
-              <button type="button" className="btn-submit-entry" onClick={() => resolveMeasureTimeout(v.action)}>
-                {v.actionLabel}
+              <button type="button" className="btn-submit-entry" disabled={mtReplyBusy} onClick={() => resolveMeasureTimeout(v.action)}>
+                {mtReplyBusy ? "Sending…" : v.actionLabel}
               </button>
             </div>
           </div>
@@ -2475,10 +2560,10 @@ export default function DashboardPage() {
             // เกณฑ์เอาจากแถว measurement ก่อน (backend เลือกแหล่งตามโหมดให้แล้ว)
             // ค่อยถอยไปใช้ของ part ถ้าแถวเก่าไม่มี — ห้ามใช้ของ part เป็นหลัก
             // เพราะ part อาจถูกแก้ทีหลัง แล้วรายงานจะไม่ตรงกับตอนวัดจริง
-            const nomX = m.nominal_x ?? part?.nominal_x;
-            const nomY = m.nominal_y ?? part?.nominal_y;
-            const upTol = m.upper_tol ?? part?.upper_tol;
-            const loTol = m.lower_tol ?? part?.lower_tol;
+            const nomX = m.nominal_x;
+            const nomY = m.nominal_y;
+            const upTol = m.upper_tol;
+            const loTol = m.lower_tol;
             const specRows: [string, string][] = [
               ["Vendor", part?.vendor || "—"],
               ["Owner", part?.owner || "—"],
@@ -2565,10 +2650,10 @@ export default function DashboardPage() {
           <div style={{ fontSize: "0.9rem", lineHeight: 1.6, marginBottom: "1.25rem" }}>{confirmModal?.message}</div>
           <div className="entry-actions" style={{ justifyContent: "flex-end" }}>
             <button type="button" className="btn-edit-entry" onClick={() => resolveConfirmModal(false)}>
-              ยกเลิก
+              Cancel
             </button>
             <button type="button" className="btn-submit-entry" onClick={() => resolveConfirmModal(true)}>
-              ดำเนินการต่อ
+              Continue
             </button>
           </div>
         </div>
@@ -2608,6 +2693,7 @@ export default function DashboardPage() {
              ให้แล้ว **ไม่ต้องยิง API เพิ่มตอนเปลี่ยน dropdown** (แบบเดียวกับ
              partNumbersFor ข้างบน) catalog พวกนี้เล็กและแทบไม่เปลี่ยนระหว่างวัน */
           handlersFor={(pkg) => packageSizeCatalog.find((p) => p.package_size === pkg)?.handlers ?? []}
+          tolerancesFor={(pkg) => toleranceCatalog.filter((t) => t.package_size === pkg)}
           /* เครื่องของ part number นั้น — ใช้เติมช่อง Handler ให้อัตโนมัติในโหมด
              New/Rework คืน "" ถ้าไม่รู้จัก (ฟอร์มจะปล่อยช่องว่างไว้) */
           handlerOfPartNumber={(pn) =>
@@ -2622,7 +2708,7 @@ export default function DashboardPage() {
                 หากเปลี่ยนไป <strong>{target}</strong> ข้อมูลที่กรอกไว้ในฟอร์ม{" "}
                 <strong>{current}</strong> จะหายไป
               </>,
-              { title: "เปลี่ยนโหมด", okLabel: "เปลี่ยนโหมด", danger: true },
+              { title: "เปลี่ยนโหมด", okLabel: "Switch Mode", danger: true },
             )
           }
           confirmRegister={async (items) =>
@@ -2636,21 +2722,22 @@ export default function DashboardPage() {
                 </div>
                 จะลงทะเบียนให้ตอนวัดชิ้นนั้นสำเร็จ แล้ววัดต่อเลยไหม
               </>,
-              { title: "มี ALPL ที่ยังไม่ลงทะเบียน", okLabel: "ลงทะเบียนแล้ววัดต่อ" },
+              { title: "มี ALPL ที่ยังไม่ลงทะเบียน", okLabel: "Register & Continue" },
             )
           }
-          confirmExisting={alpls => dialog.confirm(
+          confirmExisting={items => dialog.confirm(
             <>
-              <strong>ALPL {formatAlplRanges(alpls)} มีอยู่ในระบบแล้ว</strong>
+              <strong>Part เหล่านี้มีอยู่ในระบบแล้ว</strong>
+              <div className="register-alpl-list">{items.map((item, i) => <div key={i}>ALPL {item.alpl} · {item.package_size}</div>)}</div>
               <p>ใช้ข้อมูล Part ที่ลงทะเบียนไว้และบันทึกผลการวัดใหม่ ต้องการวัดต่อหรือไม่?</p>
             </>,
-            { title: "มี ALPL ที่ลงทะเบียนแล้ว", okLabel: "วัดต่อ" },
+            { title: "มี ALPL ที่ลงทะเบียนแล้ว", okLabel: "Continue" },
           )}
           onGroupConflict={(messages) => dialog.alert(
             <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ข้อมูล ALPL ในกลุ่มที่ไม่ตรงกัน">
               {messages.map((message, i) => <div key={i}>• {message}</div>)}
             </div>,
-            { title: "ข้อมูลชิ้นงานในกลุ่มไม่ตรงกัน", okLabel: "รับทราบ" },
+            { title: "ข้อมูลชิ้นงานในกลุ่มไม่ตรงกัน", okLabel: "OK" },
           )}
           onSave={(q) => {
             if (pendingWork && session.session_id != null) {

@@ -517,7 +517,7 @@ export default function ReportTemplatePage() {
         <br />
         ผสานแล้วจะเหลือเฉพาะช่องซ้ายบน ข้อมูลช่องอื่นจะหายไป
       </>,
-      { title: "ผสานช่อง", okLabel: "ผสาน", danger: true },
+      { title: "ผสานช่อง", okLabel: "Merge", danger: true },
     )) return;
 
     for (let r = q.r1; r <= q.r2; r++)
@@ -701,9 +701,9 @@ export default function ReportTemplatePage() {
             style={{ width: 200 }}
           />
           <span style={{ marginLeft: "auto", display: "flex", gap: ".4rem" }}>
-            <button type="button" className="btn-ghost" onClick={backToWizard}>ยกเลิก</button>
+            <button type="button" className="btn-ghost" onClick={backToWizard}>Cancel</button>
             <button type="button" className="btn-primary" disabled={saving || sessionRunning} onClick={saveTemplate}>
-              บันทึกเทมเพลต
+              Save Template
             </button>
           </span>
         </div>
@@ -814,19 +814,19 @@ export default function ReportTemplatePage() {
           <div className="rgroup">
             <div className="rrow">
               <button type="button" className="tb" title="แทรกคอลัมน์ทางซ้ายของช่องที่เลือก"
-                onClick={() => insertCol(focus.c)}><small>⇤ แทรกซ้าย</small></button>
+                onClick={() => insertCol(focus.c)}><small>⇤ Insert Left</small></button>
               <button type="button" className="tb" title="แทรกคอลัมน์ทางขวาของช่องที่เลือก"
-                onClick={() => insertCol(focus.c + 1)}><small>แทรกขวา ⇥</small></button>
+                onClick={() => insertCol(focus.c + 1)}><small>Insert Right ⇥</small></button>
               <button type="button" className="tb del" title="ลบคอลัมน์ที่เลือก"
-                onClick={() => deleteCol(focus.c)}><small>✕ ลบคอลัมน์</small></button>
+                onClick={() => deleteCol(focus.c)}><small>✕ Delete Column</small></button>
             </div>
             <div className="rrow">
               <button type="button" className="tb" title="แทรกแถวด้านบนของช่องที่เลือก"
-                onClick={() => insertRow(focus.r)}><small>⤒ แทรกบน</small></button>
+                onClick={() => insertRow(focus.r)}><small>⤒ Insert Above</small></button>
               <button type="button" className="tb" title="แทรกแถวด้านล่างของช่องที่เลือก"
-                onClick={() => insertRow(focus.r + 1)}><small>⤓ แทรกล่าง</small></button>
+                onClick={() => insertRow(focus.r + 1)}><small>⤓ Insert Below</small></button>
               <button type="button" className="tb del" title="ลบแถวที่เลือก"
-                onClick={() => deleteRow(focus.r)}><small>✕ ลบแถว</small></button>
+                onClick={() => deleteRow(focus.r)}><small>✕ Delete Row</small></button>
             </div>
             <div className="rname">Rows &amp; Columns</div>
           </div>
@@ -1097,17 +1097,17 @@ export default function ReportTemplatePage() {
           </div>
           {headMenu.kind === "col" ? (
             <>
-              <button type="button" onClick={() => { insertCol(headMenu.i); setHeadMenu(null); }}>⇤ แทรกทางซ้าย</button>
-              <button type="button" onClick={() => { insertCol(headMenu.i + 1); setHeadMenu(null); }}>แทรกทางขวา ⇥</button>
-              <button type="button" className="del" onClick={() => { deleteCol(headMenu.i); setHeadMenu(null); }}>✕ ลบคอลัมน์นี้</button>
+              <button type="button" onClick={() => { insertCol(headMenu.i); setHeadMenu(null); }}>⇤ Insert Column Left</button>
+              <button type="button" onClick={() => { insertCol(headMenu.i + 1); setHeadMenu(null); }}>Insert Column Right ⇥</button>
+              <button type="button" className="del" onClick={() => { deleteCol(headMenu.i); setHeadMenu(null); }}>✕ Delete Column</button>
             </>
           ) : (
             <>
-              <button type="button" onClick={() => { insertRow(headMenu.i); setHeadMenu(null); }}>⤒ แทรกด้านบน</button>
-              <button type="button" onClick={() => { insertRow(headMenu.i + 1); setHeadMenu(null); }}>⤓ แทรกด้านล่าง</button>
-              <button type="button" className="del" onClick={() => { deleteRow(headMenu.i); setHeadMenu(null); }}>✕ ลบแถวนี้</button>
+              <button type="button" onClick={() => { insertRow(headMenu.i); setHeadMenu(null); }}>⤒ Insert Row Above</button>
+              <button type="button" onClick={() => { insertRow(headMenu.i + 1); setHeadMenu(null); }}>⤓ Insert Row Below</button>
+              <button type="button" className="del" onClick={() => { deleteRow(headMenu.i); setHeadMenu(null); }}>✕ Delete Row</button>
               <button type="button" onClick={() => { dataRowRef.current = headMenu.i; setHeadMenu(null); bump(); }}>
-                ↻ ตั้งเป็นแถวข้อมูล
+                ↻ Set as Data Row
               </button>
             </>
           )}

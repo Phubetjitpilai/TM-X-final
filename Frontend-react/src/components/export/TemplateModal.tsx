@@ -124,7 +124,7 @@ export default function TemplateModal({ editing, catalog, onSave, onClose, savin
         </div>
 
         <div className="actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>ยกเลิก</button>
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
           <button
             type="button"
             className="btn-primary"
@@ -136,7 +136,7 @@ export default function TemplateModal({ editing, catalog, onSave, onClose, savin
             }
             onClick={() => onSave(name.trim(), columns)}
           >
-            บันทึก Template
+            Save Template
           </button>
         </div>
       </div>

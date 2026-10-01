@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api/client";
+import SingleSelect from "./SingleSelect";
 
 /**
  * ประวัติการแก้ไขข้อมูลของหน้า Edit
@@ -34,10 +35,17 @@ interface HistoryItem {
 
 const TABLES = [
   ["", "Every Table"], ["parts", "Parts"], ["measurements", "Measurements"],
-  ["package_size", "Package Size"], ["part_number", "Part Number"],
+  ["package_size", "Package Size"],
+  ["package_size_handler_template", "Package Handler Template"],
+  ["package_size_tolerance", "Package Tolerance"],
+  ["part_number", "Part Number"],
   ["operator", "Operator"], ["owner", "Owner"], ["vendor", "Vendor"],
   ["handler", "Handler"], ["template", "Template"],
 ] as const;
+
+// History เก็บ table_name เป็นรหัสฐานข้อมูล แต่ชื่อที่แสดงต้องตรงกับเมนูในเว็บ
+const webTableName = (item: HistoryItem) =>
+  TABLES.find(([name]) => name === item.table_name)?.[1] ?? item.table_label;
 
 const ACTION_LABEL: Record<string, string> = {
   add: "Add", edit: "Edit", delete: "Delete",
@@ -109,17 +117,20 @@ export default function HistoryCard({ reloadKey = 0 }: Props) {
           History <span className="count">{total ? `(${total})` : ""}</span>
         </div>
         <div style={{ display: "flex", gap: "0.4rem" }}>
-          <select value={table} onChange={(e) => setFilter(() => setTable(e.target.value))} style={{ minWidth: 140 }}>
-            {TABLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-          <select value={action} onChange={(e) => setFilter(() => setAction(e.target.value))} style={{ minWidth: 116 }}>
-            <option value="">Every Action</option>
-            <option value="add">Add</option>
-            <option value="edit">Edit</option>
-            <option value="delete">Delete</option>
-            <option value="restore">Restore</option>
-            <option value="purge">Purge</option>
-          </select>
+          <div style={{ minWidth: 210 }}>
+            <SingleSelect label="Table" value={table}
+              onChange={(value) => setFilter(() => setTable(value))}
+              options={TABLES.map(([value, label]) => ({ value, label }))}
+              placeholder="Every Table" searchable={false} showRadio={false} />
+          </div>
+          <div style={{ minWidth: 116 }}>
+            <SingleSelect label="Action" value={action}
+              onChange={(value) => setFilter(() => setAction(value))}
+              options={["Every Action", "Add", "Edit", "Delete", "Restore", "Purge"].map((label) => ({
+                value: label === "Every Action" ? "" : label.toLowerCase(), label,
+              }))}
+              placeholder="Every Action" searchable={false} showRadio={false} />
+          </div>
           <input type="date" value={date} onChange={(e) => setFilter(() => setDate(e.target.value))} />
         </div>
       </div>
@@ -137,7 +148,7 @@ export default function HistoryCard({ reloadKey = 0 }: Props) {
                   Measurements / Lookup Tables / Trash ใช้อังกฤษกันหมด)
                   "Edited At" ล้อกับ "Deleted At" ของถังขยะโดยตั้งใจ */}
               <th style={{ width: 130 }}>Edited At</th>
-              <th style={{ width: 130 }}>Table</th>
+              <th style={{ width: 210 }}>Table</th>
               <th style={{ width: 90 }}>Action</th>
               <th style={{ width: 130 }}>Item</th>
               <th>Details</th>
@@ -193,7 +204,7 @@ function FragmentRow({ item, head, open, onToggle }: {
     <>
       <tr data-clickable onClick={onToggle} style={{ cursor: "pointer" }}>
         <td style={{ whiteSpace: "nowrap" }} className="td-derived">{fmtTime(item.edited_at)}</td>
-        <td>{item.table_label}</td>
+        <td>{webTableName(item)}</td>
         <td><span className={`hist-badge ${item.action}`}>{ACTION_LABEL[item.action] ?? item.action}</span></td>
         <td><strong>{item.ref}</strong></td>
         <td>

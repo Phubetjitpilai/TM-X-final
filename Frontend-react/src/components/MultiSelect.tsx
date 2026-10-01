@@ -14,6 +14,8 @@ interface MultiSelectProps {
   emptyText?: string;
   /** แปลงคำค้นระหว่างพิมพ์สำหรับ field ที่มีรูปแบบมาตรฐาน */
   normalizeQuery?: (value: string) => string;
+  /** ใช้หน้าตาและการเลื่อนแบบ Dropdown ใน Part Entry */
+  entryStyle?: boolean;
 }
 
 /**
@@ -36,12 +38,14 @@ export default function MultiSelect({
   hint,
   emptyText = "ไม่มีตัวเลือก",
   normalizeQuery,
+  entryStyle = false,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // ปิดเมื่อคลิกที่อื่นหรือกด Escape — ผูก listener เฉพาะตอนเปิดอยู่เท่านั้น
+  // ปิดเมื่อกดหรือย้ายโฟกัสไปช่องอื่น — ใช้ pointerdown แบบ capture เพราะปุ่ม
+  // MultiSelect ตัวอื่นหยุดการส่งต่อ click ไว้ จึงใช้ document click ไม่ได้
   // จะได้ไม่มี listener ค้างอยู่ทั้งหน้าเวลามีช่องแบบนี้หลายช่อง
   // ล้างคำค้นทุกครั้งที่ปิดแผง — เปิดมารอบหน้าต้องเห็นลิสต์เต็มเสมอ ไม่งั้น
   // จะเห็นลิสต์ถูกกรองค้างจากคำที่พิมพ์ไว้เมื่อกี้แล้วนึกว่าตัวเลือกหายไป
@@ -49,14 +53,16 @@ export default function MultiSelect({
 
   useEffect(() => {
     if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    const onOutside = (e: Event) => {
+      if (e.target instanceof Node && !rootRef.current?.contains(e.target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("click", onClick);
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("focusin", onOutside, true);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("click", onClick);
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("focusin", onOutside, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -89,7 +95,7 @@ export default function MultiSelect({
         {label}
         {hint && <span className="hint">{hint}</span>}
       </label>
-      <div className={`ms${open ? " open" : ""}`} ref={rootRef}>
+      <div className={`ms${open ? " open" : ""}${entryStyle ? " export-entry-multi" : ""}`} ref={rootRef}>
         <button
           type="button"
           className="ms-btn"
@@ -97,9 +103,10 @@ export default function MultiSelect({
           onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         >
           <span className={`ms-txt${selected.length === 0 ? " none" : ""}`}>
-            {selected.length === 0 ? "ทั้งหมด" : selected.join(", ")}
+            {selected.length === 0 ? "All" : selected.join(", ")}
           </span>
           {selected.length > 0 && <span className="ms-n">{selected.length}</span>}
+          {entryStyle && <span className="entry-single-select-arrow" aria-hidden="true">▾</span>}
         </button>
 
         <div className="ms-panel">
@@ -123,24 +130,26 @@ export default function MultiSelect({
                 {/* "เลือกทั้งหมด" = ทั้งหมดที่เห็นอยู่ตอนนี้ ไม่ใช่ทั้งลิสต์ —
                     ถ้ากรองอยู่แล้วกดปุ่มนี้ คนคาดหวังว่าได้เฉพาะที่กรองไว้ */}
                 <button type="button" onClick={() => onChange([...new Set([...selected, ...shown])])}>
-                  {q ? "เลือกที่เห็น" : "เลือกทั้งหมด"}
+                  {q ? "Select Visible" : "Select All"}
                 </button>
-                <button type="button" onClick={() => onChange([])}>ล้าง</button>
+                <button type="button" onClick={() => onChange([])}>Clear</button>
               </div>
-              {shown.length === 0 ? (
-                <div className="ms-empty">ไม่พบ "{query}"</div>
-              ) : (
-                shown.map((o) => (
-                  <label className="ms-opt" key={o}>
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(o)}
-                      onChange={(e) => toggle(o, e.target.checked)}
-                    />
-                    {o}
-                  </label>
-                ))
-              )}
+              <div className="ms-options">
+                {shown.length === 0 ? (
+                  <div className="ms-empty">ไม่พบ "{query}"</div>
+                ) : (
+                  shown.map((o) => (
+                    <label className={`ms-opt${selected.includes(o) ? " selected" : ""}`} key={o}>
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(o)}
+                        onChange={(e) => toggle(o, e.target.checked)}
+                      />
+                      {o}
+                    </label>
+                  ))
+                )}
+              </div>
             </>
           )}
         </div>

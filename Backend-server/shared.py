@@ -101,11 +101,8 @@ _TOL_EPS = 1e-6
 
 # จำนวนทศนิยมที่ปัดก่อนเทียบเกณฑ์ OK/NG ทุกที่ในระบบ
 #
-# ทำไมต้องปัด: คอลัมน์ `value_x` / `nominal_x` / `upper_tol` เป็น `FLOAT` (4 ไบต์)
-#   ซึ่งเก็บเลขฐานสิบอย่าง `8.03` ไม่ได้เป๊ะ อ่านกลับได้ `8.029999732971191`
-#   พอเอา `nominal + upper_tol` มาบวกกันได้ขอบ `8.049999732…` ซึ่ง **ต่ำกว่า**
-#   ค่าที่วัดได้ `8.05` (อ่านกลับได้ `8.050000190…`) — สองตัวปัดคนละทาง
-#   ผลคือชิ้นที่ตกขอบพอดีกลายเป็น NG ราว 70% ของเกณฑ์ที่เป็นไปได้
+# ทำไมต้องปัด: คอลัมน์เกณฑ์และผลวัดเป็น FLOAT ซึ่งเก็บเลขฐานสิบได้ไม่เป๊ะ
+#   และค่าที่รับจาก Pi เป็น Python float. ปัดให้ตรงกันก่อนเทียบขอบเกณฑ์
 #
 # ⚠⚠ **ห้ามลดเหลือ 2 — มี package_size จริงในระบบที่พังทันที**
 #
@@ -118,9 +115,7 @@ _TOL_EPS = 1e-6
 #   เหตุผลรอง: `offset_tol` อยู่ระดับ 0.0xx ปัดที่ 2 ตำแหน่งจะทำให้ `0.025`
 #   กลายเป็น `0.03` (หลวมขึ้น 20%) และ `0.005` หายไปทั้งค่า
 #
-# ⚠ ถ้าวันหนึ่งมีคนกรอก tolerance 4 ตำแหน่งผ่านหน้า Edit ต้องเพิ่มค่านี้ตาม —
-#   ไม่มีอะไรใน DB บังคับความละเอียดไว้ (คอลัมน์เป็น FLOAT เฉย ๆ) และจะไม่มี
-#   error ให้เห็น เกณฑ์จะแค่หลวมขึ้นเงียบ ๆ
+# ⚠ ถ้าจะรองรับเกณฑ์ 4 ตำแหน่งต้องปรับ _DP และการตัดสินของ Pi พร้อมกัน
 _DP = 3
 
 def _within_tolerance(value: float, nominal: float, upper_tol: float, lower_tol: float) -> bool:
@@ -130,13 +125,10 @@ def _within_tolerance(value: float, nominal: float, upper_tol: float, lower_tol:
     ⚠ **ต้องปัดครบทั้ง 3 ตัว** ตัวไหนไม่ได้ปัด หางของมันจะโผล่มาชนะทันที
       เคยพลาดมาแล้วตอนปัดเฉพาะขอบไม่ปัด `value` → ยังผิด 48% ของเคสที่ตกขอบ
 
-    ⚠⚠ **ห้ามเปลี่ยนเป็น `Decimal(str(x))`** — `str()` คืนสตริงที่แปลงกลับได้ค่า
-      เดิมเป๊ะ หางของ FLOAT จึงติดมาด้วยทั้งดุ้น (`str(8.050000190734863)` ได้
-      `'8.050000190734863'`) **ไม่ได้ถูกล้าง** ตัวที่ปัดจริงคือ `f"{x:.3f}"`
-      ต่างหาก ไม่ใช่ `Decimal()` · เคยลองแล้วผิด 42% ของเคสที่ตกขอบพอดี
-      (เทสต์ด้วย literal อย่าง `_within_tolerance(8.05, 8.03, …)` จะผ่าน เพราะ
-      literal เป็น double สะอาด — ต้องเทสต์ด้วยค่าที่ผ่านคอลัมน์ FLOAT มาแล้ว)
+    แปลงเป็น float ก่อนคำนวณเพื่อให้ทุกทางใช้ชนิดเดียวกัน
     """
+    # Keep DB criteria and incoming measurements on the same numeric type.
+    nominal, upper_tol, lower_tol = float(nominal), float(upper_tol), float(lower_tol)
     return (round(nominal - lower_tol, _DP)
             <= round(value, _DP)
             <= round(nominal + upper_tol, _DP))
@@ -195,7 +187,7 @@ def _offset_ok(offset: Optional[float], offset_tol: Optional[float]) -> bool:
     """
     if offset is None or offset_tol is None:
         return True
-    return round(abs(offset), _DP) <= round(offset_tol, _DP)
+    return round(abs(float(offset)), _DP) <= round(float(offset_tol), _DP)
 
 
 def _ok_flags(row) -> Dict[str, Optional[bool]]:
@@ -256,8 +248,8 @@ def _ok_flags(row) -> Dict[str, Optional[bool]]:
     }
 
 
-def _load_criteria(cur, number_alpl: int):
-    """ดึง nominal/tolerance ที่จะใช้ตัดสิน ALPL ตัวนี้ — **จาก `package_size` ทุกโหมด**
+def _load_criteria(cur, part_id: int):
+    """ดึง nominal/tolerance จากชุดที่ ALPL เลือกใน `package_size_tolerance`
 
     (offset_tol ที่คืนมาเป็นค่า "ตามตาราง" เฉยๆ — จะเอามาตัดสินจริงไหมให้ถาม
     `_offset_limit()` อีกที ซึ่งเป็นตัวเดียวที่ยังแยกตามโหมด)
@@ -272,20 +264,22 @@ def _load_criteria(cur, number_alpl: int):
     ไม่พบ → raise HTTPException พร้อมบอกว่าขาดตรงไหนและไปแก้ที่หน้าไหน
     """
     cur.execute(
-        "SELECT ps.nominal_x, ps.nominal_y, ps.upper_tol, ps.lower_tol, ps.offset_tol, "
+        "SELECT pst.tolerance_id, pst.nominal_x, pst.nominal_y, pst.upper_tol, pst.lower_tol, pst.offset_tol, "
         "       ps.package_size "
         "FROM parts_specifications p "
         "LEFT JOIN part_number pn  ON p.part_number_id = pn.part_number_id "
         "JOIN package_size ps      ON ps.package_size_id = "
         "                             COALESCE(p.package_size_id, pn.package_size_id) "
-        "WHERE p.number_alpl = %s",
-        (number_alpl,),
+        "JOIN package_size_tolerance pst ON pst.tolerance_id = p.tolerance_id "
+        "                                 AND pst.package_size_id = ps.package_size_id "
+        "WHERE p.part_id = %s",
+        (part_id,),
     )
     row = cur.fetchone()
     if not row:
         raise HTTPException(
             404,
-            f"ALPL {number_alpl} หาเกณฑ์ตัดสินไม่เจอ — ยังไม่ได้ผูก Package Size "
+            f"Part {part_id} หาเกณฑ์ตัดสินไม่เจอ — ยังไม่ได้ผูก Package Size "
             f"ให้ ALPL นี้ (แก้ที่หน้า Edit › Parts)",
         )
     return row
@@ -853,33 +847,22 @@ def _get_template_name_for_alpl(cur, first_alpl: int) -> str:
     """Query หา template_name (ชื่อโปรแกรมวัดของ TM-X) ของ ALPL ที่จะเริ่มวัด
     — ใช้ทั้งโหมด IPM และ Rework (New ส่ง template_name มาใน payload เอง)
 
-    **template ผูกกับ `package_size` ไม่ใช่ `part_number`** — ตัวกำหนดโปรแกรม
-    วัดคือขนาดของ package ไม่ใช่รุ่นของ part ดังนั้นสายที่ถูกต้องคือ
-
-        parts_specifications.package_size_id → package_size.template_id → template
-
-    เดิมโค้ดนี้เดินอ้อมผ่าน `part_number` ทั้งที่ปลายทางคือ `package_size` อยู่ดี
-    ผลคือ ALPL ที่ลงทะเบียนแบบ IPM (กรอกแค่ ALPL + Package Size ไม่มี Part
-    Number) เริ่มวัดไม่ได้เลยทั้งที่ข้อมูลครบพอจะหา template ได้แล้ว
-
-    ยังเก็บทางอ้อมผ่าน `part_number` ไว้เป็น fallback (COALESCE) เพราะ Part ที่
-    ลงทะเบียนไว้ก่อนมีคอลัมน์ `parts_specifications.package_size_id` จะมีแต่
-    part_number_id — ถ้าตัดทิ้งเลย ข้อมูลเก่าทั้งหมดจะวัดไม่ได้ทันทีที่ deploy
-
-    ใช้ LEFT JOIN ทุกทอดเพื่อ "วินิจฉัย" ได้ว่าสายขาดตรงข้อไหน ของเดิมใช้ INNER
-    JOIN แล้วได้ 0 แถว จึงบอกได้แค่ว่า "ยังไม่ได้ตั้ง part_number" ซึ่งชี้ผิดจุด
-    บ่อย เพราะจริงๆ อาจตั้งไว้แล้วแต่ Package Size ยังไม่ได้ผูก Template
+    Template ขึ้นกับคู่ Package Size + Handler ของชิ้นงาน โดยใช้ค่าจาก Part
+    ก่อน และ fallback ไปที่ Part Number สำหรับข้อมูลเก่า
     """
     cur.execute(
         "SELECT p.part_number_id, p.package_size_id AS part_pkg_id, "
         "       pn.package_size_id AS pn_pkg_id, "
         "       COALESCE(p.package_size_id, pn.package_size_id) AS pkg_id, "
-        "       ps.package_size, ps.template_id, t.template_name "
+        "       ps.package_size, h.handler_name, psht.template_id, t.template_name "
         "FROM parts_specifications p "
         "LEFT JOIN part_number pn  ON p.part_number_id = pn.part_number_id "
         "LEFT JOIN package_size ps ON ps.package_size_id = "
         "                             COALESCE(p.package_size_id, pn.package_size_id) "
-        "LEFT JOIN template t      ON ps.template_id = t.template_id "
+        "LEFT JOIN handler h ON h.handler_id = COALESCE(p.handler_id, pn.handler_id) "
+        "LEFT JOIN package_size_handler_template psht "
+        "  ON psht.package_size_id = ps.package_size_id AND psht.handler_id = h.handler_id "
+        "LEFT JOIN template t ON t.template_id = psht.template_id "
         "WHERE p.number_alpl = %s",
         (first_alpl,),
     )
@@ -903,8 +886,9 @@ def _get_template_name_for_alpl(cur, first_alpl: int) -> str:
     if row["template_id"] is None:
         raise HTTPException(
             404,
-            f"{head} Package Size \"{row['package_size']}\" ยังไม่ได้ตั้ง Template ของเครื่อง TM-X "
-            f"(แก้ที่หน้า Edit › Lookup Tables › Package Size) — ไม่เกี่ยวกับ Part Number",
+            f"{head} ยังไม่ได้ตั้ง Template สำหรับ Package Size \"{row['package_size']}\" "
+            f"และ Handler \"{row['handler_name'] or '—'}\" "
+            f"(แก้ที่หน้า Edit › Lookup Tables › Package Handler Template)",
         )
     if row["template_name"] is None:
         raise HTTPException(
@@ -984,6 +968,8 @@ _TABLE_DISPLAY_NAME = {
     "measurements":         "Measurement",
     "part_number":          "Part Number",
     "package_size":         "Package Size",
+    "package_size_tolerance": "Package Tolerance",
+    "package_size_handler_template": "Package Handler Template",
 }
 
 class LookupCreate(BaseModel):
@@ -992,34 +978,39 @@ class LookupCreate(BaseModel):
 class LookupUpdate(BaseModel):
     name: str
 
-# nominal/tolerance ทั้ง 5 ตัวเป็น FLOAT NOT NULL ใน DB (ดู init.sql) จึงบังคับ
-# ให้ส่งมาครบตอน Create — ต่างจาก template_name ที่ nullable ได้
 class PackageSizeCreate(BaseModel):
     package_size:  str
-    nominal_x:     float
-    nominal_y:     float
-    upper_tol:     float
-    lower_tol:     float
-    offset_tol:    float
-    template_name: str
-    # เครื่องทดสอบที่ขนาดนี้ลงได้ → ตาราง package_size_handler (หลายต่อหลาย)
-    # ไม่บังคับตอนสร้าง เพราะตอนเพิ่มขนาดใหม่มักยังไม่รู้ว่าลงเครื่องไหนได้บ้าง
-    handlers:      List[str] = []
 
 class PackageSizeUpdate(BaseModel):
     package_size:  Optional[str] = None
-    nominal_x:     Optional[float] = None
-    nominal_y:     Optional[float] = None
-    upper_tol:     Optional[float] = None
-    lower_tol:     Optional[float] = None
-    offset_tol:    Optional[float] = None
+
+class PackageHandlerTemplateCreate(BaseModel):
+    package_size: str
+    handler: str
+    template_name: str
+
+class PackageHandlerTemplateUpdate(BaseModel):
+    package_size: Optional[str] = None
+    handler: Optional[str] = None
     template_name: Optional[str] = None
-    # ⚠ `None` กับ `[]` คนละความหมาย — None = ไม่ได้ส่งมา ห้ามแตะของเดิม ·
-    #   [] = ตั้งใจล้างให้ไม่เหลือเครื่องเลย ต้องแยกสองกรณีนี้ให้ขาด ไม่งั้น
-    #   แก้แค่ชื่อ package size จะเผลอลบ handler ทิ้งไปด้วยทั้งหมด
-    handlers:      Optional[List[str]] = None
 
 _PKG_NUM_FIELDS = ("nominal_x", "nominal_y", "upper_tol", "lower_tol", "offset_tol")
+
+class PackageToleranceCreate(BaseModel):
+    package_size: str
+    nominal_x: float
+    nominal_y: float
+    upper_tol: float
+    lower_tol: float
+    offset_tol: float
+
+class PackageToleranceUpdate(BaseModel):
+    package_size: Optional[str] = None
+    nominal_x: Optional[float] = None
+    nominal_y: Optional[float] = None
+    upper_tol: Optional[float] = None
+    lower_tol: Optional[float] = None
+    offset_tol: Optional[float] = None
 # ⚠ `_PN_NUM_FIELDS` ถูกถอดออกแล้ว — part_number **ไม่มีฟิลด์ตัวเลขของตัวเอง
 #   อีกต่อไป** เกณฑ์ตัดสินทั้งหมดอยู่ที่ package_size ทุกโหมด (ดู `_load_criteria`)
 #   ถ้าเห็นชื่อนี้ที่ไหนอีก แปลว่าตกค้างจากก่อนหน้านี้
@@ -1044,23 +1035,24 @@ PARTS_SELECT = """
            v.vendor_name    AS vendor,
            o.owner_name     AS owner,
            ps.package_size  AS package_size,
-           -- ⚠ เกณฑ์มาจาก package_size ทุกโหมดแล้ว (เดิมชุดนี้ดึงจาก pn) —
+           -- เกณฑ์มาจาก tolerance_id ที่ผูกกับ ALPL —
            --    ต้องตรงกับ `_load_criteria()` ที่ใช้ตัดสินจริง เพราะหน้า Report
            --    ใช้ค่าชุดนี้เป็นตัวสำรองตอนแถว measurement เก่าไม่มีเกณฑ์ติดมา
            --    (ดู DashboardPage.tsx — `m.nominal_x ?? part?.nominal_x`)
-           ps.nominal_x     AS nominal_x,
-           ps.nominal_y     AS nominal_y,
-           ps.upper_tol     AS upper_tol,
-           ps.lower_tol     AS lower_tol,
-           ps.offset_tol    AS offset_tol,
+           pst.nominal_x     AS nominal_x,
+           pst.nominal_y     AS nominal_y,
+           pst.upper_tol     AS upper_tol,
+           pst.lower_tol     AS lower_tol,
+           pst.offset_tol    AS offset_tol,
            -- ชุด `_pkg` เคยมีไว้ให้เทียบว่าเกณฑ์ของ part กับของ package ต่างกันไหม
            -- ตอนนี้ซ้ำกับชุดข้างบนเป๊ะ ๆ แล้ว **ไม่มีใครอ่านเลยทั้ง backend และ
            -- หน้าเว็บ** เหลือไว้กัน payload เปลี่ยนรูปกะทันหัน ลบได้เมื่อพร้อม
-           ps.nominal_x     AS nominal_x_pkg,
-           ps.nominal_y     AS nominal_y_pkg,
-           ps.upper_tol     AS upper_tol_pkg,
-           ps.lower_tol     AS lower_tol_pkg,
-           ps.offset_tol    AS offset_tol_pkg,
+           pst.nominal_x     AS nominal_x_pkg,
+           pst.nominal_y     AS nominal_y_pkg,
+           pst.upper_tol     AS upper_tol_pkg,
+           pst.lower_tol     AS lower_tol_pkg,
+           pst.offset_tol    AS offset_tol_pkg,
+           p.tolerance_id,
            t.template_name  AS template_name
     FROM parts_specifications p
     LEFT JOIN part_number pn  ON p.part_number_id = pn.part_number_id
@@ -1072,7 +1064,11 @@ PARTS_SELECT = """
     LEFT JOIN owner o         ON p.owner_id = o.owner_id
     LEFT JOIN package_size ps ON ps.package_size_id =
                                  COALESCE(p.package_size_id, pn.package_size_id)
-    LEFT JOIN template t      ON ps.template_id = t.template_id
+    LEFT JOIN package_size_tolerance pst ON pst.tolerance_id = p.tolerance_id
+                                          AND pst.package_size_id = ps.package_size_id
+    LEFT JOIN package_size_handler_template psht
+      ON psht.package_size_id = ps.package_size_id AND psht.handler_id = h.handler_id
+    LEFT JOIN template t      ON t.template_id = psht.template_id
 """
 
 def _lookup_id(cur, table: str, id_col: str, name_col: str, value: Optional[str]) -> Optional[int]:
@@ -1092,6 +1088,23 @@ def _lookup_id(cur, table: str, id_col: str, name_col: str, value: Optional[str]
     if not row:
         raise HTTPException(400, f"ไม่พบค่า '{value}' ใน {table} (เลือกจาก dropdown เท่านั้น)")
     return row[id_col]
+
+def _tolerance_id_for_package(cur, package_size_id: Optional[int], tolerance_id: Any) -> int:
+    if package_size_id is None or tolerance_id in (None, ""):
+        raise HTTPException(400, "กรุณาเลือก Package Size และ Tolerance")
+    if isinstance(tolerance_id, bool) or not str(tolerance_id).isdigit():
+        raise HTTPException(400, "Tolerance ID ไม่ถูกต้อง")
+    try:
+        selected_id = int(tolerance_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Tolerance ID ไม่ถูกต้อง")
+    cur.execute(
+        "SELECT 1 FROM package_size_tolerance WHERE tolerance_id = %s AND package_size_id = %s",
+        (selected_id, package_size_id),
+    )
+    if not cur.fetchone():
+        raise HTTPException(400, "Tolerance ที่เลือกไม่ตรงกับ Package Size")
+    return selected_id
 
 def _block_if_session_running(cur, action: str) -> None:
     """เช็คว่ามี session ไหนกำลัง running อยู่ไหม — ถ้ามี ปฏิเสธการแก้ไข/ลบ Part
@@ -1157,6 +1170,7 @@ class PartCreate(BaseModel):
     vendor:        Optional[str] = None
     po_number:     Optional[int] = None
     package_size:  Optional[str] = None
+    tolerance_id:  Optional[int] = None
     # เครื่องที่ ALPL ตัวนี้ติดตั้งอยู่ — ส่งมาเป็น "ชื่อ" แล้ว _insert_part_row
     # resolve เป็น handler_id เอง · None = ไม่ระบุ (ลงทะเบียนจาก IPM ที่ยังไม่รู้)
     handler:       Optional[str] = None
@@ -1173,12 +1187,12 @@ class PartsCheckRequest(BaseModel):
     mode: Optional[str] = None
 
 _GROUP_MATCH_FIELDS = {
-    "IPM":    [("package_size", "Package Size")],
-    "Rework": [("package_size", "Package Size"), ("part_number", "Part Number"),
+    "IPM":    [("package_size", "Package Size"), ("tolerance_id", "Tolerance")],
+    "Rework": [("package_size", "Package Size"), ("tolerance_id", "Tolerance"), ("part_number", "Part Number"),
                ("handler", "Handler"), ("vendor", "Vendor"), ("owner", "Owner"),
                ("po_number", "PO Number"), ("description", "Description"),
                ("receive_date", "Receive Date")],
-    "New":    [("package_size", "Package Size"), ("part_number", "Part Number"),
+    "New":    [("package_size", "Package Size"), ("tolerance_id", "Tolerance"), ("part_number", "Part Number"),
                ("handler", "Handler"), ("vendor", "Vendor"), ("owner", "Owner"),
                ("po_number", "PO Number"), ("description", "Description"),
                ("receive_date", "Receive Date")],
@@ -1205,6 +1219,9 @@ def _insert_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:
     # เหมือนเดิม) เพราะโหมด IPM ลงทะเบียน Part จากฟอร์มที่มีแค่ ALPL + Package Size
     # ยังไม่รู้ Part Number — ถ้าไม่เก็บไว้ตรงนี้จะหา template/เกณฑ์ให้มันไม่ได้เลย
     package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", config.get("package_size"))
+    if package_size_id is None:
+        raise HTTPException(400, "ต้องเลือก Package Size ก่อนลงทะเบียน Part")
+    tolerance_id = _tolerance_id_for_package(cur, package_size_id, config.get("tolerance_id"))
     # เครื่องที่ ALPL ตัวนี้ติดตั้งอยู่
     #   IPM        — ผู้ใช้เลือกเองจาก dropdown ที่กรองด้วย package_size_handler
     #   New/Rework — ฟอร์มเติมให้อัตโนมัติจาก part_number แล้วล็อกช่องไว้
@@ -1216,11 +1233,11 @@ def _insert_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:
     # (ถ้าไม่ใส่คอลัมน์นี้เลย DEFAULT CURRENT_TIMESTAMP ของ schema จะทำงานแทน
     # ซึ่งไม่ใช่พฤติกรรมที่ต้องการ)
     columns = [
-        "number_alpl", "part_number_id", "package_size_id", "handler_id", "description",
+        "number_alpl", "part_number_id", "package_size_id", "tolerance_id", "handler_id", "description",
         "vendor_id", "po_number", "owner_id", "recieve_date",
     ]
     values: List[Any] = [
-        number_alpl, part_number_id, package_size_id, handler_id, config.get("description"),
+        number_alpl, part_number_id, package_size_id, tolerance_id, handler_id, config.get("description"),
         vendor_id, config.get("po_number"), owner_id,
         config.get("recieve_date") or None,
     ]
@@ -1232,8 +1249,8 @@ def _insert_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:
     )
 
 MEASUREMENTS_SELECT = """
-    SELECT m.*, op.operator_name AS operator_name,
-           -- ⚠ nominal/tolerance มาจาก package_size **ทุกโหมด** — ต้องตรงกับ
+    SELECT m.*, op.operator_name AS operator_name, ps.package_size AS package_size,
+           -- nominal/tolerance มาจาก tolerance_id ตอนวัด — ต้องตรงกับ
            --    `_load_criteria()` ที่ใช้ตัดสินจริง ไม่งั้นตัวเลขที่โชว์ข้างคอลัมน์
            --    Result จะมาจากคนละตารางกับที่ใช้ตัดสิน แล้วผู้ใช้จะเห็นค่าที่อยู่
            --    ในสเปกแต่ผลเป็น NG โดยไม่มีทางรู้ว่าทำไม
@@ -1243,10 +1260,12 @@ MEASUREMENTS_SELECT = """
            CASE WHEN m.measure_type = 'IPM' THEN NULL ELSE ips.offset_tol END AS offset_tol
     FROM measurements m
     LEFT JOIN operator op ON m.operator_id = op.operator_id
-    LEFT JOIN parts_specifications p ON m.number_alpl = p.number_alpl
+    LEFT JOIN parts_specifications p ON m.part_id = p.part_id
     LEFT JOIN part_number pn ON p.part_number_id = pn.part_number_id
-    LEFT JOIN package_size ips
-           ON ips.package_size_id = COALESCE(p.package_size_id, pn.package_size_id)
+    LEFT JOIN package_size ps
+           ON ps.package_size_id = COALESCE(p.package_size_id, pn.package_size_id)
+    LEFT JOIN package_size_tolerance ips
+           ON ips.tolerance_id = m.tolerance_id
 """
 
 # main.py
@@ -1305,11 +1324,14 @@ COALESCE_PKG = "COALESCE(p.package_size_id, pn.package_size_id)"
 _EXPORT_FROM = f"""
     FROM measurements m
     LEFT JOIN operator op             ON m.operator_id = op.operator_id
-    LEFT JOIN parts_specifications p  ON m.number_alpl = p.number_alpl
+    LEFT JOIN parts_specifications p  ON m.part_id = p.part_id
     LEFT JOIN part_number pn          ON p.part_number_id = pn.part_number_id
     LEFT JOIN handler h               ON h.handler_id = COALESCE(p.handler_id, pn.handler_id)
     LEFT JOIN package_size ps         ON ps.package_size_id = {COALESCE_PKG}
-    LEFT JOIN template t              ON ps.template_id = t.template_id
+    LEFT JOIN package_size_tolerance pst ON pst.tolerance_id = m.tolerance_id
+    LEFT JOIN package_size_handler_template psht
+      ON psht.package_size_id = ps.package_size_id AND psht.handler_id = h.handler_id
+    LEFT JOIN template t              ON t.template_id = psht.template_id
     LEFT JOIN vendor v                ON p.vendor_id = v.vendor_id
     LEFT JOIN owner o                 ON p.owner_id = o.owner_id
 """
@@ -1327,10 +1349,10 @@ EXPORT_SELECT = """
            m.result, m.note, m.measure_type, m.timestamp,
            op.operator_name,
            pn.part_number_name,
-           -- ⚠ เหมือน MEASUREMENTS_SELECT — nominal/tolerance มาจาก package_size
+           -- เหมือน MEASUREMENTS_SELECT — nominal/tolerance มาจากชุดที่ใช้ตอนวัด
            --    ทุกโหมด ต้องตรงกับ `_load_criteria()` เสมอ
-           ps.nominal_x, ps.nominal_y, ps.upper_tol, ps.lower_tol,
-           ps.offset_tol AS offset_tol,
+           pst.nominal_x, pst.nominal_y, pst.upper_tol, pst.lower_tol,
+           pst.offset_tol AS offset_tol,
            h.handler_name, ps.package_size, t.template_name,
            v.vendor_name, o.owner_name,
            p.po_number, p.description, p.recieve_date
@@ -1596,6 +1618,7 @@ _DELETED_KIND_LABEL = {
     "handler":      "Handler",
     "template":     "Template",
     "package_size": "Package Size",
+    "package_size_tolerance": "Package Tolerance",
     "part_number":  "Part Number",
 }
 
@@ -1676,6 +1699,10 @@ __all__ = [
     "PARTS_SELECT",
     "PackageSizeCreate",
     "PackageSizeUpdate",
+    "PackageHandlerTemplateCreate",
+    "PackageHandlerTemplateUpdate",
+    "PackageToleranceCreate",
+    "PackageToleranceUpdate",
     "PartCreate",
     "PartNumberCreate",
     "PartNumberUpdate",
@@ -1699,6 +1726,7 @@ __all__ = [
     "_GROUP_MATCH_FIELDS",
     "_LEGACY_COLUMN_ALIASES",
     "_PKG_NUM_FIELDS",
+    "_tolerance_id_for_package",
     "_PROJECT_ROOT",
     "_RANGE_PART_RE",
     "_TABLE_DISPLAY_NAME",

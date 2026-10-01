@@ -7,6 +7,7 @@
 from fastapi import APIRouter
 
 from shared import *  # noqa: F401,F403
+from routers.export import _parse_int_ranges
 
 router = APIRouter()
 
@@ -14,7 +15,7 @@ router = APIRouter()
 # มุมมองของ Part ที่ใช้บันทึกลงประวัติ — join เอา "ชื่อ" มาแทนคอลัมน์ FK ดิบ
 # เพราะประวัติต้องอ่านรู้เรื่องด้วยตาเปล่าโดยไม่ต้องไปเปิดตาราง lookup เทียบ id
 _PART_HISTORY_SQL = """
-    SELECT p.number_alpl, pn.part_number_name AS part_number, ps.package_size,
+    SELECT p.number_alpl, pn.part_number_name AS part_number, ps.package_size, p.tolerance_id,
            v.vendor_name AS vendor, o.owner_name AS owner,
            p.po_number, p.description, p.recieve_date
     FROM parts_specifications p
@@ -22,7 +23,7 @@ _PART_HISTORY_SQL = """
     LEFT JOIN package_size ps ON p.package_size_id = ps.package_size_id
     LEFT JOIN vendor       v  ON p.vendor_id       = v.vendor_id
     LEFT JOIN owner        o  ON p.owner_id        = o.owner_id
-    WHERE p.number_alpl = %s
+    WHERE p.part_id = %s
 """
 
 @router.post("/api/parts/check")
@@ -92,7 +93,7 @@ def check_parts(body: PartsCheckRequest):
             # ตอนผู้ใช้กรอก ALPL ที่เคยลงทะเบียนแล้ว (ดู prefillGroupFromAlpl)
             # ยิงทีเดียวได้ทั้งกลุ่ม แทนที่จะไล่ถาม /api/parts/{alpl} ทีละตัว
             cur.execute(
-                "SELECT p.number_alpl, pn.part_number_name, ps.package_size, "
+                "SELECT p.part_id, p.number_alpl, pn.part_number_name, ps.package_size, p.tolerance_id, "
                 "       h.handler_name, "
                 "       v.vendor_name, o.owner_name, p.po_number, p.description, p.recieve_date "
                 "FROM parts_specifications p "
@@ -112,22 +113,25 @@ def check_parts(body: PartsCheckRequest):
     finally:
         db.close()
 
-    detail = {
-        str(r["number_alpl"]): {
-            "part_number":  r["part_number_name"],
+    def describe(r):
+        return {
+            "part_id": r["part_id"],
+            "part_number": r["part_number_name"],
             "package_size": r["package_size"],
-            # ⚠ คีย์ต้องชื่อ `handler` ให้ตรงกับชื่อ field ในฟอร์ม (GROUP_FIELDS)
-            #   เพราะ prefillGroup วนตามชื่อ field แล้วอ่าน detail[alpl][f] ตรงๆ
-            #   ถ้าตั้งชื่อไม่ตรง มันจะไม่พังแต่จะ "ไม่เติมให้" อย่างเงียบสนิท
-            "handler":      r["handler_name"],
-            "vendor":       r["vendor_name"],
-            "owner":        r["owner_name"],
-            "po_number":    r["po_number"],
-            "description":  r["description"],
+            "tolerance_id": r["tolerance_id"],
+            "handler": r["handler_name"],
+            "vendor": r["vendor_name"],
+            "owner": r["owner_name"],
+            "po_number": r["po_number"],
+            "description": r["description"],
             "receive_date": str(r["recieve_date"])[:10] if r["recieve_date"] else None,
         }
-        for r in rows
-    }
+
+    variants: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        variants.setdefault(str(r["number_alpl"]), []).append(describe(r))
+    # ALPL-only prefill is safe only when it names exactly one Part.
+    detail = {alpl: matches[0] for alpl, matches in variants.items() if len(matches) == 1}
     found = {r["number_alpl"] for r in rows}
 
     # ── conflicts: ALPL ในกลุ่มเดียวกันต้องมีค่าตรงกันตามโหมด ────────────────
@@ -139,9 +143,11 @@ def check_parts(body: PartsCheckRequest):
             # (ข้อความเตือนต้องบอกเลขให้ครบ ไม่งั้นผู้ใช้ไม่รู้ว่าต้องไปแก้ตัวไหน)
             by_value: Dict[str, List[int]] = {}
             for a in alpls:
-                if a not in found:
+                package = (g.get("package_size") or "").strip()
+                matching = next((d for d in variants.get(str(a), []) if d["package_size"] == package), None)
+                if matching is None:
                     continue                      # ยังไม่ลงทะเบียน — ไม่มีอะไรให้เทียบ
-                v = detail[str(a)].get(field)
+                v = matching.get(field)
                 if v is None or str(v).strip() == "":
                     continue                      # ช่องว่างจะเติมจากข้อมูลที่มีอยู่ตอนวัดสำเร็จ
                 by_value.setdefault(str(v), []).append(a)
@@ -163,10 +169,20 @@ def check_parts(body: PartsCheckRequest):
                     ),
                 })
 
+    group_results = []
+    for g in groups_in:
+        package = (g.get("package_size") or "").strip()
+        numbers = [int(a) for a in (g.get("alpl") or g.get("number_alpl") or [])]
+        group_results.append({
+            "exists": [a for a in numbers if any(d["package_size"] == package for d in variants.get(str(a), []))],
+            "missing": [a for a in numbers if not any(d["package_size"] == package for d in variants.get(str(a), []))],
+        })
     return {
         "exists":    [a for a in wanted if a in found],
         "missing":   [a for a in wanted if a not in found],
         "detail":    detail,
+        "variants":  variants,
+        "group_results": group_results,
         "conflicts": conflicts,
     }
 
@@ -175,6 +191,16 @@ def list_parts(
     limit:  int = Query(10, ge=1, le=1000),   # มีเพดาน กันยิง limit=999999 ดึงทั้งตาราง
     offset: int = Query(0, ge=0),
     search: Optional[str] = None,
+    number_alpl: Optional[str] = None,
+    recv_from: Optional[str] = None,
+    recv_to: Optional[str] = None,
+    po_number: Optional[int] = None,
+    description: Optional[str] = None,
+    package_size: Optional[List[str]] = Query(None),
+    part_number: Optional[List[str]] = Query(None),
+    handler: Optional[List[str]] = Query(None),
+    vendor: Optional[List[str]] = Query(None),
+    owner: Optional[List[str]] = Query(None),
 ):
     """คืน config ของ parts แบบ "แบ่งหน้า" (server-side pagination)
 
@@ -211,14 +237,47 @@ def list_parts(
         conditions.append("(CAST(p.number_alpl AS CHAR) LIKE %s OR pn.part_number_name LIKE %s)")
         like = f"%{search}%"
         params.extend([like, like])
+    if number_alpl:
+        ranges, singles = _parse_int_ranges(number_alpl, "ALPL")
+        clauses = []
+        for lo, hi in ranges:
+            clauses.append("p.number_alpl BETWEEN %s AND %s")
+            params.extend((lo, hi))
+        if singles:
+            clauses.append(f"p.number_alpl IN ({','.join(['%s'] * len(singles))})")
+            params.extend(singles)
+        if clauses:
+            conditions.append("(" + " OR ".join(clauses) + ")")
+    for column, values in (
+        ("ps.package_size", package_size), ("pn.part_number_name", part_number),
+        ("h.handler_name", handler), ("v.vendor_name", vendor), ("o.owner_name", owner),
+    ):
+        if values:
+            conditions.append(f"{column} IN ({','.join(['%s'] * len(values))})")
+            params.extend(values)
+    if recv_from:
+        conditions.append("p.recieve_date >= %s"); params.append(_day_start(recv_from))
+    if recv_to:
+        conditions.append("p.recieve_date <= %s"); params.append(_day_end(recv_to))
+    if po_number is not None:
+        conditions.append("p.po_number = %s"); params.append(po_number)
+    if description:
+        needle = description.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        conditions.append("p.description LIKE %s ESCAPE '!'")
+        params.append(f"%{needle}%")
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                f"SELECT COUNT(*) AS total FROM parts_specifications p "
-                f"LEFT JOIN part_number pn ON p.part_number_id = pn.part_number_id {where}",
+                "SELECT COUNT(*) AS total FROM parts_specifications p "
+                "LEFT JOIN part_number pn ON p.part_number_id = pn.part_number_id "
+                "LEFT JOIN handler h ON h.handler_id = COALESCE(p.handler_id, pn.handler_id) "
+                "LEFT JOIN vendor v ON p.vendor_id = v.vendor_id "
+                "LEFT JOIN owner o ON p.owner_id = o.owner_id "
+                "LEFT JOIN package_size ps ON ps.package_size_id = COALESCE(p.package_size_id, pn.package_size_id) "
+                f"{where}",
                 params,
             )
             total = cur.fetchone()["total"]
@@ -238,7 +297,7 @@ def get_part(part_id: int):
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(f"{PARTS_SELECT} WHERE p.number_alpl = %s", (part_id,))
+            cur.execute(f"{PARTS_SELECT} WHERE p.part_id = %s", (part_id,))
             row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Part not found")
@@ -257,9 +316,13 @@ def create_part(part: PartCreate):
     db = get_db()
     try:
         with db.cursor() as cur:
-            _insert_part_row(cur, part.number_alpl, part.dict())
+            try:
+                _insert_part_row(cur, part.number_alpl, part.dict())
+            except pymysql.IntegrityError as exc:
+                raise HTTPException(409, f"ALPL {part.number_alpl} กับ Package Size {part.package_size} มีอยู่ในระบบแล้ว") from exc
+            part_id = cur.lastrowid
             log_edit("parts", "add", f"ALPL {part.number_alpl}", after=part.dict())
-        return {"number_alpl": part.number_alpl}
+        return {"part_id": part_id, "number_alpl": part.number_alpl}
     finally:
         db.close()
 
@@ -297,9 +360,31 @@ def update_part(part_id: int, data: Dict[str, Any] = Body(...)):
     }
     db = get_db()
     try:
+        db.autocommit(False)
         with db.cursor() as cur:
             _block_if_session_running(cur, "แก้ไข")
             set_parts, values = [], []
+            if "tolerance_id" in data or "package_size" in data:
+                cur.execute(
+                    "SELECT COALESCE(p.package_size_id, pn.package_size_id) AS package_size_id, "
+                    "p.tolerance_id FROM parts_specifications p LEFT JOIN part_number pn "
+                    "ON p.part_number_id = pn.part_number_id WHERE p.part_id = %s",
+                    (part_id,),
+                )
+                current = cur.fetchone()
+                if not current:
+                    raise HTTPException(404, "Part not found")
+                target_pkg = current["package_size_id"]
+                if "package_size" in data:
+                    target_pkg = _lookup_id(cur, "package_size", "package_size_id", "package_size", data["package_size"])
+                    if target_pkg != current["package_size_id"]:
+                        cur.execute("SELECT 1 FROM measurements WHERE part_id = %s LIMIT 1", (part_id,))
+                        if cur.fetchone():
+                            raise HTTPException(409, "Part นี้มีประวัติการวัดแล้ว จึงเปลี่ยน Package Size ไม่ได้ — ให้เพิ่ม Part ใหม่ด้วย ALPL เดิมและ Package Size ใหม่")
+                target_tol = data.get("tolerance_id", current["tolerance_id"])
+                selected_tol = _tolerance_id_for_package(cur, target_pkg, target_tol)
+                set_parts.append("tolerance_id = %s")
+                values.append(selected_tol)
             for k, v in data.items():
                 if k in direct_fields:
                     set_parts.append(f"{k} = %s")
@@ -316,7 +401,7 @@ def update_part(part_id: int, data: Dict[str, Any] = Body(...)):
             old = _fetch_one(cur, _PART_HISTORY_SQL, (part_id,))
             try:
                 cur.execute(
-                    f"UPDATE parts_specifications SET {set_clause} WHERE number_alpl = %s",
+                    f"UPDATE parts_specifications SET {set_clause} WHERE part_id = %s",
                     (*values, part_id),
                 )
             except pymysql.MySQLError as exc:
@@ -328,12 +413,19 @@ def update_part(part_id: int, data: Dict[str, Any] = Body(...)):
             if cur.rowcount == 0:
                 raise HTTPException(404, "Part not found")
             # ALPL อาจเพิ่งถูกเปลี่ยนไปเอง — อ่านค่าใหม่ด้วยเลขล่าสุดเสมอ
-            new_alpl = data.get("number_alpl", part_id)
-            after = _fetch_one(cur, _PART_HISTORY_SQL, (new_alpl,))
+            new_alpl = data.get("number_alpl", old["number_alpl"] if old else None)
+            if old is not None and new_alpl != old["number_alpl"]:
+                cur.execute("UPDATE measurements SET number_alpl = %s WHERE part_id = %s", (new_alpl, part_id))
+            after = _fetch_one(cur, _PART_HISTORY_SQL, (part_id,))
             if old is not None and after is not None:
                 log_edit("parts", "edit", f"ALPL {new_alpl}", before=old, after=after)
+        db.commit()
         return {"ok": True}
+    except Exception:
+        db.rollback()
+        raise
     finally:
+        db.autocommit(True)
         db.close()
 
 @router.delete("/api/parts/{part_id}")
@@ -374,36 +466,36 @@ def delete_part(part_id: int):
             # เช็คก่อนเลยว่ามี Measurement ของ ALPL นี้เหลืออยู่ไหม — ถ้ามี ปฏิเสธ
             # ทันที ไม่แตะอะไรใน DB เลย (ตรวจเองแทนที่จะรอ FK error เพื่อให้ได้
             # ข้อความบอกจำนวนที่ติดอยู่ชัดเจน ผู้ใช้จะได้รู้ว่าต้องไปจัดการอะไรต่อ)
-            cur.execute("SELECT COUNT(*) AS n FROM measurements WHERE number_alpl = %s", (part_id,))
+            cur.execute("SELECT COUNT(*) AS n FROM measurements WHERE part_id = %s", (part_id,))
             measurement_count = cur.fetchone()["n"]
             if measurement_count:
                 db.rollback()
                 raise HTTPException(
                     409,
-                    f"ลบไม่ได้ — ALPL {part_id} ยังมีข้อมูลการวัด (Measurement) อยู่ "
+                    f"ลบไม่ได้ — Part ID {part_id} ยังมีข้อมูลการวัด (Measurement) อยู่ "
                     f"{measurement_count} รายการ กรุณาลบ Measurement ของ ALPL นี้ให้หมดก่อน "
                     f"แล้วค่อยลบ Part",
                 )
 
             # ── สำรองก่อนลบ ── เก็บ Part row ไว้ในถังขยะเผื่อกดผิด
             part_row = _fetch_one(
-                cur, "SELECT * FROM parts_specifications WHERE number_alpl = %s", (part_id,)
+                cur, "SELECT * FROM parts_specifications WHERE part_id = %s", (part_id,)
             )
             if part_row is None:
                 db.rollback()
                 raise HTTPException(404, "Part not found")
             trash_id = _archive_before_delete(
                 kind="part", table="parts_specifications",
-                pk={"number_alpl": part_id}, row=part_row,
+                pk={"part_id": part_id}, row=part_row,
             )
-            log_edit("parts", "delete", f"ALPL {part_id}",
+            log_edit("parts", "delete", f"ALPL {part_row['number_alpl']} / Package Size ID {part_row['package_size_id']}",
                      before=part_row, trash_id=trash_id)
 
             try:
-                cur.execute("DELETE FROM parts_specifications WHERE number_alpl = %s", (part_id,))
+                cur.execute("DELETE FROM parts_specifications WHERE part_id = %s", (part_id,))
             except pymysql.MySQLError as exc:
                 db.rollback()
-                raise HTTPException(409, f"ลบ ALPL {part_id} ไม่สำเร็จ: {exc}")
+                raise HTTPException(409, f"ลบ Part ID {part_id} ไม่สำเร็จ: {exc}")
             if cur.rowcount == 0:
                 db.rollback()
                 raise HTTPException(404, "Part not found")

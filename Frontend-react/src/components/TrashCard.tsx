@@ -193,7 +193,7 @@ export default function TrashCard({ readOnly = false, reloadKey = 0, onRestored,
           message={`ลบ "${confirmPurge.summary}" ออกจากถังขยะถาวร?\n\nกู้คืนไม่ได้อีก${
             confirmPurge.has_image ? " และไฟล์รูปที่เก็บคู่กันจะถูกลบไปด้วย" : ""
           }`}
-          confirmLabel="ลบถาวร"
+          confirmLabel="Delete Permanently"
           danger
           onConfirm={() => { if (!readOnly) purge.mutate(confirmPurge.id); setConfirmPurge(null); }}
           onCancel={() => setConfirmPurge(null)}

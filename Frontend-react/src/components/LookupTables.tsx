@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { useToast } from "./Toast";
 import MultiSelectCell from "./MultiSelectCell";
+import SingleSelect from "./SingleSelect";
 import { normalizePackageSize } from "../utils/packageSize";
 
 /** ชนิดของช่องกรอกในตาราง lookup
@@ -48,18 +49,24 @@ const LOOKUP_CONFIG: Record<string, LookupConfig> = {
   template: { label: "Template", listUrl: "/api/templates", basePath: "/api/templates", idField: "template_id",
     fields: [{ key: "template_name", label: "Name", width: "260px" }] },
   package_size: { label: "Package Size", listUrl: "/api/package-sizes", basePath: "/api/package-sizes",
-    idField: "package_size_id", minWidth: "1320px",
+    idField: "package_size_id", fields: [{ key: "package_size", label: "Package Size", width: "210px" }] },
+  package_size_handler_template: { label: "Package Handler Template",
+    listUrl: "/api/package-size-handler-templates", basePath: "/api/package-size-handler-templates",
+    idField: "mapping_key", minWidth: "820px",
     fields: [
-      { key: "package_size", label: "Package Size", width: "170px" },
+      { key: "package_size", label: "Package Size", type: "select-package-size", width: "200px" },
+      { key: "handler", label: "Handler", type: "select-handler", width: "200px" },
+      { key: "template_name", label: "Template", type: "select-template", width: "200px" },
+    ] },
+  package_size_tolerance: { label: "Package Tolerance", listUrl: "/api/package-size-tolerances", basePath: "/api/package-size-tolerances",
+    idField: "tolerance_id", minWidth: "1160px",
+    fields: [
+      { key: "package_size", label: "Package Size", type: "select-package-size", width: "170px" },
       { key: "nominal_x", label: "Nominal X", type: "number", width: "140px" },
       { key: "nominal_y", label: "Nominal Y", type: "number", width: "140px" },
       { key: "upper_tol", label: "Upper Tol", type: "number", width: "140px" },
       { key: "lower_tol", label: "Lower Tol", type: "number", width: "140px" },
       { key: "offset_tol", label: "Offset Tol", type: "number", width: "140px" },
-      { key: "template_name", label: "Template", type: "select-template", width: "150px" },
-      /* ⚠ optional โดยตั้งใจ — ตอนเพิ่มขนาดใหม่มักยังไม่รู้ว่าลงเครื่องไหนได้บ้าง
-         ถ้าบังคับ จะเพิ่ม Package Size ไม่ได้เลยจนกว่าจะไปถามหน้างานก่อน */
-      { key: "handlers", label: "Handlers", type: "multi-handler", width: "210px", optional: true },
     ] },
   /* ⚠ ตารางนี้ **ไม่มีช่อง nominal/tolerance แล้ว** — part_number ไม่ได้ถือเกณฑ์
      ตัดสินอีกต่อไป ทุกโหมดใช้ของ Package Size (ดู `_load_criteria` ฝั่ง backend)
@@ -87,7 +94,7 @@ const LOOKUP_CONFIG: Record<string, LookupConfig> = {
  */
 function lookupToApiBody(kind: string, values: Record<string, string>): Record<string, unknown> {
   const cfg = LOOKUP_CONFIG[kind];
-  if (kind === "package_size" || kind === "part_number") {
+  if (["package_size", "package_size_handler_template", "package_size_tolerance", "part_number"].includes(kind)) {
     const body: Record<string, unknown> = { ...values };
     cfg.fields.filter((f) => f.type === "number").forEach((f) => { body[f.key] = Number(body[f.key]); });
     /* ⚠ multi-* เก็บใน state เป็นสตริงคั่นคอมมา แต่ backend รับเป็น array
@@ -108,6 +115,13 @@ function lookupToApiBody(kind: string, values: Record<string, string>): Record<s
  *    ที่โตได้เรื่อย ๆ ตาม catalog จริง ตรงนั้นแหละที่ต้องมีแบ่งหน้าจริง ๆ
  */
 const PAGE = 10;
+const DUPLICATE_TOLERANCE_MESSAGE = "มีข้อมูล Tolerance ชุดนี้ในระบบแล้ว";
+const TOLERANCE_NUMBER_FIELDS = ["nominal_x", "nominal_y", "upper_tol", "lower_tol", "offset_tol"] as const;
+
+function sameTolerance(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  return a.package_size === b.package_size && TOLERANCE_NUMBER_FIELDS.every((field) =>
+    Math.round(Number(a[field]) * 1000) === Math.round(Number(b[field]) * 1000));
+}
 
 interface Props {
   readOnly?: boolean;
@@ -251,6 +265,15 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
       toast.show("กรอก/เลือกข้อมูลให้ครบทุกช่องก่อน Add");
       return;
     }
+    const invalidNumber = cfg.fields.find((f) => f.type === "number" && !Number.isFinite(Number(values[f.key])));
+    if (invalidNumber) {
+      toast.show(`${invalidNumber.label} ต้องเป็นตัวเลข`);
+      return;
+    }
+    if (kind === "package_size_tolerance" && rows.some((row) => sameTolerance(row, values))) {
+      if (onAlert) onAlert(DUPLICATE_TOLERANCE_MESSAGE); else toast.show(DUPLICATE_TOLERANCE_MESSAGE);
+      return;
+    }
     setBusy(true);
     try {
       await apiPost(cfg.basePath, lookupToApiBody(kind, values));
@@ -269,6 +292,16 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
     const id = String(row[cfg.idField]);
     if (!isDirty(row)) { toast.show("ยังไม่มีอะไรเปลี่ยน"); return; }
     const values = Object.fromEntries(cfg.fields.map((f) => [f.key, valueOf(row, f.key).trim()]));
+    const invalidNumber = cfg.fields.find((f) => f.type === "number" && !Number.isFinite(Number(values[f.key])));
+    if (invalidNumber) {
+      toast.show(`${invalidNumber.label} ต้องเป็นตัวเลข`);
+      return;
+    }
+    if (kind === "package_size_tolerance" && rows.some((existing) =>
+      String(existing.tolerance_id) !== id && sameTolerance(existing, values))) {
+      if (onAlert) onAlert(DUPLICATE_TOLERANCE_MESSAGE); else toast.show(DUPLICATE_TOLERANCE_MESSAGE);
+      return;
+    }
 
     setBusy(true);
     try {
@@ -327,19 +360,12 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
     else void run();
   }
 
-  /** ช่องกรอก 1 ช่อง — select ถ้าเป็น FK, input ถ้าไม่ใช่
-   *  ⚠ ตัวเลือกว่างของ select ระบุชื่อ field ไว้ตรงๆ ("-- Package Size --" ไม่ใช่
-   *    "--" เฉยๆ) เพราะแถว Add มี select ติดกันหลายตัว ถ้าเขียนเหมือนกันหมดจะ
-   *    แยกไม่ออกว่าอันไหนคือ field อะไรถ้าไม่เงยไปดูหัวคอลัมน์
-   *
-   *  ⚠ `disabled hidden` ทำให้ตัวเลือกนี้ **โชว์ตอนยังไม่ได้เลือก แต่ไม่โผล่ในรายการ
-   *    ตอนกดเปิด** — ยังบอกได้ว่าช่องนี้คือ field อะไร โดยไม่มีบรรทัดขยะให้เลื่อนผ่าน
-   *    `disabled` กันเลือกกลับมาเป็นค่าว่างด้วย ซึ่งเป็นค่าที่ทุก field ที่นี่ไม่รับอยู่แล้ว */
-  function fieldInput(f: LookupField, value: string, onChange: (v: string) => void) {
+  /** ช่องกรอก 1 ช่อง — FK ใช้ dropdown แบบเดียวกับ Part Entry */
+  function fieldInput(f: LookupField, value: string, onChange: (v: string) => void, locked = false) {
     if (f.type === "multi-handler") {
       return (
         <MultiSelectCell
-          disabled={readOnly}
+          disabled={readOnly || locked}
           options={opts.handler}
           // state เก็บเป็นสตริงคั่นคอมมา — แตกเข้า/ประกอบออกตรงนี้ที่เดียว
           value={value ? value.split(",").filter(Boolean) : []}
@@ -351,15 +377,15 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
     const list = optionsFor(f.type);
     if (list) {
       return (
-        <select value={value} disabled={readOnly} onChange={(e) => onChange(e.target.value)}>
-          <option value="" disabled hidden>-- {f.label} --</option>
-          {list.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <SingleSelect label={f.label} options={list} value={value}
+          onChange={onChange} disabled={readOnly || locked}
+          placeholder={f.label} searchable={f.type === "select-package-size"}
+          showRadio={false} />
       );
     }
     return (
       <input
-        disabled={readOnly}
+        disabled={readOnly || locked}
         type={f.type === "number" ? "number" : "text"}
         step={f.type === "number" ? "0.001" : undefined}
         placeholder={f.label}
@@ -382,16 +408,16 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
           <input
             type="search"
             value={filter}
-            placeholder={`ค้นใน ${cfg.label}`}
-            aria-label={`ค้นหาใน ${cfg.label}`}
+            placeholder={kind.startsWith("package_size") ? "ค้นหา Package Size" : `ค้นใน ${cfg.label}`}
+            aria-label={kind.startsWith("package_size") ? "ค้นหา Package Size" : `ค้นหาใน ${cfg.label}`}
             style={{ minWidth: 200 }}
             onChange={(e) => { setFilter(e.target.value); setPage(1); }}
           />
-          <select style={{ minWidth: 180 }} value={kind} onChange={(e) => setKind(e.target.value)}>
-            {Object.entries(LOOKUP_CONFIG).map(([k, c]) => (
-              <option key={k} value={k}>{c.label}</option>
-            ))}
-          </select>
+          <div style={{ minWidth: 180 }}>
+            <SingleSelect label="Lookup Table" value={kind} onChange={setKind}
+              options={Object.entries(LOOKUP_CONFIG).map(([value, config]) => ({ value, label: config.label }))}
+              placeholder="เลือกตาราง" searchable={false} showRadio={false} />
+          </div>
         </div>
       </div>
       <div className="filter-result-note">
@@ -451,7 +477,8 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
                     <td><strong>{id}</strong></td>
                     {cfg.fields.map((f) => (
                       <td key={f.key}>
-                        {fieldInput(f, valueOf(row, f.key), (v) => setValue(row, f.key, v))}
+                        {fieldInput(f, valueOf(row, f.key), (v) => setValue(row, f.key, v),
+                          kind === "package_size_handler_template" && f.key !== "template_name")}
                       </td>
                     ))}
                     <td className="row-actions">

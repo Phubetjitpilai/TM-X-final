@@ -304,7 +304,7 @@ def _latest_only_sql(inner_where: str) -> str:
     SELECT measurement_id FROM (
         SELECT m.measurement_id,
                ROW_NUMBER() OVER (
-                   PARTITION BY m.number_alpl
+                   PARTITION BY m.part_id
                    ORDER BY m.timestamp DESC, m.measurement_id DESC
                ) AS rn
         {_EXPORT_FROM}

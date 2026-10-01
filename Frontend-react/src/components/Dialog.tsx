@@ -105,7 +105,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             <div className="ui-dialog-actions">
               {state.kind === "confirm" && (
                 <button type="button" className="ui-dialog-cancel" onClick={() => done(false)}>
-                  {state.cancelLabel ?? "ยกเลิก"}
+                  {state.cancelLabel ?? "Cancel"}
                 </button>
               )}
               <button
@@ -114,7 +114,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                 className={`ui-dialog-ok${state.danger ? " danger" : ""}`}
                 onClick={() => done(true)}
               >
-                {state.okLabel ?? (state.kind === "alert" ? "รับทราบ" : "ตกลง")}
+                {state.okLabel ?? (state.kind === "alert" ? "OK" : "Confirm")}
               </button>
             </div>
           </div>

@@ -86,7 +86,7 @@ export default function IpmSummaryModal({
             คัดลอกแล้ววางใน Excel ได้ 2 คอลัมน์ทันที
           </span>
           <button type="button" className="btn-submit-entry" onClick={copy}>
-            📋 คัดลอกข้อความ
+          📋 Copy Text
           </button>
         </div>
       </div>

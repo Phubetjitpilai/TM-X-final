@@ -64,7 +64,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {activeToast.type !== "success" && (
             <div className="ui-dialog-actions">
               <button type="button" className="ui-dialog-ok" autoFocus onClick={() => remove(activeToast.id)}>
-                ตกลง
+                OK
               </button>
             </div>
           )}

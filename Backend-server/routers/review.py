@@ -67,13 +67,20 @@ async def command(req: ReviewRequest):
                 raise HTTPException(409, "Session ไม่ได้ Running แล้ว")
             job = None
             if req.action == "remeasure":
-                cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s",
+                cur.execute("SELECT m.number_alpl, ps.package_size FROM measurements m "
+                            "JOIN parts_specifications p ON p.part_id=m.part_id "
+                            "JOIN package_size ps ON ps.package_size_id=p.package_size_id "
+                            "WHERE m.measurement_id=%s AND m.session_id=%s",
                             (req.measurement_id, req.session_id))
                 measurement = cur.fetchone()
                 q = s.session_queues.get(req.session_id)
                 if not measurement or not q:
                     raise HTTPException(409, "ไม่พบผลวัดในคิวปัจจุบัน")
-                piece = q["queue"].index(measurement["number_alpl"]) + 1
+                piece = next((i + 1 for i, a in enumerate(q["queue"])
+                              if a == measurement["number_alpl"] and
+                              q["groups"][q["group_of"][i]]["package_size"] == measurement["package_size"]), None)
+                if piece is None:
+                    raise HTTPException(409, "ไม่พบ Part นี้ในคิวปัจจุบัน")
                 job = {"measurement_id": req.measurement_id, "piece": piece}
     finally:
         db.close()
@@ -111,10 +118,14 @@ async def prepare(req: CaptureRequest):
             if not row or row["state"] != "running":
                 raise HTTPException(409, "Session ไม่ได้ Running")
             if measurement_id is not None:
-                cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s",
+                cur.execute("SELECT m.number_alpl, ps.package_size FROM measurements m "
+                            "JOIN parts_specifications p ON p.part_id=m.part_id "
+                            "JOIN package_size ps ON ps.package_size_id=p.package_size_id "
+                            "WHERE m.measurement_id=%s AND m.session_id=%s",
                             (measurement_id, measurement_session_id))
                 row = cur.fetchone()
-                if not row or row["number_alpl"] != q["queue"][req.piece - 1]:
+                expected_package = q["groups"][q["group_of"][req.piece - 1]]["package_size"]
+                if not row or (row["number_alpl"], row["package_size"]) != (q["queue"][req.piece - 1], expected_package):
                     raise HTTPException(409, "รายการวัดซ้ำไม่ตรงกับ ALPL")
     finally:
         db.close()

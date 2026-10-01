@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "../../api/client";
-import { orderForDatalist } from "../../utils/datalistOrder";
+import SingleSelect from "../SingleSelect";
+import SingleDatePicker from "./SingleDatePicker";
 import { normalizePackageSize } from "../../utils/packageSize";
+import { toleranceLabel } from "../../utils/toleranceLabel";
 
 export type EntryMode = "IPM" | "New" | "Rework";
 
@@ -10,10 +12,11 @@ export type GroupValues = Record<string, string>;
 
 const FIELD_DEFS: Record<
   string,
-  { label: string; type: "text" | "datalist" | "part_number" | "handler" | "select" | "date"; help?: string }
+  { label: string; type: "text" | "package_size" | "part_number" | "handler" | "tolerance" | "select" | "date"; help?: string }
 > = {
   number_alpl:  { label: "ALPL", type: "text", help: "เช่น 201, 202, 203 หรือ 201-205" },
-  package_size: { label: "Package Size", type: "datalist" },
+  package_size: { label: "Package Size", type: "package_size" },
+  tolerance_id: { label: "Tolerance", type: "tolerance" },
   part_number:  { label: "Part Number", type: "part_number" },
   description:  { label: "Description", type: "text" },
   po_number:    { label: "PO Number", type: "text", help: "ตัวเลขเท่านั้น" },
@@ -30,11 +33,13 @@ const FIELD_DEFS: Record<
  *   จับคู่กับ `cols` แล้วได้ผังตามนี้ **ห้ามสลับลำดับโดยไม่ดูผังก่อน**
  *
  *     IPM (3 คอลัมน์)      [ ALPL | Package Size | Handler ]
+ *                          [ Tolerance (เต็มแถว) ]
  *
  *     New/Rework (3 คอลัมน์)
  *       แถว 1  [ ALPL      | Package Size | Part Number ]
  *       แถว 2  [ PO Number | Vendor       | Owner       ]
  *       แถว 3  [ Description (กว้าง 2 ช่อง)| Receive Date ]
+ *       แถว 4  [ Tolerance (เต็มแถว) ]
  *
  * IPM ต้องมี Package Size ด้วย (ไม่ใช่ optional) — เกณฑ์ตัดสินและ template ของ
  * โหมด IPM มาจาก package_size ตรง ๆ ไม่ได้อ้อมผ่าน part_number
@@ -48,22 +53,22 @@ const FIELD_DEFS: Record<
  *     ผ่าน New/Rework จะไม่มีเครื่องบันทึกไว้เลย (handler_id เป็น NULL)
  */
 export const GROUP_FIELDS: Record<EntryMode, string[]> = {
-  IPM: ["number_alpl", "package_size", "handler"],
+  IPM: ["number_alpl", "package_size", "handler", "tolerance_id"],
   New: ["number_alpl", "package_size", "part_number",
         "po_number", "vendor", "owner",
-        "description", "receive_date"],
+        "description", "receive_date", "tolerance_id"],
   Rework: ["number_alpl", "package_size", "part_number",
            "po_number", "vendor", "owner",
-           "description", "receive_date"],
+           "description", "receive_date", "tolerance_id"],
 };
 
 // cols = จำนวนคอลัมน์ของ grid · span = ช่องไหนกินกว้างกว่า 1 คอลัมน์
 // ส่งเข้า CSS ผ่านตัวแปร --cols เพื่อให้ media query ยุบเหลือ 1 คอลัมน์บนจอแคบได้
 // (hardcode grid-template-columns ตรง ๆ จะ override ไม่ได้)
 const GROUP_LAYOUT: Record<EntryMode, { cols: number; span: Record<string, number> }> = {
-  IPM: { cols: 3, span: {} },
-  New: { cols: 3, span: { description: 2 } },
-  Rework: { cols: 3, span: { description: 2 } },
+  IPM: { cols: 3, span: { tolerance_id: 3 } },
+  New: { cols: 3, span: { description: 2, tolerance_id: 3 } },
+  Rework: { cols: 3, span: { description: 2, tolerance_id: 3 } },
 };
 
 /** ช่องที่ถูก "ล็อก" หลังระบบเติมค่าจากข้อมูลที่ลงทะเบียนไว้
@@ -77,12 +82,12 @@ const GROUP_LAYOUT: Record<EntryMode, { cols: number; span: Record<string, numbe
 const LOCKED_FIELDS: Record<EntryMode, string[]> = {
   // IPM ล็อก handler ด้วย **เฉพาะตอนที่ ALPL นั้นลงทะเบียนไว้แล้ว** (prefill เติมให้)
   // ถ้าเป็น ALPL ใหม่ ช่องจะว่างและเลือกได้ตามปกติ — ดู prefillGroup
-  IPM: ["package_size", "part_number", "vendor", "owner", "po_number", "description", "handler"],
+  IPM: ["tolerance_id", "part_number", "vendor", "owner", "po_number", "description", "handler"],
   // ⚠ ไม่มี handler ใน New/Rework เพราะ **ไม่มีช่องนั้นให้ล็อกแล้ว** (ดู GROUP_FIELDS)
   //   `setField` ยังเติมค่าให้เบื้องหลังอยู่ แต่ผู้ใช้ไม่เห็นและแตะไม่ได้ตั้งแต่ต้น
   //   ถ้าใส่ไว้จะเป็นรายการที่ไม่มีผลอะไรเลย แล้วคนอ่านต่อจะเข้าใจผิดว่ามีช่องอยู่
-  Rework: ["package_size", "part_number"],
-  New: ["package_size", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"],
+  Rework: ["tolerance_id", "part_number"],
+  New: ["tolerance_id", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"],
 };
 
 /** field ที่เว้นว่างได้ — นอกจากนี้บังคับกรอกหมด
@@ -115,6 +120,7 @@ interface Props {
     vendor: string[];
     owner: string[];
     packageSize: string[];
+    tolerancesFor: (packageSize: string) => { tolerance_id: number; nominal_x: number; nominal_y: number; upper_tol: number; lower_tol: number; offset_tol: number }[];
     /** part number ที่เลือกได้ ขึ้นกับ package size ของกลุ่มนั้น */
     partNumbersFor: (packageSize: string) => string[];
     /** เครื่องที่ package size นั้นลงได้ — มาจากตาราง package_size_handler
@@ -200,19 +206,22 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
       return;
     }
 
-    let detail: Record<string, Record<string, unknown>>;
-    let exists: number[];
+    let variants: Record<string, Record<string, unknown>[]>;
+    const requestedPackage = groupsRef.current[gi]?.package_size ?? "";
     try {
-      const res = await apiPost<{ exists: number[]; detail: Record<string, Record<string, unknown>> }>(
+      const res = await apiPost<{ variants: Record<string, Record<string, unknown>[]> }>(
         "/api/parts/check", { alpl: nums },
       );
-      exists = res.exists ?? [];
-      detail = res.detail ?? {};
+      variants = res.variants ?? {};
     } catch { return; }
 
-    if (groupsRef.current[gi]?.number_alpl !== alplRaw) return;
+    if (groupsRef.current[gi]?.number_alpl !== alplRaw || (groupsRef.current[gi]?.package_size ?? "") !== requestedPackage) return;
 
-    const known = exists.map((a) => detail[String(a)]).filter(Boolean);
+    const known = nums.flatMap((a) => {
+      const choices = variants[String(a)] ?? [];
+      if (requestedPackage) return choices.filter((p) => p.package_size === requestedPackage);
+      return choices.length === 1 ? choices : [];
+    });
     if (!known.length) {
       if (auto.size) {
         onChange(groupsRef.current.map((g, i) =>
@@ -235,7 +244,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
     const overwritten: string[] = [];
     const nextAuto = new Set(auto);
 
-    for (const f of ["package_size", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"]) {
+    for (const f of ["package_size", "tolerance_id", "part_number", "vendor", "owner", "po_number", "description", "receive_date", "handler"]) {
       if (!fields.includes(f) && f !== "handler") continue;
       const v = agreed(f);
       const wasAuto = auto.has(f);
@@ -298,6 +307,16 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
     // prefill รอบถัดไปเพียงเพราะค่าของ Part เดิมว่าง
     autoRef.current[gi]?.delete(key);
     const patch: Record<string, string> = { [key]: v };
+    if (key === "package_size" && v !== groups[gi]?.package_size) {
+      for (const field of autoRef.current[gi] ?? []) {
+        if (field !== "package_size") patch[field] = "";
+      }
+      autoRef.current[gi] = new Set();
+      patch.tolerance_id = "";
+      patch.part_number = "";
+      patch.handler = "";
+      window.setTimeout(() => schedulePrefill(gi), 0);
+    }
     if (key === "part_number" && mode !== "IPM") {
       autoRef.current[gi]?.delete("handler");
       // ⚠ `handler` ไม่ได้อยู่ใน GROUP_FIELDS ของ New/Rework — จงใจไม่วาดช่อง
@@ -372,7 +391,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                   title="ลบกลุ่มนี้"
                   onClick={(e) => { e.stopPropagation(); delGroup(gi); }}
                 >
-                  ✕ ลบกลุ่ม
+                  ✕ Delete Group
                 </button>
               )}
               <span className="entry-group-arrow">{isCollapsed ? "▸" : "▾"}</span>
@@ -394,8 +413,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                   return (
                     <div
                       key={f}
-                      className={`form-group${span ? " span-2" : ""}`}
-                      style={span ? { gridColumn: `span ${span}` } : undefined}
+                      className={`form-group${span ? ` span-${span}` : ""}`}
                     >
                       <label>
                         {def.label}
@@ -414,79 +432,83 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                           {/* disabled hidden = โชว์ตอนยังไม่ได้เลือก แต่ไม่โผล่
                               ในรายการตอนกดเปิด · vendor/owner เป็น required
                               ทุกโหมด (ดู OPTIONAL_FIELDS) จึงไม่ต้องเผื่อให้ล้างกลับ */}
-                          <option value="" disabled hidden>-- เลือก {def.label} --</option>
+                          <option value="" disabled hidden>เลือก {def.label}</option>
                           {(f === "vendor" ? options.vendor : options.owner).map((o) => (
                             <option key={o} value={o}>{o}</option>
                           ))}
                         </select>
+                      ) : def.type === "tolerance" ? (
+                        <SingleSelect
+                          label={def.label}
+                          options={options.tolerancesFor(g.package_size ?? "").map((t) => ({
+                            value: String(t.tolerance_id), label: toleranceLabel(t),
+                          }))}
+                          value={val}
+                          onChange={(value) => setField(gi, f, value)}
+                          placeholder={g.package_size ? "เลือก Tolerance" : "เลือก Package Size ก่อน"}
+                          emptyText="Package Size นี้ยังไม่มี Tolerance"
+                          disabled={disabled || !g.package_size}
+                          invalid={!!err}
+                          locked={locked}
+                          searchable={false}
+                          showRadio={false}
+                        />
                       ) : def.type === "handler" ? (
                         /* Handler — ตัวเลือกมาจาก package_size_handler ของขนาดที่เลือกไว้
                            ในกลุ่มนี้ (คนละแหล่งกับ Part Number ที่มาจากตาราง part_number)
                            โหมด New/Rework ช่องนี้จะถูกล็อกเสมอเพราะ setField เติมให้เอง
                            ตอนเลือก Part Number — ดู LOCKED_FIELDS */
-                        <select
-                          className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
-                          disabled={disabled || locked || !g.package_size}
+                        <SingleSelect
+                          label={def.label}
+                          options={options.handlersFor(g.package_size ?? "")}
                           value={val}
-                          onChange={(e) => setField(gi, f, e.target.value)}
-                        >
-                          {/* 3 สาเหตุที่เลือกไม่ได้ ต้องบอกให้ต่างกัน ไม่งั้นผู้ใช้
-                              ไม่รู้ว่าต้องไปทำอะไรก่อน — โดยเฉพาะกรณีที่ 3 ที่ต้อง
-                              ไปผูกเครื่องให้ขนาดนั้นที่หน้า Edit ก่อน */}
-                          {!g.package_size ? (
-                            <option value="">-- เลือก Package Size ก่อน --</option>
-                          ) : options.handlersFor(g.package_size).length === 0 ? (
-                            <option value="">-- ขนาดนี้ยังไม่ได้ผูกเครื่อง (ตั้งที่หน้า Edit) --</option>
-                          ) : (
-                            <>
-                              <option value="" disabled hidden>-- เลือก Handler --</option>
-                              {options.handlersFor(g.package_size).map((o) => (
-                                <option key={o} value={o}>{o}</option>
-                              ))}
-                            </>
-                          )}
-                        </select>
+                          onChange={(value) => setField(gi, f, value)}
+                          placeholder={!g.package_size ? "เลือก Package Size ก่อน"
+                            : options.handlersFor(g.package_size).length === 0
+                              ? "ขนาดนี้ยังไม่ได้ผูกเครื่อง (ตั้งที่หน้า Edit)"
+                              : "เลือก Handler"}
+                          emptyText="ขนาดนี้ยังไม่ได้ผูกเครื่อง (ตั้งที่หน้า Edit)"
+                          disabled={disabled || !g.package_size}
+                          invalid={!!err}
+                          locked={locked}
+                          searchable={false}
+                          showRadio={false}
+                        />
                       ) : def.type === "part_number" ? (
-                        // Part Number ขึ้นกับ Package Size ของ "กลุ่มนี้" — ยังไม่เลือก
-                        // ขนาดก็ยังเลือกไม่ได้ บอกไว้ที่ placeholder ให้รู้ว่าต้องทำอะไรก่อน
-                        <select
-                          className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
-                          disabled={disabled || locked || !g.package_size}
+                        <SingleSelect
+                          label={def.label}
+                          options={options.partNumbersFor(g.package_size ?? "")}
                           value={val}
-                          onChange={(e) => setField(gi, f, e.target.value)}
-                        >
-                          {/* ⚠ ใส่ hidden เฉพาะตอนเลือก Package Size แล้ว — ตอนยังไม่เลือก
-                              ตัวเลือกนี้เป็น **ตัวเดียวในลิสต์** ถ้าซ่อนด้วยจะได้ dropdown
-                              ว่างเปล่าที่ไม่บอกอะไรเลย (select ถูก disabled อยู่แล้วตอนนั้น) */}
-                          <option value="" disabled hidden={!!g.package_size}>
-                            {g.package_size ? "-- เลือก Part Number --" : "-- เลือก Package Size ก่อน --"}
-                          </option>
-                          {options.partNumbersFor(g.package_size ?? "").map((o) => (
-                            <option key={o} value={o}>{o}</option>
-                          ))}
-                        </select>
-                      ) : def.type === "datalist" ? (
-                        <>
-                          {/* ⚠ id ต้องไม่ซ้ำข้ามกลุ่ม — ลิสต์ถูกเรียงใหม่ตามสิ่งที่
-                              พิมพ์ใน **ช่องนั้น** ถ้าใช้ id เดียวกันทุกกลุ่ม กลุ่มที่
-                              render ทีหลังจะทับของกลุ่มก่อน แล้วทุกช่องจะเห็นลำดับ
-                              ที่จัดตามค่าของกลุ่มสุดท้ายเหมือนกันหมด */}
-                          <input
-                            list={`package-size-list-${gi}`}
-                            className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
-                            disabled={disabled || locked}
-                            value={val}
-                            onChange={(e) => setField(gi, f, e.target.value)}
-                          />
-                          <datalist id={`package-size-list-${gi}`}>
-                            {orderForDatalist(options.packageSize, val).map((o) => (
-                              <option key={o} value={o} />
-                            ))}
-                          </datalist>
-                        </>
+                          onChange={(value) => setField(gi, f, value)}
+                          placeholder={g.package_size ? "เลือก Part Number" : "เลือก Package Size ก่อน"}
+                          emptyText="Package Size นี้ยังไม่มี Part Number"
+                          disabled={disabled || !g.package_size}
+                          invalid={!!err}
+                          locked={locked}
+                        />
+                      ) : def.type === "package_size" ? (
+                        <SingleSelect
+                          label={def.label}
+                          options={options.packageSize}
+                          value={val}
+                          onChange={(value) => setField(gi, f, value)}
+                          placeholder="เลือก Package Size"
+                          invalid={!!err}
+                          locked={locked}
+                          normalizeQuery={normalizePackageSize}
+                        />
+                      ) : def.type === "date" ? (
+                        <SingleDatePicker
+                          label={def.label}
+                          value={val}
+                          onChange={(value) => setField(gi, f, value)}
+                          disabled={disabled}
+                          invalid={!!err}
+                          locked={locked}
+                        />
                       ) : (
                         <input
-                          type={def.type === "date" ? "date" : "text"}
+                          type="text"
                           className={`${err ? "invalid" : ""}${locked ? " auto-locked" : ""}`.trim() || undefined}
                           disabled={disabled || locked}
                           value={val}

@@ -26,11 +26,7 @@ export interface Handler {
 export interface PackageSize {
   package_size_id: number;
   package_size: string;
-  nominal_x: number;
-  nominal_y: number;
-  upper_tol: number;
-  lower_tol: number;
-  template_name: string | null;
+  handlers: string[];
 }
 
 export function useLookups() {

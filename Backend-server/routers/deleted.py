@@ -41,7 +41,7 @@ def _deleted_summary(payload: Dict[str, Any]) -> str:
                 f" · {str(row.get('timestamp') or '')[:19]}")
     if kind == "part":
         n = len(payload.get("related", {}).get("sessions", []))
-        return f"ALPL {row.get('number_alpl')}" + (f" (+ {n} sessions)" if n else "")
+        return f"ALPL {row.get('number_alpl')} · Package Size ID {row.get('package_size_id')}" + (f" (+ {n} sessions)" if n else "")
     # lookup ทั้งหมดมีคอลัมน์ชื่อลงท้ายด้วย _name
     for k, v in row.items():
         if k.endswith("_name") or k == "package_size":
@@ -137,7 +137,7 @@ def _history_ref(payload: Dict[str, Any]) -> tuple:
     row  = payload.get("row") or {}
     table_name = _KIND_TO_HISTORY.get(kind, kind)
     if kind == "part":
-        return table_name, f"ALPL {row.get('number_alpl', '?')}"
+        return table_name, f"ALPL {row.get('number_alpl', '?')} / Package Size ID {row.get('package_size_id', '?')}"
     if kind == "measurement":
         return table_name, f"ID {row.get('measurement_id', '?')}"
     # lookup — ชื่อคือคอลัมน์แรกที่ไม่ใช่ id

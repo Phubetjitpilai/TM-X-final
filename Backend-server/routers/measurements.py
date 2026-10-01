@@ -4,10 +4,11 @@
 ⚠ ห้ามประกาศ session_queues / measure_timeouts / subscribers ซ้ำในไฟล์นี้
   ต้องดึงจาก shared.py เท่านั้น ไม่งั้นจะกลายเป็นคนละ object โดยไม่มี error
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from shared import *  # noqa: F401,F403
 from routers import review
+from routers.export import _export_filters
 
 router = APIRouter()
 
@@ -97,50 +98,53 @@ def _group_config_for(qstate: Dict[str, Any], pos: int) -> Optional[Dict[str, An
     return qstate.get("new_part_config")
 
 
-def _update_part_row(cur, number_alpl: int, config: Dict[str, Any]) -> None:
+def _update_part_row(cur, part_id: int, config: Dict[str, Any]) -> None:
     """Update 1 row ที่มีอยู่แล้วใน table `parts_specifications`"""
     part_number_id = _lookup_id(cur, "part_number", "part_number_id", "part_number_name", config.get("part_number"))
     vendor_id      = _lookup_id(cur, "vendor",      "vendor_id",      "vendor_name",      config.get("vendor"))
     owner_id       = _lookup_id(cur, "owner",       "owner_id",       "owner_name",       config.get("owner"))
     package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", config.get("package_size"))
+    tolerance_id = _tolerance_id_for_package(cur, package_size_id, config.get("tolerance_id"))
     # ⚠ ต้องเขียน handler_id ด้วย ให้ตรงกับ `_insert_part_row` — ถ้าตกหล่นที่นี่
     #   การแก้ผ่านโหมด Rework จะไม่อัปเดตเครื่อง ทั้งที่ฟอร์มแสดงว่าเปลี่ยนแล้ว
     handler_id = _lookup_id(cur, "handler", "handler_id", "handler_name", config.get("handler"))
     cur.execute(
-        "UPDATE parts_specifications SET part_number_id = %s, package_size_id = %s, "
+        "UPDATE parts_specifications SET part_number_id = %s, package_size_id = %s, tolerance_id = %s, "
         "handler_id = %s, description = %s, vendor_id = %s, po_number = %s, owner_id = %s, "
         "recieve_date = %s "
-        "WHERE number_alpl = %s",
+        "WHERE part_id = %s",
         (
-            part_number_id, package_size_id, handler_id, config.get("description"),
+            part_number_id, package_size_id, tolerance_id, handler_id, config.get("description"),
             vendor_id, config.get("po_number"), owner_id,
-            config.get("recieve_date") or None, number_alpl,
+            config.get("recieve_date") or None, part_id,
         ),
     )
 
 
-def _fill_missing_part_fields(cur, number_alpl: int, config: Dict[str, Any]) -> None:
+def _fill_missing_part_fields(cur, part_id: int, config: Dict[str, Any]) -> None:
     """New: เติมข้อมูลที่ Part เดิมยังไม่มี โดยรักษาค่าที่ลงทะเบียนไว้แล้ว"""
     part_number_id = _lookup_id(cur, "part_number", "part_number_id", "part_number_name", config.get("part_number"))
     vendor_id = _lookup_id(cur, "vendor", "vendor_id", "vendor_name", config.get("vendor"))
     owner_id = _lookup_id(cur, "owner", "owner_id", "owner_name", config.get("owner"))
     package_size_id = _lookup_id(cur, "package_size", "package_size_id", "package_size", config.get("package_size"))
+    tolerance_id = _tolerance_id_for_package(cur, package_size_id, config.get("tolerance_id"))
     handler_id = _lookup_id(cur, "handler", "handler_id", "handler_name", config.get("handler"))
     cur.execute(
         "UPDATE parts_specifications SET "
         "part_number_id = COALESCE(part_number_id, %s), "
         "package_size_id = COALESCE(package_size_id, %s), "
+        "tolerance_id = COALESCE(tolerance_id, %s), "
         "handler_id = COALESCE(handler_id, %s), "
         "description = COALESCE(NULLIF(description, ''), %s), "
         "vendor_id = COALESCE(vendor_id, %s), "
         "po_number = COALESCE(po_number, %s), "
         "owner_id = COALESCE(owner_id, %s), "
         "recieve_date = COALESCE(recieve_date, %s) "
-        "WHERE number_alpl = %s",
+        "WHERE part_id = %s",
         (
-            part_number_id, package_size_id, handler_id,
+            part_number_id, package_size_id, tolerance_id, handler_id,
             config.get("description"), vendor_id, config.get("po_number"),
-            owner_id, config.get("recieve_date") or None, number_alpl,
+            owner_id, config.get("recieve_date") or None, part_id,
         ),
     )
 
@@ -211,34 +215,40 @@ def _get_position_label(
 
 @router.get("/api/measurements")
 def list_measurements(
-    number_alpl: Optional[int] = None,
-    result:      Optional[str] = None,
-    date_from:   Optional[str] = None,
-    date_to:     Optional[str] = None,
-    session_id:  Optional[int] = None,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
     limit:  int = Query(100, le=1000),
     offset: int = Query(0, ge=0),
 ):
-    conditions, params = [], []
-    if number_alpl is not None:
-        conditions.append("m.number_alpl = %s"); params.append(number_alpl)
-    if result:
-        conditions.append("m.result = %s"); params.append(result)
-    if date_from:
-        conditions.append("m.timestamp >= %s"); params.append(_day_start(date_from))
-    if date_to:
-        conditions.append("m.timestamp <= %s"); params.append(_day_end(date_to))
-    if session_id is not None:
-        conditions.append("m.session_id = %s"); params.append(session_id)
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    # History แสดงทุกครั้งที่วัดเสมอ; ใช้เงื่อนไขเดียวกับ Export เพื่อให้
+    # multi-select, ช่วง ALPL และช่วงวันที่กรองตรงกันทั้งสองหน้า
+    filters["latest_only"] = False
+    # หน้า Measure เรียก endpoint นี้ถี่เพื่ออ่านผลของ session ที่กำลังวัด
+    # กรณีนั้นคง query เดิมที่ join น้อยไว้ ไม่เพิ่มต้นทุนของตัวกรอง Export
+    simple_session = not any(
+        value not in (None, "", [])
+        for key, value in filters.items() if key not in ("session_id", "latest_only")
+    )
+    if simple_session:
+        sid = filters.get("session_id")
+        where = "WHERE m.session_id = %s" if sid is not None else ""
+        params = [sid] if sid is not None else []
+        count_from = "FROM measurements m"
+        select = MEASUREMENTS_SELECT
+    else:
+        where, params = _export_filters(filters)
+        count_from = _EXPORT_FROM
+        select = """SELECT m.*, op.operator_name AS operator_name,
+        ps.package_size AS package_size,
+        pst.nominal_x, pst.nominal_y, pst.upper_tol, pst.lower_tol,
+        CASE WHEN m.measure_type = 'IPM' THEN NULL ELSE pst.offset_tol END AS offset_tol
+        """ + _EXPORT_FROM
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS total FROM measurements m {where}", params)
+            cur.execute(f"SELECT COUNT(*) AS total {count_from} {where}", params)
             total = cur.fetchone()["total"]
             cur.execute(
-                f"{MEASUREMENTS_SELECT} {where} ORDER BY m.timestamp DESC LIMIT %s OFFSET %s",
+                f"{select} {where} ORDER BY m.timestamp DESC LIMIT %s OFFSET %s",
                 (*params, limit, offset),
             )
             items = cur.fetchall()
@@ -331,20 +341,29 @@ async def create_measurement(req: MeasurementCreate):
             note = qstate.get("note")
 
             group_cfg = _group_config_for(qstate, pos)
-            if group_cfg is not None:
-                cur.execute("SELECT 1 FROM parts_specifications WHERE number_alpl = %s", (number_alpl,))
-                exists = cur.fetchone() is not None
-                try:
-                    if not exists:
-                        _insert_part_row(cur, number_alpl, group_cfg)
-                    elif qstate.get("measure_mode") == "Rework":
-                        _update_part_row(cur, number_alpl, group_cfg)
-                    elif qstate.get("measure_mode") == "New":
-                        _fill_missing_part_fields(cur, number_alpl, group_cfg)
-                except pymysql.MySQLError as exc:
-                    raise HTTPException(409, f"บันทึก Part ALPL {number_alpl} ไม่สำเร็จ: {exc}")
+            if group_cfg is None or not group_cfg.get("package_size"):
+                raise HTTPException(409, "คิวนี้ไม่มี Package Size ของชิ้นงาน กรุณาหยุดและเริ่มใหม่")
+            cur.execute(
+                "SELECT p.part_id FROM parts_specifications p "
+                "JOIN package_size ps ON ps.package_size_id = p.package_size_id "
+                "WHERE p.number_alpl = %s AND ps.package_size = %s",
+                (number_alpl, group_cfg.get("package_size")),
+            )
+            existing = cur.fetchone()
+            try:
+                if not existing:
+                    _insert_part_row(cur, number_alpl, group_cfg)
+                    part_id = cur.lastrowid
+                else:
+                    part_id = existing["part_id"]
+                    if qstate.get("measure_mode") == "Rework":
+                        _update_part_row(cur, part_id, group_cfg)
+                    elif qstate.get("measure_mode") in ("New", "IPM"):
+                        _fill_missing_part_fields(cur, part_id, group_cfg)
+            except pymysql.MySQLError as exc:
+                raise HTTPException(409, f"บันทึก Part ALPL {number_alpl} ไม่สำเร็จ: {exc}")
 
-            part = _load_criteria(cur, number_alpl)
+            part = _load_criteria(cur, part_id)
 
             # ── คำนวณหาตำแหน่ง Offset ที่น้อยที่สุด (OP) ─────────────────
             offset_pos_op = _get_position_label(
@@ -367,13 +386,13 @@ async def create_measurement(req: MeasurementCreate):
             try:
                 cur.execute(
                     "INSERT INTO measurements "
-                    "(session_id, number_alpl, value_x, value_y, "
+                    "(session_id, number_alpl, part_id, tolerance_id, value_x, value_y, "
                     " offset_opx, offset_opy, "
                     " offset_pos_op, result, "
                     " measure_type, operator_id, note) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
-                        session_id, number_alpl, req.value_x, req.value_y,
+                        session_id, number_alpl, part_id, part["tolerance_id"], req.value_x, req.value_y,
                         req.offset_opx, req.offset_opy,
                         offset_pos_op, result,
                         measure_type, operator_id, note
@@ -426,6 +445,8 @@ async def create_measurement(req: MeasurementCreate):
             status = "complete"
             session_queues.pop(session_id, None)
             measure_timeouts.pop(session_id, None)
+            tray_pending.pop(session_id, None)
+            mcu_disconnected_pending.pop(session_id, None)
             await push_event(
                 "session_complete",
                 {"session_id": session_id, "measured": measured, "target": target},
@@ -437,6 +458,8 @@ async def create_measurement(req: MeasurementCreate):
                 "measurement_id": measurement_id,
                 "session_id":     session_id,
                 "number_alpl":    number_alpl,
+                "part_id":        part_id,
+                "package_size":   group_cfg["package_size"],
                 "value_x":        req.value_x,
                 "value_y":        req.value_y,
                 "result":         result,
@@ -500,15 +523,15 @@ async def replace_measurement(req, capture):
                 raise HTTPException(404, "ไม่พบผลวัดเดิม")
             if single_review and before["number_alpl"] != completed_queue["queue"][capture["piece"] - 1]:
                 raise HTTPException(409, "ALPL ไม่ตรงกับรายการวัดซ้ำ")
-            crit = _load_criteria(cur, before["number_alpl"])
+            crit = _load_criteria(cur, before["part_id"])
             verdict = _judge(value_x=req.value_x, value_y=req.value_y,
                              offset_opx=req.offset_opx, offset_opy=req.offset_opy,
                              crit=crit, measure_type=before["measure_type"])
             pos = _get_position_label(req.horizon_left, req.horizon_right, req.vertical_top, req.vertical_bottom)
             # ล้าง path ของรูปเดิมระหว่างรอรูปใหม่; ลบไฟล์จริงหลัง DB commit สำเร็จ
             # เท่านั้น เพื่อไม่ให้ rollback แล้ว Measurement ชี้ไปยังไฟล์ที่ถูกลบ
-            cur.execute("UPDATE measurements SET value_x=%s,value_y=%s,offset_opx=%s,offset_opy=%s,offset_pos_op=%s,result=%s,image_path=NULL,image_upload_failed=0,timestamp=NOW() WHERE measurement_id=%s",
-                        (req.value_x, req.value_y, req.offset_opx, req.offset_opy, pos, verdict["result"], mid))
+            cur.execute("UPDATE measurements SET value_x=%s,value_y=%s,offset_opx=%s,offset_opy=%s,offset_pos_op=%s,result=%s,tolerance_id=%s,image_path=NULL,image_upload_failed=0,timestamp=NOW() WHERE measurement_id=%s",
+                        (req.value_x, req.value_y, req.offset_opx, req.offset_opy, pos, verdict["result"], crit["tolerance_id"], mid))
             response = {"measurement_id": mid, "result": verdict["result"], "offset_pos_op": pos,
                         "status": "complete" if single_review else "remeasured",
                         "measured": 1 if single_review and not same_session_review else session["measured_count"], "target": session["target_count"]}
@@ -544,7 +567,8 @@ async def replace_measurement(req, capture):
             **response, "session_id": req.session_id, "piece": capture["piece"],
             "measurement_session_id": source_sid,
             "active_piece": queue_state.get("active_piece"),
-            "number_alpl": before["number_alpl"], "measure_type": before["measure_type"],
+            "number_alpl": before["number_alpl"], "part_id": before["part_id"],
+            "measure_type": before["measure_type"],
             "value_x": req.value_x, "value_y": req.value_y,
             "offset_opx": req.offset_opx, "offset_opy": req.offset_opy,
             **{k: verdict[k] for k in ("ok_x", "ok_y", "ok_offset", "offset_counts", "offset_tol")},
@@ -563,13 +587,22 @@ async def replace_measurement(req, capture):
 
 @router.patch("/api/measurements/{measurement_id}")
 def update_measurement(measurement_id: int, data: Dict[str, Any] = Body(...)):
-    allowed = {"number_alpl"}
+    allowed = set()
     db = get_db()
     try:
         with db.cursor() as cur:
             _block_if_session_running(cur, "แก้ไข")
 
             set_parts, values = [], []
+            if "number_alpl" in data or "part_id" in data:
+                if "part_id" not in data:
+                    raise HTTPException(400, "ต้องระบุ Part ที่ต้องการด้วย part_id เมื่อแก้ ALPL")
+                cur.execute("SELECT part_id, number_alpl FROM parts_specifications WHERE part_id=%s", (data["part_id"],))
+                target_part = cur.fetchone()
+                if not target_part or ("number_alpl" in data and int(data["number_alpl"]) != target_part["number_alpl"]):
+                    raise HTTPException(400, "Part ที่เลือกไม่ตรงกับ ALPL")
+                set_parts.extend(["part_id = %s", "number_alpl = %s"])
+                values.extend([target_part["part_id"], target_part["number_alpl"]])
             for k, v in data.items():
                 if k in allowed:
                     set_parts.append(f"{k} = %s")
@@ -610,7 +643,7 @@ def update_measurement(measurement_id: int, data: Dict[str, Any] = Body(...)):
 
             # ── [FIX 2] อ่าน คอลัมน์ Offset แยกแกนแทนคอลัมน์ `offset` เดิม ────────
             cur.execute(
-                "SELECT number_alpl, value_x, value_y, "
+                "SELECT number_alpl, part_id, value_x, value_y, "
                 "offset_opx, offset_opy, measure_type "
                 "FROM measurements WHERE measurement_id = %s",
                 (measurement_id,),
@@ -619,7 +652,7 @@ def update_measurement(measurement_id: int, data: Dict[str, Any] = Body(...)):
             if not row:
                 raise HTTPException(404, "Measurement not found")
             
-            crit = _load_criteria(cur, row["number_alpl"])
+            crit = _load_criteria(cur, row["part_id"])
             
             # ── [FIX 3] คำนวณ result ใหม่โดยส่ง offset ทั้ง 4 แกนเข้า _judge ────────
             new_result = _judge(
@@ -632,8 +665,8 @@ def update_measurement(measurement_id: int, data: Dict[str, Any] = Body(...)):
             )["result"]
 
             cur.execute(
-                "UPDATE measurements SET result = %s WHERE measurement_id = %s",
-                (new_result, measurement_id),
+                "UPDATE measurements SET result = %s, tolerance_id = %s WHERE measurement_id = %s",
+                (new_result, crit["tolerance_id"], measurement_id),
             )
         return {"ok": True, "result": new_result}
     finally:

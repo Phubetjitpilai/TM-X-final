@@ -1,4 +1,5 @@
 import MultiSelect from "../MultiSelect";
+import DateRangeFilter from "./DateRangeFilter";
 import { normalizePackageSize } from "../../utils/packageSize";
 
 /** ช่องที่ติ๊กเลือกได้หลายค่า — ลำดับตรงกับ export.html เป๊ะ
@@ -105,10 +106,14 @@ interface Props {
    *  ฝั่งนี้รู้) — ต้องชี้ที่ช่อง ALPL เหมือนกัน ไม่ใช่ลอยอยู่บรรทัดอื่นให้ผู้ใช้
    *  ไล่หาเองว่าพิมพ์อะไรผิด */
   serverAlplError?: string | null;
+  showLatestOnly?: boolean;
+  showMeasureDate?: boolean;
+  hiddenMultiKeys?: MultiKey[];
 }
 
 export default function ExportFilters({
   value, onChange, options, partNumberCatalog, onClear, serverAlplError,
+  showLatestOnly = true, showMeasureDate = true, hiddenMultiKeys = [],
 }: Props) {
   const set = <K extends keyof FilterState>(k: K, v: FilterState[K]) => onChange({ ...value, [k]: v });
   const setMulti = (k: MultiKey, v: string[]) => onChange({ ...value, multi: { ...value.multi, [k]: v } });
@@ -132,7 +137,7 @@ export default function ExportFilters({
   return (
     <>
       {/* ตัวเลือกสำคัญที่สุดของหน้านี้ ยกไว้บนสุดแยกจาก filter อื่น */}
-      <label className="latest-toggle">
+      {showLatestOnly && <label className="latest-toggle">
         <input
           type="checkbox"
           checked={value.latestOnly}
@@ -142,25 +147,21 @@ export default function ExportFilters({
           <strong>เฉพาะการวัดล่าสุดของแต่ละ ALPL</strong>
           <small>ติ๊กออกเพื่อเอาประวัติการวัดทุกครั้ง</small>
         </span>
-      </label>
+      </label>}
 
       <div className="filters">
-        <div className="fg">
-          <label>วันที่วัด — ตั้งแต่</label>
-          <input type="date" value={value.dateFrom} onChange={(e) => set("dateFrom", e.target.value)} />
-        </div>
-        <div className="fg">
-          <label>วันที่วัด — ถึง</label>
-          <input type="date" value={value.dateTo} onChange={(e) => set("dateTo", e.target.value)} />
-        </div>
-        <div className="fg">
-          <label>วันที่รับ — ตั้งแต่</label>
-          <input type="date" value={value.recvFrom} onChange={(e) => set("recvFrom", e.target.value)} />
-        </div>
-        <div className="fg">
-          <label>วันที่รับ — ถึง</label>
-          <input type="date" value={value.recvTo} onChange={(e) => set("recvTo", e.target.value)} />
-        </div>
+        {showMeasureDate && <DateRangeFilter
+          label="Measure Date"
+          from={value.dateFrom}
+          to={value.dateTo}
+          onChange={(dateFrom, dateTo) => onChange({ ...value, dateFrom, dateTo })}
+        />}
+        <DateRangeFilter
+          label="Receive Date"
+          from={value.recvFrom}
+          to={value.recvTo}
+          onChange={(recvFrom, recvTo) => onChange({ ...value, recvFrom, recvTo })}
+        />
 
         <div className="fg">
           <label>
@@ -176,7 +177,7 @@ export default function ExportFilters({
           <div className="err">{alplError ?? ""}</div>
         </div>
 
-        {MULTI_KEYS.map((m) => (
+        {MULTI_KEYS.filter((m) => !hiddenMultiKeys.includes(m.key)).map((m) => (
           <MultiSelect
             key={m.key}
             label={m.label}
@@ -184,6 +185,7 @@ export default function ExportFilters({
             selected={value.multi[m.key]}
             onChange={(next) => setMulti(m.key, next)}
             normalizeQuery={m.key === "package_size" ? normalizePackageSize : undefined}
+            entryStyle
             hint={m.key === "part_number" ? "เลือก Package Size ก่อน" : undefined}
             emptyText={
               m.key === "part_number" && pkgSelected.length === 0
@@ -223,7 +225,7 @@ export default function ExportFilters({
       </div>
 
       <div className="filters-actions">
-        <button type="button" className="btn-ghost" onClick={onClear}>✕ ล้างตัวกรอง</button>
+        <button type="button" className="btn-ghost" onClick={onClear}>✕ Clear Filters</button>
       </div>
     </>
   );

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { apiPost } from "../../api/client";
+import SingleSelect from "../SingleSelect";
 import EntryGroups, {
   GROUP_FIELDS, OPTIONAL_FIELDS, emptyGroup,
   type EntryMode, type GroupValues,
@@ -71,6 +72,7 @@ interface Props {
   partNumbersFor: (packageSize: string) => string[];
   /** เครื่องที่ package size นั้นลงได้ (ตาราง package_size_handler) */
   handlersFor: (packageSize: string) => string[];
+  tolerancesFor: (packageSize: string) => { tolerance_id: number; nominal_x: number; nominal_y: number; upper_tol: number; lower_tol: number; offset_tol: number }[];
   /** เครื่องของ part number นั้น — ใช้เติมช่อง Handler อัตโนมัติใน New/Rework */
   handlerOfPartNumber: (partNumber: string) => string;
   onSave: (queue: EntryQueue) => void;
@@ -79,7 +81,7 @@ interface Props {
    *  ส่ง package_size ของกลุ่มที่ ALPL นั้นอยู่ไปด้วย — ผู้ใช้ต้องเห็นว่ากำลังจะ
    *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข ALPL แล้วกดตกลงไปโดยไม่รู้ */
   confirmRegister: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
-  confirmExisting: (alpls: number[]) => Promise<boolean>;
+  confirmExisting: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
   onGroupConflict: (messages: string[]) => Promise<void>;
   /** แจ้งเตือนทั่วไป (toast) — ใช้ตอน autofill เขียนทับค่าที่ผู้ใช้พิมพ์เอง */
   onNotify: (message: string, detail?: string, type?: "warning" | "error") => void;
@@ -124,7 +126,7 @@ function toFormGroups(q: EntryQueue): GroupValues[] {
 
 export default function PartEntryModal({
   lookupFailed,
-  operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, handlerOfPartNumber,
+  operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, tolerancesFor, handlerOfPartNumber,
   onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onGroupConflict, onNotify, initial, triggerOnly = false,
 }: Props) {
   /* ตั้งค่าเริ่มต้นจาก `initial` ครั้งเดียวตอน mount — พอเพียงเพราะหน้าแม่วาด
@@ -244,12 +246,13 @@ export default function PartEntryModal({
     // ⚠ ALPL ห้ามซ้ำ "ข้ามกลุ่ม" ด้วย ไม่ใช่แค่ในกลุ่มเดียวกัน — ถ้าปล่อยให้ซ้ำ
     //   ชิ้นเดียวกันจะถูกวัด 2 ครั้งด้วย config คนละชุด แล้วอันหลังเขียนทับ Part
     //   ของอันแรกโดยที่ผู้ใช้ไม่รู้ตัว (backend ก็เช็คซ้ำ แต่บอกตั้งแต่ตรงนี้ดีกว่า)
-    const seen = new Map<number, number>();
+    const seen = new Map<string, number>();
     perGroupLists.forEach((list, gi) => {
       list.forEach((n) => {
-        if (seen.has(n) && seen.get(n) !== gi) {
-          errs[gi] = { ...errs[gi], number_alpl: `ALPL ${n} ซ้ำกับกลุ่มที่ ${seen.get(n)! + 1}` };
-        } else seen.set(n, gi);
+        const identity = `${n}|${groups[gi]?.package_size ?? ""}`;
+        if (seen.has(identity) && seen.get(identity) !== gi) {
+          errs[gi] = { ...errs[gi], number_alpl: `ALPL ${n} / Package Size นี้ซ้ำกับกลุ่มที่ ${seen.get(identity)! + 1}` };
+        } else seen.set(identity, gi);
       });
     });
 
@@ -269,10 +272,10 @@ export default function PartEntryModal({
     // New มีอยู่แล้ว → ยืนยันใช้ Part เดิม · Rework ยังไม่มี → ยืนยันลงทะเบียน
     setBusy(true);
     try {
-      const res = await apiPost<{ exists: number[]; missing: number[]; conflicts: { group: number; message: string }[] }>(
+      const res = await apiPost<{ group_results: { exists: number[]; missing: number[] }[]; conflicts: { group: number; message: string }[] }>(
         "/api/parts/check", {
           alpl: all,
-          groups: perGroupLists.map((list) => ({ alpl: list })),
+          groups: perGroupLists.map((list, gi) => ({ alpl: list, package_size: groups[gi]?.package_size ?? "" })),
           mode,
         },
       );
@@ -294,16 +297,13 @@ export default function PartEntryModal({
         focusFirstInvalid();
         return;
       }
-      if (mode === "New" && res.exists.length) {
-        if (!await confirmExisting(res.exists)) { setBusy(false); return; }
+      const existing = (res.group_results ?? []).flatMap((group, gi) => group.exists.map((alpl) => ({ alpl, package_size: groups[gi]?.package_size ?? "" })));
+      const missing = (res.group_results ?? []).flatMap((group, gi) => group.missing.map((alpl) => ({ alpl, package_size: groups[gi]?.package_size ?? "" })));
+      if (mode === "New" && existing.length) {
+        if (!await confirmExisting(existing)) { setBusy(false); return; }
       }
-      if ((mode === "IPM" || mode === "Rework") && res.missing.length) {
-        // หา package_size จากกลุ่มที่ ALPL ตัวนั้นอยู่ (ไม่ใช่กลุ่มแรกเสมอไป)
-        const pkgOf = (a: number) => {
-          const gi = perGroupLists.findIndex((list) => list.includes(a));
-          return gi >= 0 ? (groups[gi]?.package_size ?? "") : "";
-        };
-        const ok = await confirmRegister(res.missing.map((a) => ({ alpl: a, package_size: pkgOf(a) })));
+      if ((mode === "IPM" || mode === "Rework") && missing.length) {
+        const ok = await confirmRegister(missing);
         if (!ok) { setBusy(false); return; }
       }
     } catch {
@@ -351,7 +351,7 @@ export default function PartEntryModal({
 
         <div className="entry-session-hint">
           {triggerOnly
-            ? "ข้อมูลชิ้นงานถูกล็อกไว้ เปลี่ยนได้เฉพาะ Trigger และจะใช้ค่าที่เลือกเมื่อกด Start (วัดต่อ)"
+            ? "ข้อมูลชิ้นงานถูกล็อกไว้ เปลี่ยนได้เฉพาะ Trigger และจะใช้ค่าที่เลือกเมื่อกด Continue"
             : "ℹ️ ลำดับ ALPL ที่กรอก (ไล่จากกลุ่มบนลงล่าง) คือลำดับที่ค่าที่วัดได้จะถูก map เข้าไป — 1 กลุ่มคือ ALPL ที่ใช้ข้อมูลชุดเดียวกัน"}
         </div>
 
@@ -369,73 +369,56 @@ export default function PartEntryModal({
           </div>
         )}
 
-        {/* Operator อยู่นอกกลุ่ม ใช้ร่วมกันทั้ง session (คนวัดคนเดียวกัน)
-            ⚠ ต้องมีคลาส `entry-field` ด้วย — ช่องนี้อยู่นอก `.entry-form-grid`
-              จึงไม่ได้รับ style ของฟิลด์ในกลุ่ม (ดาวแดงชิดขวา + กรอบแดงตอนผิด)
-              ถ้าลืมใส่ ช่องนี้จะเป็นช่องเดียวในฟอร์มที่ลืมกรอกแล้วไม่ขึ้นกรอบแดง */}
-        <div className="form-group entry-field" style={{ marginBottom: "1rem" }}>
-          <label>Operator<span className="req">*</span></label>
-          <select
-            className={operatorError ? "invalid" : undefined}
-            value={operator}
-            disabled={triggerOnly}
-            onChange={(e) => setOperator(e.target.value)}
-          >
-            {/* disabled hidden = โชว์ตอนยังไม่ได้เลือก แต่ไม่โผล่ในรายการตอนกดเปิด */}
-            <option value="" disabled hidden>-- เลือก Operator --</option>
-            {triggerOnly && operator && !operators.includes(operator) && <option value={operator}>{operator}</option>}
-            {operators.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-          <div className="field-error">{operatorError}</div>
-        </div>
-
-        {/* สัญญาณเริ่มวัดแต่ละชิ้นมาจากไหน — ของทั้ง session เหมือน Operator
-            ใช้คลาสเดียวกับแถบเลือกโหมด IPM/New/Rework ข้างบนเพื่อให้หน้าตาเข้าชุดกัน
-
-            ⚠ ไม่มีสถานะ "ยังไม่เลือก" โดยตั้งใจ — ค่าเริ่มต้นเป็น auto เสมอ
-              ถ้าปล่อยให้ว่างได้ คนจะกด Start โดยไม่ได้เลือก แล้ว Pi ได้ default
-              ของฝั่งมันเองซึ่งอาจไม่ตรงกับที่คนคิด */}
-        <div className="form-group" style={{ marginBottom: "1rem" }}>
-          <label>Trigger</label>
-          <div className="entry-toggle">
-            <button
-              type="button"
-              className={`entry-toggle-btn${triggerMode === "auto" ? " active" : ""}`}
-              onClick={() => setTriggerMode("auto")}
-              title="สัญญาณมาจาก MCU ผ่านสาย Serial — ต้องเสียบ Arduino Mega ที่ Raspberry Pi"
-            >
-              Auto (MCU)
-            </button>
-            <button
-              type="button"
-              className={`entry-toggle-btn${triggerMode === "manual" ? " active" : ""}`}
-              onClick={() => setTriggerMode("manual")}
-              title="กดปุ่ม ⚡ Trigger บนหน้าเว็บเองทีละชิ้น — ใช้ตอนยังไม่ต่อ MCU หรือตอนไล่บั๊ก"
-            >
-              Manual (ปุ่มบนเว็บ)
-            </button>
+        {/* ค่าระดับ Session อยู่แถวเดียวกัน; triggerOnly แก้ได้เฉพาะ Trigger */}
+        <div className="pe-session-fields">
+          <div className="form-group entry-field">
+            <label htmlFor="pe-operator">Operator<span className="req">*</span></label>
+            <SingleSelect
+              id="pe-operator"
+              label="Operator"
+              options={triggerOnly && operator && !operators.includes(operator) ? [operator, ...operators] : operators}
+              value={operator}
+              disabled={triggerOnly}
+              onChange={setOperator}
+              placeholder="เลือก Operator"
+              invalid={!!operatorError}
+              searchable={false}
+              showRadio={false}
+            />
+            {operatorError && <div className="field-error">{operatorError}</div>}
           </div>
-          <div className="entry-session-hint" style={{ marginTop: ".4rem" }}>
-            {triggerMode === "auto"
-              ? "เครื่องจะเริ่มวัดเองเมื่อ MCU แจ้งว่าชิ้นงานเข้าที่ — ต้องเสียบ Mega ไว้ที่ Pi ไม่งั้นกด Start ไม่ผ่าน"
-              : "ต้องกดปุ่ม ⚡ Trigger เองทุกชิ้น — เลือกได้ตอนยังไม่ได้ต่อ MCU · เปลี่ยนโหมดกลางรอบไม่ได้"}
-          </div>
-        </div>
 
-        {(triggerMode === "auto" || triggerOnly) && (
-          <div className="form-group" style={{ marginBottom: "1rem" }}>
+          <div className="form-group">
+            <label htmlFor="pe-trigger-mode">Trigger</label>
+            <SingleSelect
+              id="pe-trigger-mode"
+              label="Trigger"
+              options={[{ value: "auto", label: "MCU (Auto)" }, { value: "manual", label: "Manual (Web)" }]}
+              value={triggerMode}
+              onChange={(value) => setTriggerMode(value as TriggerMode)}
+              placeholder="MCU (Auto)"
+              searchable={false}
+              showRadio={false}
+            />
+          </div>
+
+          <div className="form-group entry-tray-capacity">
             <label htmlFor="pe-tray-capacity">Tray Capacity</label>
             <input id="pe-tray-capacity" type="number" min="0" step="1"
               className={trayCapacityError ? "invalid" : undefined}
               value={trayCapacity}
-              disabled={triggerOnly}
+              disabled={triggerOnly || triggerMode === "manual"}
               aria-invalid={!!trayCapacityError} aria-describedby="pe-tray-capacity-hint"
+              onWheel={(e) => e.currentTarget.blur()}
               onChange={e => { setTrayCapacity(e.target.value); setTrayCapacityError(""); }} />
-            <div id="pe-tray-capacity-hint" className="entry-session-hint" style={{ marginTop: ".4rem" }}>
-              {trayCapacityError || "จำนวนชิ้นต่อถาด · เว้นว่างใช้ 8 · 0 = ไม่ตรวจถาดเต็ม"}
-            </div>
+            {trayCapacityError && <div className="field-error">{trayCapacityError}</div>}
           </div>
-        )}
+        </div>
+        <div id="pe-tray-capacity-hint" className="entry-session-hint pe-session-help">
+          {triggerMode === "auto"
+            ? "MCU เริ่มวัดเมื่อชิ้นงานเข้าที่ · Tray Capacity เว้นว่างใช้ 8, ใส่ 0 เพื่อไม่ตรวจถาดเต็ม"
+            : "Manual: กด Trigger บนหน้าเว็บเพื่อวัดทีละชิ้น · ไม่ใช้ Tray Capacity"}
+        </div>
 
         <EntryGroups
           /* ⚠ key ผูกกับ mode — บังคับให้ component เกิดใหม่ทั้งตัวเมื่อสลับโหมด
@@ -452,7 +435,7 @@ export default function PartEntryModal({
           errors={errors}
           onOverwrite={(message) => onNotify(message, undefined, "warning")}
           options={{ vendor: vendors, owner: owners, packageSize: packageSizes,
-                     partNumbersFor, handlersFor, handlerOfPartNumber }}
+                     partNumbersFor, handlersFor, tolerancesFor, handlerOfPartNumber }}
         />
 
         <div className="entry-actions">

@@ -10,6 +10,8 @@ DROP TABLE IF EXISTS export_template;
 DROP TABLE IF EXISTS measurements;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS parts_specifications;
+DROP TABLE IF EXISTS package_size_tolerance;
+DROP TABLE IF EXISTS package_size_handler_template;
 DROP TABLE IF EXISTS package_size_handler;
 DROP TABLE IF EXISTS part_number;
 DROP TABLE IF EXISTS package_size;
@@ -41,27 +43,14 @@ CREATE TABLE handler (
   handler_name VARCHAR(100) NOT NULL UNIQUE
 );
 
--- template ต้องถูกสร้างก่อน package_size เพราะ package_size.template_id
--- อ้าง FK มาที่ตารางนี้ (แก้ลำดับจากเดิมที่สร้าง package_size ก่อน ทำให้
--- CREATE TABLE package_size พังด้วย ERROR 1824 'Failed to open the
--- referenced table template')
 CREATE TABLE template (
   template_id   INT AUTO_INCREMENT PRIMARY KEY,
   template_name VARCHAR(100) NOT NULL UNIQUE
 );
 
--- package_size ผูกกับ template (โปรแกรมวัดของ TM-X) — VARCHAR(20) เพราะมีชื่อ
--- ยาวสุดคือ "3.255x3.255" (11 ตัวอักษร เกิน VARCHAR(10) เดิม)
 CREATE TABLE package_size (
   package_size_id INT AUTO_INCREMENT PRIMARY KEY,
-  package_size    VARCHAR(20) NOT NULL UNIQUE,
-  nominal_x       FLOAT NOT NULL,
-  nominal_y       FLOAT NOT NULL,
-  upper_tol       FLOAT NOT NULL,
-  lower_tol       FLOAT NOT NULL,
-  offset_tol      FLOAT NOT NULL,
-  template_id     INT,
-  FOREIGN KEY (template_id) REFERENCES template(template_id)
+  package_size    VARCHAR(20) NOT NULL UNIQUE
 );
 
 -- part_number: catalog ของ part number จริงที่เคยกำหนดไว้ล่วงหน้า ผูกกับ
@@ -78,43 +67,42 @@ CREATE TABLE part_number (
   FOREIGN KEY (handler_id)      REFERENCES handler(handler_id)
 );
 
--- package_size_handler: ขนาด package หนึ่งลงเครื่องทดสอบได้หลายเครื่อง และ
--- เครื่องหนึ่งก็รับได้หลายขนาด — เป็นความสัมพันธ์ "หลายต่อหลาย" ซึ่ง**ยัดลง
--- ตารางใดตารางหนึ่งไม่ได้** เพราะช่องเดียวเก็บได้ค่าเดียว
---
---     ใส่ handler_id ใน package_size  → 1 ขนาดได้ 1 เครื่อง  ❌
---     ใส่ package_size_id ใน handler  → 1 เครื่องได้ 1 ขนาด  ❌
---     ตารางเชื่อมนี้                   → ได้ทั้งสองทาง         ✅
---
--- 1 แถว = 1 คู่ที่ใช้ด้วยกันได้ · "3x3 ลงได้ทั้ง HT9046 และ HT9046MX" = 2 แถว
---
--- PRIMARY KEY รวม 2 คอลัมน์ กันใส่คู่เดิมซ้ำ แต่ยังใส่ (3x3, HT9046) กับ
--- (3x3, HT9046MX) ได้เพราะเป็นคนละคู่
---
--- ⚠ ตารางนี้ตอบได้แค่ "ขนาดนี้ลงเครื่องไหนได้บ้าง" — **ไม่ได้บอกว่าชิ้นงาน
---   ถูกวัดบนเครื่องไหนจริง** ถ้าต้องการข้อมูลนั้นในรายงาน ต้องเก็บแยกที่
---   `sessions` (เครื่องที่ใช้เป็นคุณสมบัติของรอบการวัด ไม่ใช่ของ package)
---   ตอนนี้คอลัมน์ Handler ในรายงาน derive มาจาก `part_number.handler_id`
---   ซึ่งแปลว่า "ตามแคตตาล็อก" และเป็นค่าว่างเสมอในโหมด IPM (ไม่มี part_number)
-CREATE TABLE package_size_handler (
+-- คู่ Package Size + Handler หนึ่งคู่ใช้ Template ได้หนึ่งรายการ
+CREATE TABLE package_size_handler_template (
   package_size_id INT NOT NULL,
   handler_id      INT NOT NULL,
+  template_id     INT NOT NULL,
   PRIMARY KEY (package_size_id, handler_id),
   FOREIGN KEY (package_size_id) REFERENCES package_size(package_size_id),
-  FOREIGN KEY (handler_id)      REFERENCES handler(handler_id)
+  FOREIGN KEY (handler_id)      REFERENCES handler(handler_id),
+  FOREIGN KEY (template_id)     REFERENCES template(template_id)
+);
+
+CREATE TABLE package_size_tolerance (
+  tolerance_id    INT AUTO_INCREMENT PRIMARY KEY,
+  package_size_id INT NOT NULL,
+  nominal_x       FLOAT NOT NULL,
+  nominal_y       FLOAT NOT NULL,
+  upper_tol       FLOAT NOT NULL,
+  lower_tol       FLOAT NOT NULL,
+  offset_tol      FLOAT NOT NULL,
+  UNIQUE KEY uq_pkg_tolerance_spec
+    (package_size_id, nominal_x, nominal_y, upper_tol, lower_tol, offset_tol),
+  FOREIGN KEY (package_size_id) REFERENCES package_size(package_size_id)
 );
 
 -- ===== Core tables =====
 
--- parts_specifications: 1 แถว = 1 ALPL (number_alpl) ที่เคยลงทะเบียนไว้แล้ว —
+-- parts_specifications: 1 แถว = 1 คู่ ALPL + Package Size
 -- part_number_id เป็น FK ไปตาราง part_number (nullable — กรอกทีหลังได้ตอน
 -- ยังไม่รู้ part_number จริง) handler/package_size/nominal/tolerance ทั้งหมด
 -- derive มาจาก part_number_id นี้ ไม่ได้เก็บซ้ำที่ตารางนี้โดยตรง
 CREATE TABLE parts_specifications (
   part_id          INT AUTO_INCREMENT PRIMARY KEY,
-  number_alpl      INT UNIQUE,
+  number_alpl      INT NOT NULL,
   part_number_id   INT,
-  package_size_id  INT,
+  package_size_id  INT NOT NULL,
+  tolerance_id     INT,
   -- เครื่องทดสอบที่ ALPL ตัวนี้ติดตั้งอยู่ — เป็นข้อเท็จจริงถาวรของ ALPL เอง
   -- ไม่ใช่ของการวัดครั้งใดครั้งหนึ่ง
   --
@@ -128,18 +116,15 @@ CREATE TABLE parts_specifications (
   recieve_date     DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (part_number_id)  REFERENCES part_number(part_number_id),
   FOREIGN KEY (package_size_id) REFERENCES package_size(package_size_id),
+  FOREIGN KEY (tolerance_id)    REFERENCES package_size_tolerance(tolerance_id),
   FOREIGN KEY (vendor_id)       REFERENCES vendor(vendor_id),
   FOREIGN KEY (handler_id)      REFERENCES handler(handler_id),
-  FOREIGN KEY (owner_id)        REFERENCES owner(owner_id)
+  FOREIGN KEY (owner_id)        REFERENCES owner(owner_id),
+  UNIQUE KEY uq_parts_alpl_package (number_alpl, package_size_id)
 );
 
--- ON UPDATE CASCADE: ให้แก้ ALPL ใน parts_specifications ได้แม้จะมีประวัติ
--- session/measurement ผูกอยู่แล้ว (แก้ผ่าน edit.html ได้) — ค่า number_alpl ใน
--- sessions/measurements จะถูกอัปเดตตามอัตโนมัติ ไม่ใช่ถูก MySQL ปฏิเสธแบบ
--- RESTRICT (default) — หมายเหตุ: sessions/measurements อ้างอิง
--- parts_specifications ผ่าน number_alpl (ไม่ใช่ part_id) เพราะ main.py ทั้งไฟล์
--- query/insert สองตารางนี้ด้วยคอลัมน์ number_alpl ตรงๆ ทุกจุด — number_alpl
--- มี UNIQUE constraint จึงใช้เป็นเป้าหมายของ FOREIGN KEY ได้เหมือน PK
+-- Measurement อ้างอิง Part ด้วย part_id; number_alpl เป็นค่าที่แสดงในรายงาน
+-- ดังนั้น ALPL เดียวกันต่าง Package Size มี Part แยกกัน และไม่สับสนในประวัติ
 -- queue_state: สำเนา JSON ของคิว ALPL (session_queues ใน memory ของ backend)
 -- เขียนทับทุกครั้งที่มีการเปลี่ยนแปลง ใช้กู้คืนคิวกลับเข้า memory ถ้า backend
 -- restart กลาง session ที่ยัง running อยู่
@@ -187,6 +172,8 @@ CREATE TABLE measurements (
   measurement_id INT          AUTO_INCREMENT PRIMARY KEY,
   session_id     INT          NOT NULL,
   number_alpl    INT          NOT NULL,
+  part_id        INT          NOT NULL,
+  tolerance_id   INT          NOT NULL,
   value_x        FLOAT        NOT NULL,
   value_y        FLOAT        NOT NULL,
   offset_opx     FLOAT        NOT NULL,
@@ -200,7 +187,8 @@ CREATE TABLE measurements (
   image_upload_failed TINYINT(1) NOT NULL DEFAULT 0,
   timestamp      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (session_id)  REFERENCES sessions(session_id),
-  FOREIGN KEY (number_alpl) REFERENCES parts_specifications(number_alpl) ON UPDATE CASCADE,
+  FOREIGN KEY (part_id) REFERENCES parts_specifications(part_id),
+  FOREIGN KEY (tolerance_id) REFERENCES package_size_tolerance(tolerance_id),
   FOREIGN KEY (operator_id) REFERENCES operator(operator_id),
 
   -- ── INDEX สำหรับตอนข้อมูลเยอะ ───────────────────────────────────────────
@@ -216,6 +204,7 @@ CREATE TABLE measurements (
   -- ROW_NUMBER() OVER (PARTITION BY number_alpl ORDER BY timestamp, measurement_id)
   -- ลำดับคอลัมน์ต้องตรงกับ PARTITION BY แล้วต่อด้วย ORDER BY เป๊ะๆ
   INDEX idx_meas_alpl_ts (number_alpl, timestamp, measurement_id),
+  INDEX idx_meas_part_ts (part_id, timestamp, measurement_id),
 
   -- การ์ด OK/NG ในหน้า Home ยิง COUNT ทุกครั้งที่มีการวัดเข้ามา
   -- (?session_id=X&result=OK) — index นี้ทำให้ COUNT อ่านจาก index ได้ตรงๆ

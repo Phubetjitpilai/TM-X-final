@@ -4,11 +4,13 @@ import { useToast } from "../components/Toast";
 import TrashCard from "../components/TrashCard";
 import LookupTables from "../components/LookupTables";
 import HistoryCard from "../components/HistoryCard";
-import { orderForDatalist } from "../utils/datalistOrder";
+import SingleSelect from "../components/SingleSelect";
 import { normalizePackageSize } from "../utils/packageSize";
+import { toleranceLabel } from "../utils/toleranceLabel";
 import { axisValue, offsetValue, xyPair, DP_MM, DP_OFF } from "../components/measurementCells";
 import { useSessionState } from "../hooks/useSessionState";
 import { useSSE } from "../hooks/useSSE";
+import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, type FilterState, type MultiKey } from "../components/export/ExportFilters";
 
 // EditPage — พอร์ตจาก Frontend/edit.html (Database Editor) แบบยึดโครงสร้าง/
 // field/คอลัมน์/ข้อความ ตามต้นฉบับเป็นหลัก
@@ -24,7 +26,7 @@ import { useSSE } from "../hooks/useSSE";
 const PAGE_SIZE = 10;
 
 interface Part {
-  part_id?: number;
+  part_id: number;
   number_alpl: number;
   part_number: string | null;
   description: string | null;
@@ -34,6 +36,7 @@ interface Part {
   vendor: string | null;
   owner: string | null;
   package_size: string | null;
+  tolerance_id: number | null;
   nominal_x: number | null;
   nominal_y: number | null;
   upper_tol: number | null;
@@ -44,6 +47,7 @@ interface Part {
 
 interface Measurement {
   measurement_id: number;
+  part_id: number;
   session_id: number | null;
   number_alpl: number;
   value_x: number | null;
@@ -83,24 +87,16 @@ interface Measurement {
   ok_offset?: boolean | null;
 }
 
-/** catalog ของ Part Number — ผูก package_size/handler/nominal/tolerance ของตัวเองไว้แล้ว
- *  (ดู schema `part_number` ใน init.sql) ใช้แสดงกล่องค่า read-only ในฟอร์ม Part */
-/** ⚠ ไม่มี nominal/tolerance แล้ว — part_number ไม่ได้ถือเกณฑ์ตัดสินอีกต่อไป
- *  ทุกโหมดใช้ของ package_size (ดู `_load_criteria` ฝั่ง backend) ค่าพวกนั้นจึง
- *  ต้องอ่านจาก `PackageSizeRow` ของขนาดที่ part ตัวนี้ผูกอยู่แทน */
-interface PartNumberRow {
-  part_number_name: string;
-  package_size: string | null;
-  handler: string | null;
-}
+interface PackageSizeRow { package_size: string; }
 
-interface PackageSizeRow {
+interface ToleranceRow {
+  tolerance_id: number;
   package_size: string;
-  template_name: string | null;
-  nominal_x: number | null;
-  nominal_y: number | null;
-  upper_tol: number | null;
-  lower_tol: number | null;
+  nominal_x: number;
+  nominal_y: number;
+  upper_tol: number;
+  lower_tol: number;
+  offset_tol: number;
 }
 
 interface EditContext {
@@ -143,25 +139,6 @@ function DerivedCell({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** ตัวเลือกของ select ที่มาจาก lookup — ใช้ร่วมกันทุกช่องในหน้านี้
- *
- *  ⚠ `disabled hidden` บนตัวเลือกว่าง = โชว์ตอนยังไม่ได้เลือก แต่ไม่โผล่ในรายการ
- *    ตอนกดเปิด (ไม่มีบรรทัด "-- เลือก --" ให้เลื่อนผ่าน) และเลือกกลับเป็นค่าว่าง
- *    ไม่ได้ — ตั้งใจ เพราะทุกช่องที่ใช้ helper นี้เป็น field ที่ต้องมีค่า
- */
-function renderOptions(items: string[]) {
-  return (
-    <>
-      <option value="" disabled hidden>-- เลือก --</option>
-      {items.map((name) => (
-        <option key={name} value={name}>
-          {name}
-        </option>
-      ))}
-    </>
-  );
-}
-
 export default function EditPage() {
   const toast = useToast();
 
@@ -186,18 +163,19 @@ export default function EditPage() {
   const [partsData, setPartsData] = useState<Part[]>([]);
   const [partsTotal, setPartsTotal] = useState(0);
   const [partsPage, setPartsPage] = useState(1);
-  const [partsSearchInput, setPartsSearchInput] = useState("");
-  const partsSearchRef = useRef("");
+  const [partsFilters, setPartsFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const partsFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const partsSearchTimer = useRef<number | null>(null);
+  const partsRequestRef = useRef(0);
 
   // ── Measurements state (server-side pagination + filter) ───────────
   const [measurementsData, setMeasurementsData] = useState<Measurement[]>([]);
   const [measTotal, setMeasTotal] = useState(0);
   const [measPage, setMeasPage] = useState(1);
-  const [measSearchInput, setMeasSearchInput] = useState("");
-  const [measDate, setMeasDate] = useState("");
-  const measSearchRef = useRef("");
+  const [measFilters, setMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const measFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const measSearchTimer = useRef<number | null>(null);
+  const measRequestRef = useRef(0);
 
   // ── Session running lock ────────────────────────────────────────────
   /** กำลังมีการวัดอยู่ไหม — ใช้ล็อกปุ่มแก้/ลบทั้งหน้า
@@ -230,10 +208,8 @@ export default function EditPage() {
   const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
   const [operatorOptions, setOperatorOptions] = useState<string[]>([]);
   const [packageSizeOptions, setPackageSizeOptions] = useState<string[]>([]);
-  // catalog เต็มของ part_number / package_size — เก็บไว้ทั้งแถวเพื่อคำนวณกล่อง
-  // ค่า read-only ในฟอร์ม Part ได้ทันทีที่เปลี่ยน dropdown โดยไม่ต้องยิง API ซ้ำ
-  const [partNumberCatalog, setPartNumberCatalog] = useState<PartNumberRow[]>([]);
-  const [packageSizeCatalog, setPackageSizeCatalog] = useState<PackageSizeRow[]>([]);
+  const [partNumberCatalog, setPartNumberCatalog] = useState<{ part_number_name: string; package_size: string }[]>([]);
+  const [toleranceCatalog, setToleranceCatalog] = useState<ToleranceRow[]>([]);
 
   // ── Modal / form state ───────────────────────────────────────────────
   const [editContext, setEditContext] = useState<EditContext>({ table: null, mode: null, key: null, original: null });
@@ -246,11 +222,15 @@ export default function EditPage() {
   const [alertText, setAlertText] = useState<string | null>(null);
 
   // ── ฟอร์ม Part: ช่องที่ต้อง cascade กันจึงคุมด้วย state (ที่เหลืออ่านจาก FormData)
-  //    Package Size → กำหนดว่าเลือก Part Number ตัวไหนได้ → Part Number กำหนด
-  //    Handler/Nominal/Tolerance/Template ที่โชว์ในกล่อง read-only อีกทอด
+  //    Package Size → กำหนดตัวเลือก Part Number และ Tolerance
   const [pkgValue, setPkgValue] = useState("");
+  const [toleranceValue, setToleranceValue] = useState("");
   const [pnValue, setPnValue] = useState("");
   const [pnOptions, setPnOptions] = useState<string[]>([]);
+  const [handlerValue, setHandlerValue] = useState("");
+  const [vendorValue, setVendorValue] = useState("");
+  const [ownerValue, setOwnerValue] = useState("");
+  const [measOperatorValue, setMeasOperatorValue] = useState("");
   const pnImmediate = useRef(false);
 
   // ── Row highlight (highlight-row, 2.2s fade — เหมือนต้นฉบับ) ─────────
@@ -260,11 +240,16 @@ export default function EditPage() {
     window.setTimeout(() => setHighlight((h) => (h && h.key === key && h.table === table ? null : h)), 2300);
   }
 
-  async function loadParts(page: number, search: string) {
-    const params: Record<string, string | number> = { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE };
-    if (search) params.search = search;
+  async function loadParts(page: number, filters = partsFiltersRef.current) {
+    if (validateAlpl(filters.alpl)) return [];
+    const request = ++partsRequestRef.current;
+    const params = toParams(filters, null);
+    params.delete("latest_only");
+    params.set("limit", String(PAGE_SIZE));
+    params.set("offset", String((page - 1) * PAGE_SIZE));
     try {
-      const d = await apiGet<{ items: Part[]; total: number }>("/api/parts", params);
+      const d = await apiGet<{ items: Part[]; total: number }>(`/api/parts?${params}`);
+      if (request !== partsRequestRef.current) return [];
       setPartsData(d.items ?? []);
       setPartsTotal(d.total ?? 0);
       return d.items ?? [];
@@ -275,15 +260,15 @@ export default function EditPage() {
     }
   }
 
-  async function loadMeasurements(page: number, search: string, date: string) {
-    const params: Record<string, string | number> = { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE };
-    if (search && /^\d+$/.test(search)) params.number_alpl = search;
-    if (date) {
-      params.date_from = `${date} 00:00:00`;
-      params.date_to = `${date} 23:59:59`;
-    }
+  async function loadMeasurements(page: number, filters = measFiltersRef.current) {
+    if (validateAlpl(filters.alpl)) return [];
+    const request = ++measRequestRef.current;
+    const params = toParams(filters, null);
+    params.set("limit", String(PAGE_SIZE));
+    params.set("offset", String((page - 1) * PAGE_SIZE));
     try {
-      const d = await apiGet<{ items: Measurement[]; total: number }>("/api/measurements", params);
+      const d = await apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${params}`);
+      if (request !== measRequestRef.current) return [];
       setMeasurementsData(d.items ?? []);
       setMeasTotal(d.total ?? 0);
       return d.items ?? [];
@@ -298,21 +283,22 @@ export default function EditPage() {
     /* ⚠ ลำดับชื่อทางซ้ายต้องตรงกับลำดับ promise ทางขวาเป๊ะ — แทรกตัวใหม่ตรงกลาง
        แล้วลืมเติมชื่อ จะทำให้ทุกตัวหลังจากนั้นรับข้อมูลผิดชนิดโดยไม่มี error
        (TypeScript จับให้ได้เพราะ type ต่างกัน แต่ถ้าบังเอิญเหมือนกันจะเงียบสนิท) */
-    const [vendors, handlers, owners, packageSizes, partNumbers, operators] = await Promise.all([
+    const [vendors, handlers, owners, packageSizes, tolerances, operators, partNumbers] = await Promise.all([
       apiGet<{ vendor_name: string }[]>("/api/vendors").catch(() => []),
       apiGet<{ handler_name: string }[]>("/api/handlers").catch(() => []),
       apiGet<{ owner_name: string }[]>("/api/owners").catch(() => []),
       apiGet<PackageSizeRow[]>("/api/package-sizes").catch(() => []),
-      apiGet<PartNumberRow[]>("/api/part-numbers/all").catch(() => []),
+      apiGet<ToleranceRow[]>("/api/package-size-tolerances").catch(() => []),
       apiGet<{ operator_name: string }[]>("/api/operators").catch(() => []),
+      apiGet<{ part_number_name: string; package_size: string }[]>("/api/part-numbers/all").catch(() => []),
     ]);
     setHandlerOptions(handlers.map((h) => h.handler_name));
     setVendorOptions(vendors.map((v) => v.vendor_name));
     setOwnerOptions(owners.map((o) => o.owner_name));
     setOperatorOptions(operators.map((o) => o.operator_name));
-    setPackageSizeCatalog(packageSizes);
-    setPartNumberCatalog(partNumbers);
+    setToleranceCatalog(tolerances);
     setPackageSizeOptions(packageSizes.map((p) => p.package_size));
+    setPartNumberCatalog(partNumbers);
   }
 
   function scheduleLiveRefresh() {
@@ -320,8 +306,8 @@ export default function EditPage() {
     liveRefreshTimer.current = window.setTimeout(() => {
       liveRefreshTimer.current = null;
       void Promise.all([
-        loadParts(partsPage, partsSearchRef.current),
-        loadMeasurements(measPage, measSearchRef.current, measDate),
+        loadParts(partsPage),
+        loadMeasurements(measPage),
         loadDropdownData(),
       ]);
       bumpHistory();
@@ -355,11 +341,15 @@ export default function EditPage() {
 
   useEffect(() => () => {
     if (liveRefreshTimer.current !== null) window.clearTimeout(liveRefreshTimer.current);
+    if (partsSearchTimer.current !== null) window.clearTimeout(partsSearchTimer.current);
+    if (measSearchTimer.current !== null) window.clearTimeout(measSearchTimer.current);
+    ++partsRequestRef.current;
+    ++measRequestRef.current;
   }, []);
 
   useEffect(() => {
     (async () => {
-      await Promise.all([loadParts(1, ""), loadMeasurements(1, "", ""), loadDropdownData()]);
+      await Promise.all([loadParts(1), loadMeasurements(1), loadDropdownData()]);
     })();
     // ไม่มี setInterval แล้ว — สถานะ session มาจาก useSessionState() ข้างบน
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -367,101 +357,105 @@ export default function EditPage() {
 
   async function reloadPartsAfterMutation(highlightAlpl?: number) {
     let page = partsPage;
-    let items = await loadParts(page, partsSearchRef.current);
+    let items = await loadParts(page);
     if (items.length === 0 && page > 1) {
       page -= 1;
       setPartsPage(page);
-      items = await loadParts(page, partsSearchRef.current);
+      items = await loadParts(page);
     }
     if (highlightAlpl != null) flashHighlight("parts", highlightAlpl);
   }
   async function reloadMeasAfterMutation(highlightId?: number) {
     let page = measPage;
-    let items = await loadMeasurements(page, measSearchRef.current, measDate);
+    let items = await loadMeasurements(page);
     if (items.length === 0 && page > 1) {
       page -= 1;
       setMeasPage(page);
-      items = await loadMeasurements(page, measSearchRef.current, measDate);
+      items = await loadMeasurements(page);
     }
     if (highlightId != null) flashHighlight("measurements", highlightId);
   }
 
   // ── Parts filter handlers ────────────────────────────────────────────
-  function onPartsSearchChange(value: string) {
-    setPartsSearchInput(value);
+  function onPartsFiltersChange(next: FilterState) {
+    setPartsFilters(next);
     if (partsSearchTimer.current) window.clearTimeout(partsSearchTimer.current);
-    partsSearchTimer.current = window.setTimeout(async () => {
-      partsSearchRef.current = value.trim();
+    partsFiltersRef.current = next;
+    ++partsRequestRef.current;
+    if (validateAlpl(next.alpl)) return;
+    partsSearchTimer.current = window.setTimeout(() => {
       setPartsPage(1);
-      await loadParts(1, partsSearchRef.current);
+      void loadParts(1, next);
     }, 300);
   }
-  async function onPartsClearFilter() {
+  function onPartsClearFilter() {
     if (partsSearchTimer.current) window.clearTimeout(partsSearchTimer.current);
-    setPartsSearchInput("");
-    partsSearchRef.current = "";
+    const empty: FilterState = { ...EMPTY_FILTERS, multi: { ...EMPTY_FILTERS.multi }, latestOnly: false };
+    setPartsFilters(empty);
+    partsFiltersRef.current = empty;
     setPartsPage(1);
-    await loadParts(1, "");
+    void loadParts(1, empty);
   }
   async function onPartsPrev() {
     if (partsPage <= 1) return;
     const p = partsPage - 1;
     setPartsPage(p);
-    await loadParts(p, partsSearchRef.current);
+    await loadParts(p);
   }
   async function onPartsNext() {
     if ((partsPage - 1) * PAGE_SIZE + partsData.length >= partsTotal) return;
     const p = partsPage + 1;
     setPartsPage(p);
-    await loadParts(p, partsSearchRef.current);
+    await loadParts(p);
   }
 
   // ── Measurements filter handlers ─────────────────────────────────────
-  function onMeasSearchChange(value: string) {
-    setMeasSearchInput(value);
+  function onMeasFiltersChange(next: FilterState) {
+    setMeasFilters(next);
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-    measSearchTimer.current = window.setTimeout(async () => {
-      measSearchRef.current = value.trim();
+    measFiltersRef.current = next;
+    ++measRequestRef.current;
+    if (validateAlpl(next.alpl)) return;
+    measSearchTimer.current = window.setTimeout(() => {
       setMeasPage(1);
-      await loadMeasurements(1, measSearchRef.current, measDate);
+      void loadMeasurements(1, next);
     }, 300);
   }
-  async function onMeasDateChange(value: string) {
-    setMeasDate(value);
-    setMeasPage(1);
-    await loadMeasurements(1, measSearchRef.current, value);
-  }
-  async function onMeasClearFilter() {
+  function onMeasClearFilter() {
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-    setMeasSearchInput("");
-    setMeasDate("");
-    measSearchRef.current = "";
+    const empty: FilterState = { ...EMPTY_FILTERS, multi: { ...EMPTY_FILTERS.multi }, latestOnly: false };
+    setMeasFilters(empty);
+    measFiltersRef.current = empty;
     setMeasPage(1);
-    await loadMeasurements(1, "", "");
+    void loadMeasurements(1, empty);
   }
   async function onMeasPrev() {
     if (measPage <= 1) return;
     const p = measPage - 1;
     setMeasPage(p);
-    await loadMeasurements(p, measSearchRef.current, measDate);
+    await loadMeasurements(p);
   }
   async function onMeasNext() {
     if ((measPage - 1) * PAGE_SIZE + measurementsData.length >= measTotal) return;
     const p = measPage + 1;
     setMeasPage(p);
-    await loadMeasurements(p, measSearchRef.current, measDate);
+    await loadMeasurements(p);
   }
 
   // ── Modal open/close ─────────────────────────────────────────────────
-  function openPartModal(mode: "add" | "edit", numberAlpl: number | null = null) {
-    const part = mode === "edit" ? partsData.find((p) => p.number_alpl === numberAlpl) ?? null : null;
-    setEditContext({ table: "parts", mode, key: numberAlpl, original: part });
+  function openPartModal(mode: "add" | "edit", partId: number | null = null) {
+    const part = mode === "edit" ? partsData.find((p) => p.part_id === partId) ?? null : null;
+    setEditContext({ table: "parts", mode, key: partId, original: part });
     setFieldErrors({});
     setAlplNoteConsumed(false);
     // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — effect ด้านล่างจะไปโหลด option ของ
     // Part Number ให้เองตาม pkgValue แล้วคงค่า pnValue เดิมไว้ถ้ายังเลือกได้อยู่
     setPkgValue(String(part?.package_size ?? ""));
+    setToleranceValue(String(part?.tolerance_id ?? ""));
     setPnValue(String(part?.part_number ?? ""));
+    setHandlerValue(String(part?.handler ?? ""));
+    setVendorValue(String(part?.vendor ?? ""));
+    setOwnerValue(String(part?.owner ?? ""));
     setPnOptions([]);
     // รอบแรกตอนเปิด modal ต้องโหลดทันที ไม่ต้อง debounce — ไม่งั้นช่อง Part Number
     // จะขึ้น disabled ค้างอยู่ 250ms ทั้งที่ Package Size มีค่าอยู่แล้ว (โหมด Edit)
@@ -505,6 +499,7 @@ export default function EditPage() {
     setEditContext({ table: "measurements", mode, key: measurementId, original: m });
     setFieldErrors({});
     setAlplNoteConsumed(false);
+    setMeasOperatorValue(String(m?.operator_name ?? ""));
   }
   function closeEditModal() {
     setEditContext({ table: null, mode: null, key: null, original: null });
@@ -525,8 +520,8 @@ export default function EditPage() {
     const nAlpl = Number(numberAlplRaw);
     if (numberAlplRaw === "" || !Number.isInteger(nAlpl) || nAlpl <= 0) {
       errors.number_alpl = "ต้องเป็นเลขจำนวนเต็มบวก";
-    } else if (partsData.some((p) => p.number_alpl === nAlpl && p.number_alpl !== editContext.key)) {
-      errors.number_alpl = `ALPL ${nAlpl} มีอยู่ในตารางแล้ว`;
+    } else if (partsData.some((p) => p.number_alpl === nAlpl && p.package_size === pkgValue.trim() && p.part_id !== editContext.key)) {
+      errors.number_alpl = `ALPL ${nAlpl} กับ Package Size นี้มีอยู่ในตารางแล้ว`;
     }
 
     /* บังคับกรอกแค่ **ALPL กับ Package Size** เท่านั้น (ตอน Add) — ที่เหลือ
@@ -544,8 +539,9 @@ export default function EditPage() {
        ⚠ Part Number ว่าง = ไม่มี Handler/Template มาให้อัตโนมัติ ต้องเลือกเอง
          (ถ้าเว้นทั้งคู่ Part นั้นจะไม่มีเครื่องผูกอยู่ ซึ่งจะหลุดจากรายงานที่
           จัดกลุ่มตาม Handler) */
-    if (isAdd) {
-      if (!pkgValue.trim()) errors.package_size = "เลือก Package Size";
+    if (!pkgValue.trim()) errors.package_size = "เลือก Package Size";
+    if (!toleranceCatalog.some((t) => t.package_size === pkgValue.trim() && String(t.tolerance_id) === toleranceValue)) {
+      errors.tolerance_id = "เลือก Tolerance ที่ตรงกับ Package Size";
     }
 
     if (Object.keys(errors).length > 0) {
@@ -567,6 +563,7 @@ export default function EditPage() {
       description: get("description") || null,
       po_number: get("po_number") === "" ? null : Number(get("po_number")),
       package_size: pkgValue.trim() || null,
+      tolerance_id: Number(toleranceValue),
       owner: get("owner") || null,
       recieve_date: get("recieve_date") || null,
     };
@@ -592,7 +589,7 @@ export default function EditPage() {
     }
   }
 
-  function confirmDeletePart(numberAlpl: number) {
+  function confirmDeletePart(partId: number, numberAlpl: number) {
     // ลบ Part ได้ต่อเมื่อ ALPL นี้ไม่มี Session/Measurement เหลืออยู่เลยเท่านั้น —
     // FK เป็น RESTRICT (ไม่มีโหมด cascade ตามที่ตกลงกันว่า "เก็บประวัติไว้เหมือนเดิม")
     // ถ้ายังมีประวัติอยู่ backend ปฏิเสธด้วย 409 พร้อมบอกจำนวนที่ติดอยู่ → เอาข้อความ
@@ -606,7 +603,7 @@ export default function EditPage() {
       onConfirm: async () => {
         setConfirmState(null);
         try {
-          await apiDelete(`/api/parts/${numberAlpl}`);
+          await apiDelete(`/api/parts/${partId}`);
           await reloadPartsAfterMutation();
           bumpTrash();
           closeEditModal();
@@ -634,6 +631,15 @@ export default function EditPage() {
       errors.number_alpl = "ต้องเป็นเลขจำนวนเต็มบวก";
     } else if (!partsData.some((p) => p.number_alpl === nAlpl)) {
       errors.number_alpl = `ALPL ${nAlpl} ยังไม่ได้ลงทะเบียนในตาราง Parts`;
+    }
+
+    const originalMeasurement = editContext.original as Measurement | null;
+    const samePart = originalMeasurement?.number_alpl === nAlpl
+      ? originalMeasurement.part_id : null;
+    const candidates = partsData.filter((p) => p.number_alpl === nAlpl);
+    const selectedPartId = samePart ?? (candidates.length === 1 ? candidates[0].part_id : null);
+    if (!errors.number_alpl && selectedPartId == null) {
+      errors.number_alpl = `ALPL ${nAlpl} มีหลาย Package Size — ต้องเลือก Part ให้ชัดเจนก่อนแก้ผลวัด`;
     }
 
     let sessionId: number | null = null;
@@ -668,8 +674,8 @@ export default function EditPage() {
 
     // ไม่ส่ง result — backend คำนวณ OK/NG ใหม่เองเสมอจาก value + tolerance ของ ALPL ที่เลือก
     const payload: Record<string, unknown> = isEdit
-      ? { session_id: sessionId, number_alpl: nAlpl, operator }
-      : { session_id: sessionId, number_alpl: nAlpl, value_x: valueX, value_y: valueY, note: get("note") || null };
+      ? { session_id: sessionId, number_alpl: nAlpl, part_id: selectedPartId, operator }
+      : { session_id: sessionId, number_alpl: nAlpl, part_id: selectedPartId, value_x: valueX, value_y: valueY, note: get("note") || null };
 
     if (isEdit && editContext.original) {
       const orig = editContext.original as Measurement;
@@ -723,16 +729,11 @@ export default function EditPage() {
   const measOrig = editContext.table === "measurements" ? (editContext.original as Measurement | null) : null;
   const pv = (field: keyof Part) => (partOrig ? (partOrig[field] as string | number | null) ?? "" : "");
   const mv = (field: keyof Measurement) => (measOrig ? (measOrig[field] as string | number | null) ?? "" : "");
-
-  // ค่า read-only ที่ผูกมากับ Part Number ที่เลือกอยู่ตอนนี้ — Handler/Nominal/
-  // Tolerance มาจาก part_number ตรงๆ ส่วน Template ต้อง lookup ต่ออีกทอดจาก
-  // package_size ของ part_number นั้น (ไม่ได้ผูกกับ part_number โดยตรง)
-  const selectedPn = partNumberCatalog.find((x) => x.part_number_name === pnValue) ?? null;
-  /* เกณฑ์ตัดสินมาจาก package_size ของ part ตัวนั้น ไม่ใช่จาก part_number เอง */
-  const selectedPkg =
-    packageSizeCatalog.find((ps) => ps.package_size === selectedPn?.package_size) ?? null;
-  const derivedTemplate =
-    selectedPkg?.template_name ?? "—";
+  const filterOptions: Record<MultiKey, string[]> = {
+    result: ["OK", "NG"], package_size: packageSizeOptions, part_number: [],
+    handler: handlerOptions, operator: operatorOptions, measure_type: ["IPM", "New"],
+    vendor: vendorOptions, owner: ownerOptions,
+  };
 
   return (
     <div className="main-edit">
@@ -753,16 +754,13 @@ export default function EditPage() {
           </button>
         </div>
 
-        <div className="filter-bar">
-          <input
-            type="text"
-            placeholder="ค้นหาด้วย ALPL Number..."
-            value={partsSearchInput}
-            onChange={(e) => onPartsSearchChange(e.target.value)}
+        <div className="measurement-history-filters">
+          <ExportFilters
+            value={partsFilters} onChange={onPartsFiltersChange} onClear={onPartsClearFilter}
+            options={filterOptions} partNumberCatalog={partNumberCatalog}
+            showLatestOnly={false} showMeasureDate={false}
+            hiddenMultiKeys={["result", "operator", "measure_type"]}
           />
-          <button type="button" className="btn-clear-filter" onClick={onPartsClearFilter}>
-            ✕ Clear Filter
-          </button>
         </div>
         <div className="filter-result-note" />
 
@@ -786,6 +784,7 @@ export default function EditPage() {
                 <th>Part Number</th>
                 <th>Handler</th>
                 <th>Package Size</th>
+                <th>Tolerance ID</th>
                 <th className="th-derived">Template</th>
                 <th className="th-derived">Nominal X / Y</th>
                 <th className="th-derived">Tol (+/-)</th>
@@ -801,11 +800,11 @@ export default function EditPage() {
             <tbody>
               {partsData.length === 0 ? (
                 <tr className="empty-row">
-                  <td colSpan={15}>{partsSearchRef.current ? "ไม่พบ Part ที่ตรงกับคำค้นหา" : "ยังไม่มีข้อมูล Parts"}</td>
+                  <td colSpan={16}>{hasAnyFilter(partsFilters) ? "ไม่พบ Part ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Parts"}</td>
                 </tr>
               ) : (
                 partsData.map((p) => (
-                  <tr key={p.number_alpl} className={highlight?.table === "parts" && highlight.key === p.number_alpl ? "highlight-row" : ""}>
+                  <tr key={p.part_id} className={highlight?.table === "parts" && highlight.key === p.number_alpl ? "highlight-row" : ""}>
                     <td>{p.part_id ?? "—"}</td>
                     <td>
                       <strong>{p.number_alpl}</strong>
@@ -813,6 +812,7 @@ export default function EditPage() {
                     <td>{p.part_number ?? ""}</td>
                     <td>{p.handler ?? ""}</td>
                     <td>{p.package_size ?? ""}</td>
+                    <td>{p.tolerance_id ?? "—"}</td>
                     <td className="td-derived">{p.template_name ?? ""}</td>
                     <td className="td-derived">
                       {p.nominal_x != null && p.nominal_y != null
@@ -840,7 +840,7 @@ export default function EditPage() {
                           className="btn-icon edit"
                           disabled={sessionRunning}
                           title={sessionRunning ? "กำลังวัดอยู่ ไม่สามารถแก้ไขได้" : undefined}
-                          onClick={() => openPartModal("edit", p.number_alpl)}
+                          onClick={() => openPartModal("edit", p.part_id)}
                         >
                           ✎ Edit
                         </button>
@@ -848,7 +848,7 @@ export default function EditPage() {
                           className="btn-icon delete"
                           disabled={sessionRunning}
                           title={sessionRunning ? "กำลังวัดอยู่ ไม่สามารถลบได้" : undefined}
-                          onClick={() => confirmDeletePart(p.number_alpl)}
+                          onClick={() => confirmDeletePart(p.part_id, p.number_alpl)}
                         >
                           🗑
                         </button>
@@ -884,17 +884,12 @@ export default function EditPage() {
           </div>
         </div>
 
-        <div className="filter-bar">
-          <input
-            type="text"
-            placeholder="ค้นหาด้วย ALPL Number..."
-            value={measSearchInput}
-            onChange={(e) => onMeasSearchChange(e.target.value)}
+        <div className="measurement-history-filters">
+          <ExportFilters
+            value={measFilters} onChange={onMeasFiltersChange} onClear={onMeasClearFilter}
+            options={filterOptions} partNumberCatalog={partNumberCatalog}
+            showLatestOnly={false}
           />
-          <input type="date" title="กรองตาม Timestamp (วันที่)" value={measDate} onChange={(e) => onMeasDateChange(e.target.value)} />
-          <button type="button" className="btn-clear-filter" onClick={onMeasClearFilter}>
-            ✕ Clear Filter
-          </button>
         </div>
         <div className="filter-result-note" />
 
@@ -934,7 +929,7 @@ export default function EditPage() {
             <tbody>
               {measurementsData.length === 0 ? (
                 <tr className="empty-row">
-                  <td colSpan={12}>{measSearchRef.current || measDate ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Measurements"}</td>
+                  <td colSpan={12}>{hasAnyFilter(measFilters) ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Measurements"}</td>
                 </tr>
               ) : (
                 measurementsData.map((m) => {
@@ -1060,19 +1055,9 @@ export default function EditPage() {
         }}
       />
 
-      {/* Shared datalist: Package Size
-          เรียงใหม่ตามสิ่งที่พิมพ์อยู่ใน `pkgValue` — เบราว์เซอร์กรองแบบ substring
-          แล้วแสดงตามลำดับใน DOM เฉย ๆ ถ้าไม่จัดอันดับเอง พิมพ์ "5x5" จะเห็น
-          "3.5x5" ขึ้นก่อน "5x5" (ดู utils/datalistOrder.ts) */}
-      <datalist id="package-size-datalist">
-        {orderForDatalist(packageSizeOptions, pkgValue).map((ps) => (
-          <option key={ps} value={ps} />
-        ))}
-      </datalist>
-
       {/* ── Edit/Add modal (ใช้ร่วมกันทั้ง Parts และ Measurements) ────── */}
       <div className={`modal-overlay${editContext.table ? " open" : ""}`}>
-        <div className="edit-modal-box">
+        <div className={`edit-modal-box${editContext.table === "parts" ? " part-edit-modal" : ""}`}>
           <div className="edit-modal-header">
             <div className="card-title">
               {editContext.table === "parts"
@@ -1090,7 +1075,7 @@ export default function EditPage() {
             </button>
           </div>
           <form ref={formRef} onSubmit={editContext.table === "parts" ? savePart : saveMeas}>
-            <div className="entry-form-grid">
+            <div className={`entry-form-grid${editContext.table === "parts" ? " part-edit-grid" : ""}`}>
               {editContext.table === "parts" && (
                 <>
                   <div className="form-group">
@@ -1110,13 +1095,15 @@ export default function EditPage() {
                   </div>
                   <div className="form-group">
                     <label htmlFor="f-package_size">Package Size {reqMark}</label>
-                    <input
-                      type="text"
+                    <SingleSelect
                       id="f-package_size"
-                      list="package-size-datalist"
+                      label="Package Size"
+                      options={packageSizeOptions}
                       value={pkgValue}
-                      onChange={(e) => setPkgValue(normalizePackageSize(e.target.value))}
-                      placeholder="เลือก Package Size ก่อนถึงจะเลือก Part Number ได้"
+                      onChange={(value) => { setPkgValue(value); setToleranceValue(""); setPnValue(""); }}
+                      placeholder="เลือก Package Size"
+                      normalizeQuery={normalizePackageSize}
+                      invalid={!!fieldErrors.package_size}
                     />
                     <div className="field-error">{fieldErrors.package_size}</div>
                   </div>
@@ -1125,47 +1112,52 @@ export default function EditPage() {
                     {/* disabled จนกว่าจะมี Package Size ที่หา Part Number เจอ —
                         เลือกก่อนไม่ได้เพราะ catalog ของ Part Number ผูกกับ
                         Package Size อยู่ (ดู schema part_number) */}
-                    <select
+                    <SingleSelect
                       id="f-part_number"
+                      label="Part Number"
+                      options={pnOptions}
                       value={pnValue}
                       disabled={pnOptions.length === 0}
-                      onChange={(e) => setPnValue(e.target.value)}
-                    >
-                      {/* ข้อความในช่องต้องบอกให้ถูกว่า "ทำไมเลือกไม่ได้" — ยังไม่กรอก
-                          Package Size กับกรอกแล้วแต่ Package Size นั้นไม่มี Part
-                          Number ผูกอยู่เลย เป็นคนละปัญหาที่แก้คนละทาง */}
-                      {!pkgValue.trim() ? (
-                        <option value="">-- เลือก Package Size ก่อน --</option>
-                      ) : (
-                        renderOptions(pnOptions)
-                      )}
-                    </select>
-                    <div className="field-error">
-                      {fieldErrors.part_number ? (
-                        fieldErrors.part_number
-                      ) : (
-                        <span className="field-locked-note">
-                          Nominal/Tolerance/Template ผูกมากับ Package Size ที่เลือกอัตโนมัติ — ไม่ต้องกรอกแยก
-                        </span>
-                      )}
-                    </div>
+                      onChange={setPnValue}
+                      placeholder={!pkgValue.trim() ? "เลือก Package Size ก่อน" : "เลือก Part Number"}
+                      emptyText="Package Size นี้ยังไม่มี Part Number"
+                      invalid={!!fieldErrors.part_number}
+                    />
+                    <div className="field-error">{fieldErrors.part_number}</div>
                   </div>
                   {/* Handler — เลือกได้เอง ไม่ผูกกับ Part Number แล้ว
                       (ALPL ตัวเดียวกันย้ายเครื่องได้ ส่วน part_number เป็นแค่แคตตาล็อก)
                       เว้นว่างได้ = ยังไม่ระบุ */}
                   <div className="form-group">
                     <label htmlFor="f-handler">Handler</label>
-                    <select id="f-handler" name="handler" defaultValue={pv("handler")}>
-                      <option value="">-- ยังไม่ระบุ --</option>
-                      {handlerOptions.map((h) => <option key={h} value={h}>{h}</option>)}
-                    </select>
+                    <SingleSelect id="f-handler" label="Handler"
+                      options={[{ value: "", label: "ยังไม่ระบุ" }, ...handlerOptions]}
+                      value={handlerValue} onChange={setHandlerValue}
+                      placeholder="ยังไม่ระบุ" invalid={!!fieldErrors.handler}
+                      searchable={false} showRadio={false} />
+                    <input type="hidden" name="handler" value={handlerValue} />
                     <div className="field-error">{fieldErrors.handler}</div>
+                  </div>
+                  <div className="form-group span-2">
+                    <label htmlFor="f-tolerance_id">Tolerance <span className="req">*</span></label>
+                    <SingleSelect id="f-tolerance_id" label="Tolerance"
+                      options={toleranceCatalog.filter((t) => t.package_size === pkgValue.trim()).map((t) => ({
+                        value: String(t.tolerance_id), label: toleranceLabel(t),
+                      }))}
+                      value={toleranceValue} onChange={setToleranceValue}
+                      disabled={!pkgValue.trim()}
+                      placeholder={pkgValue.trim() ? "เลือก Tolerance" : "เลือก Package Size ก่อนถึงจะเลือก Tolerance ได้"}
+                      invalid={!!fieldErrors.tolerance_id}
+                      searchable={false} showRadio={false} />
+                    <div className="field-error">{fieldErrors.tolerance_id}</div>
                   </div>
                   <div className="form-group">
                     <label htmlFor="f-vendor">Vendor</label>
-                    <select id="f-vendor" name="vendor" defaultValue={pv("vendor")}>
-                      {renderOptions(vendorOptions)}
-                    </select>
+                    <SingleSelect id="f-vendor" label="Vendor"
+                      options={[{ value: "", label: "ยังไม่ระบุ" }, ...vendorOptions]}
+                      value={vendorValue} onChange={setVendorValue}
+                      placeholder="เลือก Vendor" searchable={false} showRadio={false} />
+                    <input type="hidden" name="vendor" value={vendorValue} />
                     <div className="field-error">{fieldErrors.vendor}</div>
                   </div>
                   <div className="form-group span-2">
@@ -1175,14 +1167,17 @@ export default function EditPage() {
                   </div>
                   <div className="form-group">
                     <label htmlFor="f-po_number">PO Number</label>
-                    <input type="number" id="f-po_number" name="po_number" defaultValue={pv("po_number")} />
+                    <input type="number" id="f-po_number" name="po_number" defaultValue={pv("po_number")}
+                      onWheel={(e) => e.currentTarget.blur()} />
                     <div className="field-error">{fieldErrors.po_number}</div>
                   </div>
                   <div className="form-group">
                     <label htmlFor="f-owner">Owner</label>
-                    <select id="f-owner" name="owner" defaultValue={pv("owner")}>
-                      {renderOptions(ownerOptions)}
-                    </select>
+                    <SingleSelect id="f-owner" label="Owner"
+                      options={[{ value: "", label: "ยังไม่ระบุ" }, ...ownerOptions]}
+                      value={ownerValue} onChange={setOwnerValue}
+                      placeholder="เลือก Owner" searchable={false} showRadio={false} />
+                    <input type="hidden" name="owner" value={ownerValue} />
                     <div className="field-error">{fieldErrors.owner}</div>
                   </div>
                   <div className="form-group">
@@ -1199,32 +1194,6 @@ export default function EditPage() {
                       ) : (
                         <span className="field-locked-note">เว้นว่างได้ (จะถูกบันทึกเป็นค่าว่าง)</span>
                       )}
-                    </div>
-                  </div>
-                  {/* กล่องค่า read-only ที่ derive มาจาก Part Number ที่เลือก —
-                      โชว์ให้เห็นว่าเลือกตัวนี้แล้วได้เกณฑ์อะไรตามมา แต่แก้ที่นี่ไม่ได้ */}
-                  <div className="form-group span-2">
-                    <label>🔒 ค่าที่ผูกมากับ Part Number / Package Size (แก้ที่นี่ไม่ได้)</label>
-                    <div className="derived-preview">
-                      {selectedPn ? (
-                        <>
-                          <DerivedCell label="Handler" value={selectedPn.handler ?? "—"} />
-                          <DerivedCell label="Template" value={derivedTemplate} />
-                          {/* ⚠ เกณฑ์มาจาก Package Size ไม่ใช่ Part Number — ถ้าอ่านจาก
-                              selectedPn จะได้ undefined เพราะ endpoint เลิกส่งมาแล้ว */}
-                          <DerivedCell label="Nominal X / Y"
-                            value={selectedPkg ? `${selectedPkg.nominal_x} / ${selectedPkg.nominal_y}` : "—"} />
-                          <DerivedCell label="Tol (+/-)"
-                            value={selectedPkg ? `+${selectedPkg.upper_tol} / -${selectedPkg.lower_tol}` : "—"} />
-                        </>
-                      ) : (
-                        <span style={{ color: "var(--muted)" }}>
-                          เลือก Part Number เพื่อดู Handler / Template / Nominal / Tolerance ที่ผูกอยู่
-                        </span>
-                      )}
-                    </div>
-                    <div className="field-locked-note">
-                      ต้องการแก้ค่าพวกนี้ ให้ไปแก้ที่ตาราง Part Number ในหัวข้อ Lookup Tables ด้านล่าง
                     </div>
                   </div>
                 </>
@@ -1271,9 +1240,12 @@ export default function EditPage() {
                         <label htmlFor="f-operator">
                           Operator <span className="req">*</span>
                         </label>
-                        <select id="f-operator" name="operator" defaultValue={mv("operator_name")}>
-                          {renderOptions(operatorOptions)}
-                        </select>
+                        <SingleSelect id="f-operator" label="Operator"
+                          options={operatorOptions}
+                          value={measOperatorValue} onChange={setMeasOperatorValue}
+                          placeholder="เลือก Operator" searchable={false} showRadio={false}
+                          invalid={!!fieldErrors.operator} />
+                        <input type="hidden" name="operator" value={measOperatorValue} />
                         <div className="field-error">{fieldErrors.operator}</div>
                       </div>
                       {/* ผลการวัดจริงจากเครื่อง + ข้อมูลของ session — ดูได้อย่างเดียว
@@ -1332,7 +1304,7 @@ export default function EditPage() {
           <p>{alertText}</p>
           <div className="confirm-actions">
             <button type="button" className="btn-save" onClick={() => setAlertText(null)}>
-              ตกลง
+              OK
             </button>
           </div>
         </div>

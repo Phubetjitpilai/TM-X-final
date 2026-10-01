@@ -12,6 +12,33 @@ from shared import *  # noqa: F401,F403
 
 router = APIRouter()
 
+# คำตอบจาก modal อาจถูกส่งซ้ำ (กดรัว/เปิดหลายแท็บ) หรือคนละปุ่มอาจถูกกด
+# พร้อมกัน จึงต้องตัดสินทีละคำขอ ก่อนส่งคำสั่งไป Pi
+_operator_answer_lock = asyncio.Lock()
+
+
+async def _deliver_operator_answer(pending_store, session_id, action, error_prefix):
+    """ส่งคำตอบให้ Pi เพียงครั้งเดียวต่อคำถาม; retry ได้เมื่อส่งไม่สำเร็จจริง"""
+    async with _operator_answer_lock:
+        pending = pending_store.get(session_id)
+        if pending is None:
+            raise HTTPException(404, "ไม่พบคำถามค้างของ session นี้ (อาจหมดอายุไปแล้ว)")
+        resolved = pending.get("_resolved_action")
+        if resolved:
+            if resolved == action:
+                return False  # คำขอซ้ำหลัง Pi ยืนยันแล้ว
+            raise HTTPException(409, "คำถามนี้ได้รับคำตอบอื่นไปแล้ว")
+
+        # เก็บคำถามไว้จน Pi ยืนยัน; ถ้าสั่งไม่ถึง ผู้ใช้ยังกดตอบใหม่ได้
+        agent_err = await _notify_agent_action(action, session_id)
+        if agent_err:
+            raise HTTPException(502, f"{error_prefix} — {agent_err}")
+
+        # Stop หรือคำถามรอบใหม่อาจเข้ามาระหว่างรอ Pi ตอบ
+        if pending_store.get(session_id) is pending:
+            pending_store[session_id] = {"_resolved_action": action}
+        return True
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SSE Stream
@@ -197,12 +224,13 @@ def _limits_of(row, measure_type: str) -> Dict[str, Any]:
     เพราะจะเปิดช่องให้มีคนเขียน `if measure_type == "IPM"` ที่ฝั่ง Pi แล้วกฎ
     เรื่องโหมดจะไปอยู่ 2 ที่ (`_offset_limit` ที่นี่ควรเป็นที่เดียว)
     """
+    offset_limit = _offset_limit(measure_type, row)
     return {
-        "x_lo": round(row["nominal_x"] - row["lower_tol"], _DP),
-        "x_hi": round(row["nominal_x"] + row["upper_tol"], _DP),
-        "y_lo": round(row["nominal_y"] - row["lower_tol"], _DP),
-        "y_hi": round(row["nominal_y"] + row["upper_tol"], _DP),
-        "offset_max": _offset_limit(measure_type, row),
+        "x_lo": round(float(row["nominal_x"]) - float(row["lower_tol"]), _DP),
+        "x_hi": round(float(row["nominal_x"]) + float(row["upper_tol"]), _DP),
+        "y_lo": round(float(row["nominal_y"]) - float(row["lower_tol"]), _DP),
+        "y_hi": round(float(row["nominal_y"]) + float(row["upper_tol"]), _DP),
+        "offset_max": float(offset_limit) if offset_limit is not None else None,
     }
 
 def _criteria_from_config(cur, gi: int, group: Dict[str, Any], entry_mode: str):
@@ -212,7 +240,7 @@ def _criteria_from_config(cur, gi: int, group: Dict[str, Any], entry_mode: str):
     New (Part ถูกสร้างพร้อม measurement ของชิ้นนั้น — ดู `create_measurement`)
     และโหมด IPM ก็มี ALPL บางตัวที่ยังไม่ลงทะเบียน
 
-    ใช้ตารางเดียวกับ `_load_criteria` คือ **`package_size` ทุกโหมด** ค่าที่ได้
+    ใช้ตารางเดียวกับ `_load_criteria` คือ `package_size_tolerance` ค่าที่ได้
     จึงตรงกับที่ backend จะใช้ตัดสินจริงตอน measurement เข้ามา
 
     ⚠ เดิมแตกเป็น 2 กิ่ง (IPM → `package_size` · New/Rework → `part_number`)
@@ -225,14 +253,28 @@ def _criteria_from_config(cur, gi: int, group: Dict[str, Any], entry_mode: str):
       `_offset_limit()` ที่ `_limits_of()` เรียกต่อ) — IPM ไม่ตรวจ offset
       ส่วน New/Rework ตรวจ · ไม่เกี่ยวกับการเลือกตารางอีกแล้ว
     """
+    if group.get("tolerance_id") in (None, ""):
+        cur.execute(
+            "SELECT pst.tolerance_id FROM package_size_tolerance pst "
+            "JOIN package_size ps ON ps.package_size_id = pst.package_size_id "
+            "WHERE ps.package_size = %s",
+            ((group.get("package_size") or "").strip(),),
+        )
+        matches = cur.fetchall()
+        if len(matches) == 1:
+            group["tolerance_id"] = matches[0]["tolerance_id"]
+        else:
+            raise HTTPException(400, f"กลุ่มที่ {gi + 1}: กรุณาเลือก Tolerance ที่ตรงกับ Package Size")
     cur.execute(
-        "SELECT nominal_x, nominal_y, upper_tol, lower_tol, offset_tol "
-        "FROM package_size WHERE package_size = %s",
-        ((group.get("package_size") or "").strip(),),
+        "SELECT pst.nominal_x, pst.nominal_y, pst.upper_tol, pst.lower_tol, pst.offset_tol "
+        "FROM package_size_tolerance pst JOIN package_size ps "
+        "ON ps.package_size_id = pst.package_size_id "
+        "WHERE ps.package_size = %s AND pst.tolerance_id = %s",
+        ((group.get("package_size") or "").strip(), group.get("tolerance_id")),
     )
     row = cur.fetchone()
     if not row:
-        raise HTTPException(400, f"กลุ่มที่ {gi + 1}: หาเกณฑ์ตัดสินของกลุ่มนี้ไม่เจอ")
+        raise HTTPException(400, f"กลุ่มที่ {gi + 1}: กรุณาเลือก Tolerance ที่ตรงกับ Package Size")
     return row
 
 def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str, *, preserve_part=False):
@@ -266,10 +308,24 @@ def _build_groups(cur, groups, group_of, queue, templates, entry_mode: str, *, p
         if entry_mode == "IPM" or preserve_part:
             want = _limits_of(crit, entry_mode)
             for a in alpl:
-                cur.execute("SELECT 1 FROM parts_specifications WHERE number_alpl = %s", (a,))
-                if not cur.fetchone():
+                cur.execute(
+                    "SELECT p.part_id, p.tolerance_id, ps.package_size FROM parts_specifications p "
+                    "LEFT JOIN part_number pn ON pn.part_number_id = p.part_number_id "
+                    "LEFT JOIN package_size ps ON ps.package_size_id = "
+                    "COALESCE(p.package_size_id, pn.package_size_id) "
+                    "WHERE p.number_alpl = %s AND ps.package_size = %s",
+                    (a, g.get("package_size")),
+                )
+                existing_part = cur.fetchone()
+                if not existing_part:
                     continue                      # ยังไม่ลงทะเบียน — จะถูกสร้างด้วย config นี้อยู่แล้ว
-                got = _limits_of(_load_criteria(cur, a), entry_mode)
+                if existing_part["package_size"] and existing_part["package_size"] != g.get("package_size"):
+                    raise HTTPException(400, f"ALPL {a} ใช้ Package Size คนละขนาดกับกลุ่มที่ {gi + 1}")
+                if existing_part["tolerance_id"] is None:
+                    continue                      # ค่าเก่าที่ยังว่างจะถูกเติมเมื่อวัดชิ้นนี้
+                if existing_part["tolerance_id"] != int(g["tolerance_id"]):
+                    raise HTTPException(400, f"ALPL {a} ใช้ Tolerance คนละชุดกับกลุ่มที่ {gi + 1} — แก้ที่หน้า Edit › Parts")
+                got = _limits_of(_load_criteria(cur, existing_part["part_id"]), entry_mode)
                 if got != want:
                     raise HTTPException(
                         400,
@@ -359,6 +415,8 @@ async def _notify_agent_start(
         "tray_capacity": tray_capacity,
         "groups": groups,
     }
+    # Keep the entire Agent payload JSON-safe before logging and sending to Pi.
+    payload = json.loads(json.dumps(payload, default=_json_safe))
     # log ก่อนยิงเสมอ — เป็นจุดเดียวที่เห็น "สิ่งที่ backend ส่งให้ Agent" ได้จริง
     # (POST นี้ไม่ผ่านเบราว์เซอร์ DevTools จึงมองไม่เห็น) ถ้า Agent ไม่ตอบ
     # อย่างน้อยยังรู้ว่าเราส่งอะไรออกไป ไม่ต้องเดา
@@ -515,7 +573,7 @@ def _flatten_groups(groups: List[Dict[str, Any]]) -> tuple:
     """
     queue: List[int] = []
     group_of: List[int] = []
-    seen: Dict[int, int] = {}
+    seen: Dict[tuple, int] = {}
     for gi, g in enumerate(groups):
         try:
             alpls = [int(x) for x in g["number_alpl"]]
@@ -526,11 +584,12 @@ def _flatten_groups(groups: List[Dict[str, Any]]) -> tuple:
         if not alpls:
             raise HTTPException(400, f"กลุ่มที่ {gi + 1} ต้องมี ALPL อย่างน้อย 1 ตัว")
         for a in alpls:
-            if a in seen:
-                where = ("ในกลุ่มเดียวกัน" if seen[a] == gi
-                         else f"ซ้ำกับกลุ่มที่ {seen[a] + 1}")
-                raise HTTPException(400, f"ALPL {a} ซ้ำ ({where}) — แก้ให้ไม่ซ้ำก่อนเริ่มวัด")
-            seen[a] = gi
+            identity = (a, str(g.get("package_size") or "").strip())
+            if identity in seen:
+                where = ("ในกลุ่มเดียวกัน" if seen[identity] == gi
+                         else f"ซ้ำกับกลุ่มที่ {seen[identity] + 1}")
+                raise HTTPException(400, f"ALPL {a} / Package Size {identity[1]} ซ้ำ ({where})")
+            seen[identity] = gi
             queue.append(a)
             group_of.append(gi)
     return queue, group_of
@@ -552,7 +611,8 @@ def _validate_group(cur, gi: int, group: Dict[str, Any], measure_type: str,
     if not pkg:
         raise HTTPException(400, f"{label}: ต้องเลือก Package Size")
     cur.execute("SELECT package_size_id FROM package_size WHERE package_size = %s", (pkg,))
-    if not cur.fetchone():
+    package_row = cur.fetchone()
+    if not package_row:
         raise HTTPException(400, f"{label}: ไม่รู้จัก Package Size \"{pkg}\"")
 
     part_number = (group.get("part_number") or "").strip()
@@ -568,8 +628,9 @@ def _validate_group(cur, gi: int, group: Dict[str, Any], measure_type: str,
     # ── ALPL มี/ไม่มีใน DB ตามที่โหมดนั้นต้องการไหม ──────────────────────
     placeholders = ", ".join(["%s"] * len(alpls))
     cur.execute(
-        f"SELECT number_alpl FROM parts_specifications WHERE number_alpl IN ({placeholders})",
-        alpls,
+        f"SELECT number_alpl FROM parts_specifications WHERE package_size_id = %s "
+        f"AND number_alpl IN ({placeholders})",
+        [package_row["package_size_id"], *alpls],
     )
     found = {r["number_alpl"] for r in cur.fetchall()}
     missing = [a for a in alpls if a not in found]
@@ -579,19 +640,25 @@ def _validate_group(cur, gi: int, group: Dict[str, Any], measure_type: str,
     # ทุกโหมดลงทะเบียนตัวที่ยังไม่มีตอนวัดจริง; Frontend ถามยืนยันก่อน Save
     # จึงไม่บล็อกที่นี่ — แต่ต้องมี Package Size ในกลุ่ม ซึ่งเช็คไปแล้วข้างบน
 
-    # template ผูกกับ package_size ของกลุ่ม (ไม่ต้องพึ่ง Part ที่อาจยังไม่มี)
+    # Template ขึ้นกับคู่ Package Size + Handler ของกลุ่ม
+    handler = (group.get("handler") or "").strip()
+    if not handler:
+        raise HTTPException(400, f"{label}: ต้องเลือก Handler ก่อนเริ่มวัด")
     cur.execute(
         "SELECT t.template_name FROM package_size ps "
-        "LEFT JOIN template t ON ps.template_id = t.template_id "
+        "LEFT JOIN handler h ON h.handler_name = %s "
+        "LEFT JOIN package_size_handler_template psht "
+        "  ON psht.package_size_id = ps.package_size_id AND psht.handler_id = h.handler_id "
+        "LEFT JOIN template t ON t.template_id = psht.template_id "
         "WHERE ps.package_size = %s",
-        (pkg,),
+        (handler, pkg),
     )
     row = cur.fetchone()
     if not row or not row["template_name"]:
         raise HTTPException(
             400,
-            f"{label}: Package Size \"{pkg}\" ยังไม่ได้ตั้ง Template ของเครื่อง TM-X "
-            f"(แก้ที่หน้า Edit › Lookup Tables › Package Size)",
+            f"{label}: ยังไม่ได้ตั้ง Template สำหรับ Package Size \"{pkg}\" "
+            f"และ Handler \"{handler}\" (แก้ที่หน้า Edit › Lookup Tables › Package Handler Template)",
         )
     return row["template_name"]
 
@@ -702,10 +769,14 @@ async def start_session(request: Request):
                         if isinstance(previous_q, dict) and previous_q.get("start_confirmed") and not previous_q.get("work_closed"):
                             raise HTTPException(409, "ยังมีชิ้นงานในคิวที่ไม่ได้วัด — วัดต่อหรือกดจบการทำงานก่อนเริ่มงานใหม่")
                 if remeasure:
-                    cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s",
+                    cur.execute("SELECT m.number_alpl, ps.package_size FROM measurements m "
+                                "JOIN parts_specifications p ON p.part_id=m.part_id "
+                                "JOIN package_size ps ON ps.package_size_id=p.package_size_id "
+                                "WHERE m.measurement_id=%s AND m.session_id=%s",
                                 (review_source["measurement_id"], review_source["session_id"]))
                     original = cur.fetchone()
-                    if not original or alpl_queue != [original["number_alpl"]]:
+                    if (not original or alpl_queue != [original["number_alpl"]]
+                            or groups[0].get("package_size") != original["package_size"]):
                         raise HTTPException(409, "รายการวัดซ้ำไม่ตรงกับ Measurement เดิม")
 
                 # 1) ตรวจทุกกลุ่มให้ครบก่อน — **ยังไม่เขียนอะไรลง DB**
@@ -860,20 +931,29 @@ async def restart_existing_session(session_id: int, mode: str, trigger_mode: str
                 if len(queue) != row["target_count"] or position != row["measured_count"]:
                     raise HTTPException(409, "ข้อมูลคิวกับผลวัดไม่ตรงกัน กรุณาตรวจสอบก่อน")
                 if mode == "single":
-                    cur.execute("SELECT number_alpl FROM measurements WHERE measurement_id=%s AND session_id=%s", (measurement_id, session_id))
+                    cur.execute("SELECT m.number_alpl, ps.package_size FROM measurements m "
+                                "JOIN parts_specifications p ON p.part_id=m.part_id "
+                                "JOIN package_size ps ON ps.package_size_id=p.package_size_id "
+                                "WHERE m.measurement_id=%s AND m.session_id=%s", (measurement_id, session_id))
                     found = cur.fetchone()
-                    if not found or found["number_alpl"] not in queue[:position]:
+                    prior = [(queue[i], q["groups"][q["group_of"][i]]["package_size"]) for i in range(position)]
+                    identity = (found["number_alpl"], found["package_size"]) if found else None
+                    if identity not in prior:
                         raise HTTPException(409, "ไม่พบชิ้นงานที่วัดแล้วใน Session นี้")
-                    run_pieces = [queue.index(found["number_alpl"]) + 1]
+                    run_pieces = [prior.index(identity) + 1]
                 elif mode in ("remaining", "all") and not q.get("work_closed") and position < len(queue):
                     run_pieces = list(range(position + 1, len(queue) + 1)) if mode == "remaining" else list(range(1, len(queue) + 1))
                 else:
                     raise HTTPException(409, "คิวครบหรือจบงานแล้ว ไม่สามารถวัดต่อได้")
-                cur.execute("SELECT measurement_id, number_alpl FROM measurements WHERE session_id=%s", (session_id,))
-                ids = {item["number_alpl"]: item["measurement_id"] for item in cur.fetchall()}
-                if any(alpl not in ids for alpl in queue[:position]):
+                cur.execute("SELECT m.measurement_id, m.number_alpl, ps.package_size FROM measurements m "
+                            "JOIN parts_specifications p ON p.part_id=m.part_id "
+                            "JOIN package_size ps ON ps.package_size_id=p.package_size_id "
+                            "WHERE m.session_id=%s ORDER BY m.measurement_id", (session_id,))
+                ids = {(item["number_alpl"], item["package_size"]): item["measurement_id"] for item in cur.fetchall()}
+                identities = [(queue[i], q["groups"][q["group_of"][i]]["package_size"]) for i in range(len(queue))]
+                if any(identity not in ids for identity in identities[:position]):
                     raise HTTPException(409, "ผลวัดเดิมไม่ครบตามตำแหน่งคิว")
-                existing = {p: ids[queue[p - 1]] for p in run_pieces if queue[p - 1] in ids}
+                existing = {p: ids[identities[p - 1]] for p in run_pieces if identities[p - 1] in ids}
                 chosen_trigger = trigger_mode or q.get("trigger_mode", "auto")
                 if chosen_trigger == "manual" and not ALLOW_MANUAL_TRIGGER:
                     raise HTTPException(403, "โหมด Manual ถูกปิดไว้")
@@ -900,6 +980,7 @@ async def restart_existing_session(session_id: int, mode: str, trigger_mode: str
             payload = {"action": "start", "session_id": session_id, "target_count": len(queue),
                        "groups": groups, "trigger_mode": chosen_trigger, "tray_capacity": tray,
                        "run_pieces": run_pieces, "existing_measurements": existing}
+            payload = json.loads(json.dumps(payload, default=_json_safe))
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.post(f"{AGENT_BASE_URL}/command", json=payload,
@@ -1233,23 +1314,10 @@ async def retry_session(body: SessionContinueRequest):
     """
     session_id = body.session_id
 
-    # คำถามค้างต้องมีอยู่จริง — กันกดปุ่มรัว ๆ (ยิง retry ซ้ำจะ set _answer_event
-    # หลายครั้งแล้ววนเกินโควตา) และกันกดหลัง modal หมดอายุ (Pi เลิกรอไปแล้ว)
-    if measure_timeouts.get(session_id) is None:
-        raise HTTPException(404, "ไม่พบคำถามค้างของ session นี้ (อาจหมดอายุไปแล้ว)")
-    pending = measure_timeouts.pop(session_id)
-
-    # ⚠ ต่างจาก stop: retry สั่งไม่ถึง = **Pi ยังบล็อกรอคำตอบอยู่เฉย ๆ**
-    #   ไม่มีอะไรเดินหน้า ต้องบอกผู้ใช้ให้ชัดว่ากดแล้วไม่ผ่าน จะได้กดซ้ำหรือไป
-    #   กด Stop — ถ้าเงียบไว้ผู้ใช้จะยืนรอเครื่องที่ไม่มีวันขยับ
-    agent_err = await _notify_agent_action("retry", session_id)
-    if agent_err:
-        # คืนคำถามค้างกลับไป — ยังสั่งไม่สำเร็จ Pi ยังรออยู่จริง ถ้าไม่คืน
-        # ผู้ใช้จะกดปุ่มไหนก็ได้ 404 หมดทั้งที่เครื่องยังค้างรอคำตอบ
-        measure_timeouts[session_id] = pending
-        raise HTTPException(502, f"สั่งให้ Pi ลองใหม่ไม่สำเร็จ — {agent_err}")
-
-    log.info("Session %s: ผู้ใช้เลือกลองใหม่ — ชิ้นเดิม ตำแหน่งคิวไม่ขยับ", session_id)
+    delivered = await _deliver_operator_answer(
+        measure_timeouts, session_id, "retry", "สั่งให้ Pi ลองใหม่ไม่สำเร็จ")
+    if delivered:
+        log.info("Session %s: ผู้ใช้เลือกลองใหม่ — ชิ้นเดิม ตำแหน่งคิวไม่ขยับ", session_id)
     return {"ok": True}
 
 
@@ -1285,20 +1353,10 @@ async def resume_session(body: SessionContinueRequest):
     """
     session_id = body.session_id
 
-    # กันกดรัว ๆ และกันกดหลัง session จบไปแล้ว (Pi เลิกรอไปแล้ว ไม่มีใครรับคำสั่ง)
-    if tray_pending.get(session_id) is None:
-        raise HTTPException(404, "ไม่พบคำถามถาดเต็มของ session นี้ (อาจหยุดไปแล้ว)")
-    pending = tray_pending.pop(session_id)
-
-    # ⚠ เหมือน retry: สั่งไม่ถึง = **Pi ยังบล็อกรออยู่เฉย ๆ** ไม่มีอะไรเดินหน้า
-    #   ต้องคืนคำถามค้างกลับไปแล้วบอกผู้ใช้ ไม่งั้นกดปุ่มไหนก็ได้ 404 หมด
-    #   ทั้งที่เครื่องยังยืนรอคำตอบอยู่จริง
-    agent_err = await _notify_agent_action("resume", session_id)
-    if agent_err:
-        tray_pending[session_id] = pending
-        raise HTTPException(502, f"สั่งให้ Pi วัดต่อไม่สำเร็จ — {agent_err}")
-
-    log.info("Session %s: ผู้ใช้เคลียร์ถาดแล้ว — วัดต่อ", session_id)
+    delivered = await _deliver_operator_answer(
+        tray_pending, session_id, "resume", "สั่งให้ Pi วัดต่อไม่สำเร็จ")
+    if delivered:
+        log.info("Session %s: ผู้ใช้เคลียร์ถาดแล้ว — วัดต่อ", session_id)
     return {"ok": True}
 
 @router.post("/api/mcu-disconnected")
@@ -1321,16 +1379,10 @@ async def mcu_retry_session(body: SessionContinueRequest):
     แยกจาก measure_timeouts)
     """
     session_id = body.session_id
-    if mcu_disconnected_pending.get(session_id) is None:
-        raise HTTPException(404, "ไม่พบคำถามค้างของ session นี้ (อาจหมดอายุไปแล้ว)")
-    pending = mcu_disconnected_pending.pop(session_id)
-
-    agent_err = await _notify_agent_action("retry", session_id)
-    if agent_err:
-        mcu_disconnected_pending[session_id] = pending
-        raise HTTPException(502, f"สั่งให้ Pi ลองใหม่ไม่สำเร็จ — {agent_err}")
-
-    log.info("Session %s: ผู้ใช้เลือกลองใหม่หลัง MCU เชื่อมต่อกลับมา", session_id)
+    delivered = await _deliver_operator_answer(
+        mcu_disconnected_pending, session_id, "retry", "สั่งให้ Pi ลองใหม่ไม่สำเร็จ")
+    if delivered:
+        log.info("Session %s: ผู้ใช้เลือกลองใหม่หลัง MCU เชื่อมต่อกลับมา", session_id)
     return {"ok": True}
 
 
@@ -1393,25 +1445,13 @@ async def accept_session(body: SessionContinueRequest):
     """
     session_id = body.session_id
 
-    # คำถามค้างต้องมีอยู่จริง — กันกดปุ่มรัว ๆ (ยิงซ้ำจะ set _answer_event หลายครั้ง)
-    # และกันกดหลัง modal หมดอายุไปแล้ว (Pi เลิกรอ เดินหน้าไปแล้ว)
-    if measure_timeouts.get(session_id) is None:
-        raise HTTPException(404, "ไม่พบคำถามค้างของ session นี้ (อาจหมดอายุไปแล้ว)")
-    pending = measure_timeouts.pop(session_id)
-
-    # ⚠ สั่งไม่ถึง = Pi ยังบล็อกรอคำตอบอยู่เฉย ๆ ไม่มีอะไรเดินหน้า
-    #   ต้องบอกผู้ใช้ให้ชัดว่ากดแล้วไม่ผ่าน จะได้กดซ้ำหรือไปกด Stop
-    agent_err = await _notify_agent_action("accept", session_id)
-    if agent_err:
-        # คืนคำถามค้าง — ยังสั่งไม่สำเร็จ Pi ยังรออยู่จริง ถ้าไม่คืน ผู้ใช้จะกด
-        # ปุ่มไหนก็ได้ 404 หมดทั้งที่เครื่องยังค้างรอคำตอบ
-        measure_timeouts[session_id] = pending
-        raise HTTPException(502, f"สั่งให้ Pi บันทึกค่าไม่สำเร็จ — {agent_err}")
-
-    log.info(
-        "Session %s: ผู้ใช้เลือกรับค่าจาก Pi (ไม่มีรูป) — Pi จะ POST measurement เอง",
-        session_id,
-    )
+    delivered = await _deliver_operator_answer(
+        measure_timeouts, session_id, "accept", "สั่งให้ Pi บันทึกค่าไม่สำเร็จ")
+    if delivered:
+        log.info(
+            "Session %s: ผู้ใช้เลือกรับค่าจาก Pi (ไม่มีรูป) — Pi จะ POST measurement เอง",
+            session_id,
+        )
     return {"ok": True}
 
 @router.post("/api/heartbeat")

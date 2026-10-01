@@ -489,9 +489,9 @@ export default function ExportPage() {
   /** ข้อความปุ่มดาวน์โหลด — บอกจำนวนแถวจริงที่จะได้ ไม่ใช่ป้ายนิ่งๆ
    *  ผู้ใช้จะได้เห็นตั้งแต่ก่อนกดว่าไฟล์จะมีกี่แถว (และรู้ทันทีถ้าเป็น 0) */
   const downloadLabel =
-    total === 0 ? "⤓ ไม่มีข้อมูลให้ดาวน์โหลด"
-    : format === "pdf" ? `🖨 พิมพ์เป็น PDF${total != null ? ` (${total} แถว)` : ""}`
-    : `⤓ ดาวน์โหลด ${label}${total != null ? ` (${total} แถว)` : ""}`;
+    total === 0 ? "⤓ No Data to Download"
+    : format === "pdf" ? `🖨 Print PDF${total != null ? ` (${total} rows)` : ""}`
+    : `⤓ Download ${label}${total != null ? ` (${total} rows)` : ""}`;
 
   return (
     <div className="main-edit">
@@ -564,7 +564,7 @@ export default function ExportPage() {
                           onClick={async () => {
                             const ok = await dialog.confirm(
                               <>ลบ Template <strong>"{t.name}"</strong></>,
-                              { title: "ลบ Template", okLabel: "🗑 ลบ", danger: true },
+                              { title: "ลบ Template", okLabel: "🗑 Delete", danger: true },
                             );
                             if (ok) delTpl.mutate(t.export_template_id);
                           }}
@@ -694,7 +694,7 @@ export default function ExportPage() {
 
             <div className="actions">
               <button type="button" className="btn-ghost" onClick={() => setStep(1)}>
-                ← เปลี่ยน Template
+                ← Change Template
               </button>
 
               {/* ช่องชื่อไฟล์วางติดกับปุ่มโดยตั้งใจ — ถ้าไปวางบนสุดจะมีตัวกรองกับ
