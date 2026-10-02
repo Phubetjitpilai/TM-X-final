@@ -396,6 +396,7 @@ def _export_filters(f: Dict[str, Any]):
     eq("pn.part_number_name", "part_number")
     eq("h.handler_name",    "handler")
     eq("ps.package_size",   "package_size")
+    eq("m.tolerance_id",    "tolerance_id")
     eq("p.po_number",       "po_number")
 
     # ช่วงวันที่ของ "วันที่วัด" (measurements.timestamp)

@@ -1559,6 +1559,7 @@ def export_filters_dep(
     recv_to:      Optional[str] = None,
     session_id:   Optional[int] = None,
     po_number:    Optional[int] = None,
+    tolerance_id: Optional[int] = None,
     description:  Optional[str] = None,
     # ── ช่องแบบเลือกได้หลายค่า (multi-select) ────────────────────────────
     # ส่งมาเป็น query param ซ้ำๆ เช่น ?vendor=A&vendor=B → กลายเป็น IN ('A','B')
@@ -1583,7 +1584,7 @@ def export_filters_dep(
     return {
         "number_alpl": number_alpl, "date_from": date_from, "date_to": date_to,
         "recv_from": recv_from, "recv_to": recv_to, "session_id": session_id,
-        "po_number": po_number, "description": description,
+        "po_number": po_number, "tolerance_id": tolerance_id, "description": description,
         "result": result, "operator": operator, "measure_type": measure_type,
         "vendor": vendor, "owner": owner, "part_number": part_number,
         "handler": handler, "package_size": package_size,

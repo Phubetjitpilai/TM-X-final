@@ -376,11 +376,8 @@ button.topbar-link {
    minmax(0,1fr) กัน content ที่ยาว (เช่น multi-select ที่ติ๊กหลายค่า) ดัน
    คอลัมน์ให้ล้นออกนอกกรอบ */
 .filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.9rem 1.1rem; }
-/* Description — ช่องเดียวที่อยู่นอก grid ของตัวกรอง กินเต็มความกว้าง
-   เพราะเป็นช่องที่ข้อความยาวที่สุด (ดูคอมเมนต์ใน ExportFilters.tsx) */
-.filters-desc { margin-top: 0.9rem; }
-.filters-desc input { width: 100%; }
-
+.filters .description-filter { grid-column: span 2; }
+.filters .tolerance-filter { grid-column: span 2; }
 .filters-actions { display: flex; justify-content: flex-end; margin-top: 0.9rem; }
 .measurement-history-filters { margin-bottom: 1rem; }
 @media (max-width: 1250px) { .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -845,7 +842,6 @@ button.topbar-link {
 .fg input.bad { border-color: var(--ng); }
 .fg .err { font-size: 0.68rem; color: var(--ng); margin-top: 0.2rem; min-height: 1em; }
 .filters .fg > input,
-.filters-desc > input,
 .filters .ms-btn { height: 2.2rem; }
 .filters .fg > input { width: 100%; min-width: 0; }
 .filters .ms-btn { font-family: inherit; }
@@ -1087,6 +1083,7 @@ button.topbar-link {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
 }
 .ms.open .entry-single-select-panel { display: flex; flex-direction: column; }
+.portal-single-select-panel { display: flex; flex-direction: column; z-index: 1000; }
 .entry-single-select-panel .ms-search {
   position: static;
   flex: none;

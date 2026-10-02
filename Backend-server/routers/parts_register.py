@@ -195,6 +195,7 @@ def list_parts(
     recv_from: Optional[str] = None,
     recv_to: Optional[str] = None,
     po_number: Optional[int] = None,
+    tolerance_id: Optional[int] = None,
     description: Optional[str] = None,
     package_size: Optional[List[str]] = Query(None),
     part_number: Optional[List[str]] = Query(None),
@@ -261,6 +262,8 @@ def list_parts(
         conditions.append("p.recieve_date <= %s"); params.append(_day_end(recv_to))
     if po_number is not None:
         conditions.append("p.po_number = %s"); params.append(po_number)
+    if tolerance_id is not None:
+        conditions.append("p.tolerance_id = %s"); params.append(tolerance_id)
     if description:
         needle = description.replace("!", "!!").replace("%", "!%").replace("_", "!_")
         conditions.append("p.description LIKE %s ESCAPE '!'")

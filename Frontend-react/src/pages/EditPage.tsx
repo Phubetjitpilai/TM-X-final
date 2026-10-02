@@ -757,7 +757,7 @@ export default function EditPage() {
         <div className="measurement-history-filters">
           <ExportFilters
             value={partsFilters} onChange={onPartsFiltersChange} onClear={onPartsClearFilter}
-            options={filterOptions} partNumberCatalog={partNumberCatalog}
+            options={filterOptions} partNumberCatalog={partNumberCatalog} toleranceCatalog={toleranceCatalog}
             showLatestOnly={false} showMeasureDate={false}
             hiddenMultiKeys={["result", "operator", "measure_type"]}
           />
@@ -887,7 +887,7 @@ export default function EditPage() {
         <div className="measurement-history-filters">
           <ExportFilters
             value={measFilters} onChange={onMeasFiltersChange} onClear={onMeasClearFilter}
-            options={filterOptions} partNumberCatalog={partNumberCatalog}
+            options={filterOptions} partNumberCatalog={partNumberCatalog} toleranceCatalog={toleranceCatalog}
             showLatestOnly={false}
           />
         </div>

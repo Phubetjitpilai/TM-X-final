@@ -1,6 +1,10 @@
 import MultiSelect from "../MultiSelect";
+import SingleSelect from "../SingleSelect";
 import DateRangeFilter from "./DateRangeFilter";
 import { normalizePackageSize } from "../../utils/packageSize";
+import { toleranceLabel, type ToleranceSpec } from "../../utils/toleranceLabel";
+
+export type ToleranceOption = ToleranceSpec & { package_size: string };
 
 /** ช่องที่ติ๊กเลือกได้หลายค่า — ลำดับตรงกับ export.html เป๊ะ
  *
@@ -30,6 +34,7 @@ export interface FilterState {
   alpl: string;
   poNumber: string;
   description: string;
+  toleranceId: string;
   multi: Record<MultiKey, string[]>;
 }
 
@@ -42,7 +47,7 @@ export const EMPTY_FILTERS: FilterState = {
   // ซึ่งเป็นสิ่งที่คนอยากได้บ่อยที่สุด ติ๊กออกถ้าอยากได้ประวัติทุกครั้ง
   latestOnly: true,
   dateFrom: "", dateTo: "", recvFrom: "", recvTo: "",
-  alpl: "", poNumber: "", description: "",
+  alpl: "", poNumber: "", description: "", toleranceId: "",
   multi: EMPTY_MULTI,
 };
 
@@ -79,6 +84,7 @@ export function toParams(f: FilterState, templateId: number | null): URLSearchPa
   if (f.alpl.trim()) p.set("number_alpl", f.alpl.trim());
   if (f.poNumber.trim()) p.set("po_number", f.poNumber.trim());
   if (f.description.trim()) p.set("description", f.description.trim());
+  if (f.toleranceId) p.set("tolerance_id", f.toleranceId);
   if (f.dateFrom) p.set("date_from", `${f.dateFrom} 00:00:00`);
   if (f.dateTo) p.set("date_to", `${f.dateTo} 23:59:59`);
   if (f.recvFrom) p.set("recv_from", `${f.recvFrom} 00:00:00`);
@@ -90,7 +96,7 @@ export function toParams(f: FilterState, templateId: number | null): URLSearchPa
 
 /** มีการกรองอะไรอยู่ไหม — ใช้ถามยืนยันตอนกด Export ทั้งก้อนโดยไม่กรองเลย */
 export function hasAnyFilter(f: FilterState): boolean {
-  if (f.alpl.trim() || f.poNumber.trim() || f.description.trim()) return true;
+  if (f.alpl.trim() || f.poNumber.trim() || f.description.trim() || f.toleranceId) return true;
   if (f.dateFrom || f.dateTo || f.recvFrom || f.recvTo) return true;
   return MULTI_KEYS.some((m) => f.multi[m.key].length > 0);
 }
@@ -101,6 +107,7 @@ interface Props {
   options: Record<MultiKey, string[]>;
   /** catalog part number พร้อม package size — ใช้ cascade กรอง Part Number */
   partNumberCatalog: { part_number_name: string; package_size: string }[];
+  toleranceCatalog: ToleranceOption[];
   onClear: () => void;
   /** error เรื่อง ALPL ที่ backend เป็นคนตรวจเจอ (รูปแบบช่วงบางแบบซับซ้อนกว่าที่
    *  ฝั่งนี้รู้) — ต้องชี้ที่ช่อง ALPL เหมือนกัน ไม่ใช่ลอยอยู่บรรทัดอื่นให้ผู้ใช้
@@ -112,11 +119,15 @@ interface Props {
 }
 
 export default function ExportFilters({
-  value, onChange, options, partNumberCatalog, onClear, serverAlplError,
+  value, onChange, options, partNumberCatalog, toleranceCatalog, onClear, serverAlplError,
   showLatestOnly = true, showMeasureDate = true, hiddenMultiKeys = [],
 }: Props) {
   const set = <K extends keyof FilterState>(k: K, v: FilterState[K]) => onChange({ ...value, [k]: v });
-  const setMulti = (k: MultiKey, v: string[]) => onChange({ ...value, multi: { ...value.multi, [k]: v } });
+  const setMulti = (k: MultiKey, v: string[]) => onChange({
+    ...value,
+    multi: { ...value.multi, [k]: v },
+    ...(k === "package_size" ? { toleranceId: "" } : {}),
+  });
 
   // ของเราตรวจก่อน (ตอบทันทีขณะพิมพ์) ถ้าผ่านค่อยโชว์ของ backend
   const alplError = validateAlpl(value.alpl) ?? serverAlplError ?? null;
@@ -133,6 +144,12 @@ export default function ExportFilters({
               .map((r) => r.part_number_name),
           ),
         ).sort();
+  const toleranceOptions = toleranceCatalog
+    .filter((t) => pkgSelected.includes(t.package_size))
+    .map((t) => ({
+      value: String(t.tolerance_id),
+      label: pkgSelected.length > 1 ? `${t.package_size} · ${toleranceLabel(t)}` : toleranceLabel(t),
+    }));
 
   return (
     <>
@@ -209,19 +226,29 @@ export default function ExportFilters({
             onChange={(e) => set("poNumber", e.target.value)}
           />
         </div>
-      </div>
-
-      {/* ⚠ Description อยู่ **นอก** grid ของตัวกรองอื่นโดยตั้งใจ — เป็นช่องที่
-          ข้อความยาวที่สุด ถ้าอยู่ในคอลัมน์เดียวกับช่องสั้น ๆ จะบีบจนพิมพ์แล้ว
-          มองไม่เห็นว่าพิมพ์อะไรไป · ย้ายมาล่างสุดแล้วกินเต็มความกว้างแทน */}
-      <div className="fg filters-desc">
-        <label>Description</label>
-        <input
-          type="text"
-          placeholder="พิมพ์บางส่วนได้"
-          value={value.description}
-          onChange={(e) => set("description", e.target.value)}
-        />
+        <div className="fg description-filter">
+          <label>Description</label>
+          <input
+            type="text"
+            placeholder="พิมพ์บางส่วนได้"
+            value={value.description}
+            onChange={(e) => set("description", e.target.value)}
+          />
+        </div>
+        <div className="fg tolerance-filter">
+          <label>Tolerance</label>
+          <SingleSelect
+            label="Tolerance"
+            options={[{ value: "__all__", label: "All" }, ...toleranceOptions]}
+            value={pkgSelected.length && toleranceOptions.length ? (value.toleranceId || "__all__") : ""}
+            onChange={(id) => set("toleranceId", id === "__all__" ? "" : id)}
+            placeholder={pkgSelected.length === 0 ? "เลือก Package Size ก่อน"
+              : toleranceOptions.length === 0 ? "Package Size นี้ยังไม่มี Tolerance" : "All"}
+            disabled={pkgSelected.length === 0 || toleranceOptions.length === 0}
+            searchable={false}
+            showRadio={false}
+          />
+        </div>
       </div>
 
       <div className="filters-actions">

@@ -380,7 +380,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
         <SingleSelect label={f.label} options={list} value={value}
           onChange={onChange} disabled={readOnly || locked}
           placeholder={f.label} searchable={f.type === "select-package-size"}
-          showRadio={false} />
+          showRadio={false} portal />
       );
     }
     return (

@@ -231,9 +231,10 @@ export default function ExportPage() {
       const get = async (path: string) => {
         try { return await apiGet<any[]>(path); } catch { return []; }
       };
-      const [ops, vendors, owners, handlers, pkgs, parts] = await Promise.all([
+      const [ops, vendors, owners, handlers, pkgs, parts, tolerances] = await Promise.all([
         get("/api/operators"), get("/api/vendors"), get("/api/owners"),
         get("/api/handlers"), get("/api/package-sizes"), get("/api/part-numbers/all"),
+        get("/api/package-size-tolerances"),
       ]);
       const names = (rows: any[], key: string) =>
         Array.from(new Set(rows.map((r) => r[key]).filter((v) => v != null).map(String))).sort();
@@ -255,6 +256,13 @@ export default function ExportPage() {
         partNumberCatalog: parts.map((r) => ({
           part_number_name: String(r.part_number_name ?? ""),
           package_size: String(r.package_size ?? ""),
+        })),
+        toleranceCatalog: tolerances.map((r) => ({
+          tolerance_id: Number(r.tolerance_id),
+          package_size: String(r.package_size ?? ""),
+          nominal_x: Number(r.nominal_x), nominal_y: Number(r.nominal_y),
+          upper_tol: Number(r.upper_tol), lower_tol: Number(r.lower_tol),
+          offset_tol: Number(r.offset_tol),
         })),
       };
     },
@@ -615,6 +623,7 @@ export default function ExportPage() {
               onChange={setFilters}
               options={optionsQ.data?.options ?? ({} as Record<MultiKey, string[]>)}
               partNumberCatalog={optionsQ.data?.partNumberCatalog ?? []}
+              toleranceCatalog={optionsQ.data?.toleranceCatalog ?? []}
               onClear={() => setFilters(EMPTY_FILTERS)}
               serverAlplError={serverAlplError}
             />

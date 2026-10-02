@@ -2303,6 +2303,7 @@ export default function DashboardPage() {
                   owner: ownerOptions,
                 } satisfies Record<MultiKey, string[]>}
                 partNumberCatalog={partNumberCatalog}
+                toleranceCatalog={toleranceCatalog}
               />
             </div>
             <div className="table-wrap">
