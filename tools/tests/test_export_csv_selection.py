@@ -135,6 +135,33 @@ class ExportCsvSelectionTests(unittest.TestCase):
         self.assertEqual([call[2] for call in fetched], [100, None])
         self.assertEqual([call[3:] for call in fetched], [("number_alpl", "desc")] * 2)
 
+    def test_included_rows_limit_preview_and_download(self):
+        selection = export.CsvSelection(included_measurement_ids=[12, 8, 12])
+        fetched = []
+
+        def fetch_rows(cols, where, params, limit=None, sort_by=None, sort_dir="asc"):
+            fetched.append((where, params, limit))
+            return [[1000]], 2
+
+        with patch.object(export, "get_db", return_value=FakeDB(FakeCursor())), \
+             patch.object(export, "_get_template", return_value={"name": "Test", "columns_json": ["number_alpl"]}), \
+             patch.object(export, "_export_filters", return_value=("WHERE m.result = %s", ["OK"])), \
+             patch.object(export, "_fetch_export_rows", side_effect=fetch_rows), \
+             patch.object(export, "_block_if_session_running"):
+            preview = export._csv_preview(1, {}, 100, selection, None, "asc")
+            export._csv_download(1, "test", {}, selection, None, "asc")
+
+        self.assertEqual(preview["total"], 2)
+        self.assertEqual(fetched[0][:2], fetched[1][:2])
+        self.assertIn("m.measurement_id IN (%s,%s)", fetched[0][0])
+        self.assertEqual(fetched[0][1], ["OK", 8, 12])
+
+    def test_clear_all_excludes_every_row(self):
+        where, params = export._without_excluded(
+            "WHERE m.result = %s", ["OK"], export.CsvSelection(included_measurement_ids=[]))
+        self.assertEqual(where, "WHERE m.result = %s AND 1 = 0")
+        self.assertEqual(params, ["OK"])
+
 
 if __name__ == "__main__":
     unittest.main()

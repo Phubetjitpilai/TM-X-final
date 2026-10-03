@@ -501,9 +501,20 @@ def _fetch_export_rows(cols: List[str], where: str, params: list, limit: Optiona
 
 class CsvSelection(BaseModel):
     excluded_measurement_ids: List[int] = []
+    # None = all matching rows except exclusions; [] = select no rows.
+    included_measurement_ids: Optional[List[int]] = None
 
 
 def _without_excluded(where: str, params: list, selection: CsvSelection):
+    if selection.included_measurement_ids is not None:
+        ids = sorted({row_id for row_id in selection.included_measurement_ids if row_id > 0})
+        if len(ids) > 10000:
+            raise HTTPException(400, "เลือกแถวเกิน 10,000 รายการ")
+        where += (" AND " if where else "WHERE ")
+        if not ids:
+            return where + "1 = 0", params
+        where += f"m.measurement_id IN ({','.join(['%s'] * len(ids))})"
+        return where, [*params, *ids]
     ids = sorted({row_id for row_id in selection.excluded_measurement_ids if row_id > 0})
     if len(ids) > 10000:
         raise HTTPException(400, "เลือกแถวที่ไม่ต้องการเกิน 10,000 รายการ")

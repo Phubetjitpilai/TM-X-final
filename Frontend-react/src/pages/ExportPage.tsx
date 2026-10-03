@@ -122,6 +122,13 @@ async function errText(r: Response, fallback: string): Promise<string> {
 
 export default function ExportPage() {
   const [params] = useSearchParams();
+  // CSV, PDF and Excel share one route. A format change must start a fresh
+  // wizard so filters, row selection and preview cannot leak across formats.
+  return <ExportPageContent key={(params.get("format") ?? "csv").toLowerCase()} />;
+}
+
+function ExportPageContent() {
+  const [params] = useSearchParams();
   const navigate = useNavigate();
   const format = ((params.get("format") ?? "csv").toLowerCase() as Format) ?? "csv";
   const label = FORMAT_LABEL[format] ?? "CSV";
@@ -179,6 +186,7 @@ export default function ExportPage() {
   const [selectionPage, setSelectionPage] = useState(1);
   const [selectionSort, setSelectionSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const [excludedIds, setExcludedIds] = useState<number[]>([]);
+  const [includedIds, setIncludedIds] = useState<number[] | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTpl, setEditingTpl] = useState<Template | null>(null);
   useEffect(() => {
@@ -238,25 +246,7 @@ export default function ExportPage() {
     refetchInterval: (query) => query.state.status === "error" ? 4_000 : 30_000,
   });
 
-  /* เลือกตัว default ให้อัตโนมัติ + กัน "เทมเพลตค้างข้ามรูปแบบ"
-   *
-   * ⚠⚠ CSV / PDF / Excel เป็น **route เดียวกัน** (`/export`) ต่างกันแค่ query
-   *    string — React Router จึงไม่ remount component เวลาสลับรูปแบบ
-   *    state ทุกตัวรวมถึง selectedTplId ค้างข้ามไปด้วย
-   *
-   *    ของเดิมเช็คแค่ `selectedTplId != null` แล้ว return ผลคือพอสลับ
-   *    CSV → PDF ค่า id ของเทมเพลต CSV ยังค้างอยู่:
-   *      · หน้าจอไม่มีใบไหนถูกไฮไลต์ (id นั้นไม่อยู่ในลิสต์ของ PDF)
-   *      · แต่ปุ่ม Next/ดาวน์โหลดยังกดได้ เพราะ `selectedTplId != null`
-   *      · แล้ว preview/export ยิง `export_template_id` ของ **คนละชนิด** ไป
-   *        (ยืนยันด้วยเทสต์แล้ว: เลือก CSV id 2 → สลับไป PDF → ยังส่ง 2
-   *         ทั้งที่เทมเพลต PDF คือ id 7)
-   *
-   *    ตอนนี้เช็คว่า id ที่เลือกไว้ "ยังอยู่ในลิสต์ปัจจุบัน" ไหม ถ้าไม่ก็เลือก
-   *    ตัว default ของลิสต์ใหม่ให้ — ครอบคลุมกรณีเทมเพลตถูกลบไปด้วย
-   *
-   *    (ไม่ต้องกลัวว่าจะไปหยิบผิดตอนกำลังโหลด: queryKey มี format อยู่ด้วย
-   *     พอสลับรูปแบบ `data` จะเป็น undefined ระหว่างโหลด effect จึงข้ามไปเอง) */
+  /* เลือก Template ค่าเริ่มต้น และเลือกใหม่ถ้า Template เดิมถูกลบ */
   useEffect(() => {
     const list = templatesQ.data;
     if (!list) return;                                   // ยังโหลดไม่เสร็จ
@@ -264,13 +254,6 @@ export default function ExportPage() {
     if (list.some((t) => t.export_template_id === selectedTplId)) return;
     setSelectedTplId((list.find((t) => t.is_default) ?? list[0]).export_template_id);
   }, [templatesQ.data, selectedTplId]);
-
-  /* สลับรูปแบบแล้วต้องกลับมาขั้นที่ 1 เสมอ
-   * ฝั่ง vanilla แยกเป็นคนละไฟล์ (export.html?format=...) เปลี่ยนรูปแบบ = โหลด
-   * หน้าใหม่ จึงเริ่มที่ขั้น 1 อยู่แล้ว · ฝั่ง React เป็น component เดิม ถ้าไม่สั่ง
-   * เอง ผู้ใช้จะถูกโยนไปอยู่หน้ากรอง/ตัวอย่างของอีกรูปแบบทันทีโดยยังไม่ได้เลือก
-   * เทมเพลตของรูปแบบนั้น */
-  useEffect(() => { setStep(1); }, [format]);
 
   // ตัวเลือกของ multi-select — ถ้าตารางใดโหลดไม่ได้ ให้ Query รายงาน error
   // ไม่แปลงเป็น [] เพราะจะดูเหมือน DB ไม่มีข้อมูลทั้งที่โหลดไม่สำเร็จ
@@ -327,6 +310,7 @@ export default function ExportPage() {
     if (previousSelectionScope.current === selectionScope) return;
     previousSelectionScope.current = selectionScope;
     setExcludedIds([]);
+    setIncludedIds(null);
     setSelectionPage(1);
     setSelectionSort(null);
     setStep((current) => current === 3 ? 2 : current);
@@ -354,7 +338,26 @@ export default function ExportPage() {
     refetchOnWindowFocus: true,
     refetchInterval: (query) => query.state.status === "error" ? 4_000 : false,
   });
-  const selectedCount = Math.max(0, (selectionQ.data?.total ?? 0) - excludedIds.length);
+  const selectedCount = includedIds === null
+    ? Math.max(0, (selectionQ.data?.total ?? 0) - excludedIds.length)
+    : includedIds.length;
+  const selectionPayload = useMemo(() => ({
+    excluded_measurement_ids: excludedIds,
+    included_measurement_ids: includedIds,
+  }), [excludedIds, includedIds]);
+  const isRowSelected = (id: number) => includedIds === null
+    ? !excludedIds.includes(id) : includedIds.includes(id);
+  function setRowsSelected(ids: number[], checked: boolean) {
+    if (includedIds !== null) {
+      setIncludedIds((current) => checked
+        ? Array.from(new Set([...(current ?? []), ...ids]))
+        : (current ?? []).filter((id) => !ids.includes(id)));
+    } else {
+      setExcludedIds((current) => checked
+        ? current.filter((id) => !ids.includes(id))
+        : Array.from(new Set([...current, ...ids])));
+    }
+  }
   const selectionColumnWidths = useMemo(
     () => measureSelectionColumns(selectionQ.data?.columns ?? [], selectionQ.data?.max_texts ?? []),
     [selectionQ.data],
@@ -390,7 +393,7 @@ export default function ExportPage() {
   const canPreview = step === 3 && selectedTplId != null && !alplError
     && !!templatesQ.data?.some((template) => template.export_template_id === selectedTplId);
   const previewQ = useQuery({
-    queryKey: ["export-preview", format, qs.toString(), excludedIds, selectionSort],
+    queryKey: ["export-preview", format, qs.toString(), selectionPayload, selectionSort],
     refetchOnMount: "always",
     queryFn: () => {
       const p = new URLSearchParams(qs);
@@ -399,14 +402,10 @@ export default function ExportPage() {
         p.set("sort_dir", selectionSort.direction);
       }
       if (format === "csv") {
-        return apiPost<CsvPreview>(`/api/export/preview-selected?${p}`, {
-          excluded_measurement_ids: excludedIds,
-        });
+        return apiPost<CsvPreview>(`/api/export/preview-selected?${p}`, selectionPayload);
       }
       p.set("full", "0");
-      return apiPost<any>(`/api/export/report-preview-selected?${p}`, {
-        excluded_measurement_ids: excludedIds,
-      });
+      return apiPost<any>(`/api/export/report-preview-selected?${p}`, selectionPayload);
     },
     enabled: canPreview,
     // ⚠ ห้าม retry: ค่าเริ่มต้นของ TanStack คือลองใหม่ 3 ครั้งแบบ backoff ทำให้
@@ -491,7 +490,7 @@ export default function ExportPage() {
       const r = await fetch(`/api/export/xlsx-selected?${p}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+        body: JSON.stringify(selectionPayload),
       });
       if (!r.ok) { toast.show(await errText(r, "สร้างไฟล์ไม่สำเร็จ")); return; }
       const blob = await r.blob();
@@ -519,7 +518,7 @@ export default function ExportPage() {
       const r = await fetch(`/api/export/csv-selected?${p}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+        body: JSON.stringify(selectionPayload),
       });
       if (!r.ok) { toast.show(await errText(r, "สร้างไฟล์ไม่สำเร็จ")); return; }
       const url = URL.createObjectURL(await r.blob());
@@ -555,7 +554,7 @@ export default function ExportPage() {
       const r = await fetch(`/api/export/report-preview-selected?${p}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+        body: JSON.stringify(selectionPayload),
       });
       if (!r.ok) { toast.show(await errText(r, "เตรียมไฟล์ไม่สำเร็จ")); return; }
       setPrintData(await r.json());
@@ -582,7 +581,7 @@ export default function ExportPage() {
     if (!cleanName || total === 0) return;
     // ไม่ได้กรองอะไรเลย = กำลังจะดึงข้อมูลทั้งระบบ — ถามยืนยันก่อน กันเผลอกด
     // แล้วได้ไฟล์ใหญ่เกินคาด (โดยเฉพาะตอนติ๊ก "เฉพาะล่าสุด" ออกด้วย)
-    if (!hasAnyFilter(filters) && excludedIds.length === 0) {
+    if (!hasAnyFilter(filters) && includedIds === null && excludedIds.length === 0) {
       const scope = filters.latestOnly ? "การวัดล่าสุดของทุก ALPL" : "ประวัติการวัดทั้งหมดทุกครั้ง";
       const ok = await dialog.confirm(
         <>
@@ -770,7 +769,7 @@ export default function ExportPage() {
                 options={optionsQ.data.options}
                 partNumberCatalog={optionsQ.data.partNumberCatalog}
                 toleranceCatalog={optionsQ.data.toleranceCatalog}
-                onClear={() => { setFilters(EMPTY_FILTERS); setExcludedIds([]); setSelectionPage(1); }}
+                onClear={() => { setFilters(EMPTY_FILTERS); setExcludedIds([]); setIncludedIds(null); setSelectionPage(1); }}
                 serverAlplError={serverAlplError}
                 collapsibleAdvanced primaryMultiKeys={["result", "package_size"]}
               />
@@ -787,8 +786,12 @@ export default function ExportPage() {
                   : <>
                     พบ <strong>{selectionQ.data.total}</strong> รายการ · เลือกไว้ <strong>{selectedCount}</strong> รายการ
                     {selectionQ.isPlaceholderData && <span className="csv-selection-loading" role="status">กำลังเรียงข้อมูล…</span>}
-                    {excludedIds.length > 0 && <button type="button" className="btn-mini csv-select-all"
-                      disabled={selectionQ.isPlaceholderData} onClick={() => setExcludedIds([])}>Select All</button>}
+                    {(includedIds !== null || excludedIds.length > 0) && <button type="button" className="btn-mini csv-select-all"
+                      title="เลือกทุกรายการที่ตรงกับตัวกรอง" disabled={selectionQ.isPlaceholderData}
+                      onClick={() => { setIncludedIds(null); setExcludedIds([]); }}>Select All</button>}
+                    {selectedCount > 0 && <button type="button" className="btn-mini csv-select-all"
+                      title="ยกเลิกการเลือกทุกรายการที่ตรงกับตัวกรอง" disabled={selectionQ.isPlaceholderData}
+                      onClick={() => { setIncludedIds([]); setExcludedIds([]); }}>Clear All</button>}
                   </>}
               </div>
               <div className="pv-wrap csv-selection-wrap">
@@ -801,17 +804,15 @@ export default function ExportPage() {
                   <thead><tr>
                     <th><input type="checkbox" aria-label="เลือกหรือยกเลิกแถวในหน้านี้"
                       disabled={!selectionQ.data?.items.length || selectionQ.isPlaceholderData}
-                      checked={!!selectionQ.data?.items.length && selectionQ.data.items.every((r) => !excludedIds.includes(r.measurement_id))}
+                      checked={!!selectionQ.data?.items.length && selectionQ.data.items.every((r) => isRowSelected(r.measurement_id))}
                       ref={(el) => {
                         if (!el || !selectionQ.data?.items.length) return;
-                        const selected = selectionQ.data.items.filter((r) => !excludedIds.includes(r.measurement_id)).length;
+                        const selected = selectionQ.data.items.filter((r) => isRowSelected(r.measurement_id)).length;
                         el.indeterminate = selected > 0 && selected < selectionQ.data.items.length;
                       }}
                       onChange={(e) => {
                         const ids = selectionQ.data?.items.map((r) => r.measurement_id) ?? [];
-                        setExcludedIds((current) => e.target.checked
-                          ? current.filter((id) => !ids.includes(id))
-                          : Array.from(new Set([...current, ...ids])));
+                        setRowsSelected(ids, e.target.checked);
                       }}
                     /></th>
                     {(selectionQ.data?.columns ?? []).map((column, index) => {
@@ -841,10 +842,8 @@ export default function ExportPage() {
                       <tr key={row.measurement_id}>
                         <td><input type="checkbox" aria-label={`เลือก ALPL ${row.number_alpl} รายการ ${row.measurement_id}`}
                           disabled={selectionQ.isPlaceholderData}
-                          checked={!excludedIds.includes(row.measurement_id)}
-                          onChange={(e) => setExcludedIds((current) => e.target.checked
-                            ? current.filter((id) => id !== row.measurement_id)
-                            : [...current, row.measurement_id])}
+                          checked={isRowSelected(row.measurement_id)}
+                          onChange={(e) => setRowsSelected([row.measurement_id], e.target.checked)}
                         /></td>
                         {row.values.map((value, index) => <td key={index} title={String(value ?? "")}>{value ?? ""}</td>)}
                       </tr>
