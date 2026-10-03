@@ -17,6 +17,7 @@ export type SSEEventName =
   | "session_work_ended"
   | "session_complete"
   | "session_timeout"
+  | "session_timeout_stop_failed"
   | "image_updated"
   | "measure_timeout"
   | "tray_full"
@@ -34,6 +35,7 @@ const EVENT_NAMES: SSEEventName[] = [
   "session_work_ended",
   "session_complete",
   "session_timeout",
+  "session_timeout_stop_failed",
   "image_updated",
   "measure_timeout",
   // ⚠ เพิ่มชื่อใน type อย่างเดียวไม่พอ ต้องใส่ใน array นี้ด้วย — EventSource

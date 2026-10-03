@@ -871,6 +871,8 @@ async def command(req: CommandRequest):
         print("\n⚡ ได้รับสัญญาณ trigger (จากปุ่มบนหน้าเว็บ)")
 
     elif req.action == "stop":
+        if is_running and req.session_id is not None and req.session_id != current_session_id:
+            raise HTTPException(409, "Session ของ Pi เปลี่ยนแล้ว — ไม่หยุด Session ใหม่")
         print("\n⏹ ได้รับคำสั่ง Stop จาก Backend")
         is_running = False  # loop ใน measurement_flow จะเห็นแล้วหยุดเอง
         # ⚠ ต้อง set ด้วย ไม่งั้นกด Stop ตอน modal เปิดอยู่ ask_user() จะค้างต่อ
@@ -916,6 +918,7 @@ def get_queue_review():
     state = queue_review.status()
     if not is_running:
         state["phase"] = "stopped"
+    state["worker_alive"] = bool(globals().get("_worker_thread") and _worker_thread.is_alive())
     return state
 
 

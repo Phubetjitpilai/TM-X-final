@@ -440,14 +440,55 @@ def _export_filters(f: Dict[str, Any]):
 
     return (("WHERE " + " AND ".join(conditions)) if conditions else ""), params
 
-def _fetch_export_rows(cols: List[str], where: str, params: list, limit: Optional[int] = None):
+_CSV_SORT_COLUMNS = {
+    "number_alpl": "m.number_alpl", "value_x": "m.value_x", "value_y": "m.value_y",
+    "offset_opx": "m.offset_opx", "offset_opy": "m.offset_opy",
+    "offset_pos_op": "m.offset_pos_op", "result": "m.result", "note": "m.note",
+    "operator": "op.operator_name", "measure_type": "m.measure_type",
+    "timestamp": "m.timestamp", "session_id": "m.session_id",
+    "part_number": "pn.part_number_name", "handler": "h.handler_name",
+    "package_size": "ps.package_size", "template_name": "t.template_name",
+    "nominal_x": "pst.nominal_x", "nominal_y": "pst.nominal_y",
+    "upper_tol": "pst.upper_tol", "lower_tol": "pst.lower_tol",
+    "offset": "pst.offset_tol", "vendor": "v.vendor_name", "owner": "o.owner_name",
+    "po_number": "p.po_number", "description": "p.description",
+    "recieve_date": "p.recieve_date",
+}
+
+
+def _csv_order_by(cols: List[str], sort_by: Optional[str], sort_dir: str) -> str:
+    """Only template columns may sort; SQL expressions come from this allowlist."""
+    if not sort_by:
+        return "ORDER BY m.timestamp DESC, m.measurement_id DESC"
+    if sort_by not in cols or sort_by not in _CSV_SORT_COLUMNS or sort_dir not in ("asc", "desc"):
+        raise HTTPException(400, "คอลัมน์หรือลำดับ Sort ไม่ถูกต้อง")
+    return f"ORDER BY {_CSV_SORT_COLUMNS[sort_by]} {sort_dir.upper()}, m.measurement_id DESC"
+
+
+def _csv_display_sql(key: str) -> Optional[str]:
+    """SQL text matching the CSV display format for column-width measurement."""
+    expr = _CSV_SORT_COLUMNS.get(key)
+    if not expr:
+        return None
+    if key == "timestamp":
+        return f"DATE_FORMAT({expr}, '%%d/%%m/%%Y %%H:%%i:%%s')"
+    if key == "recieve_date":
+        return f"DATE_FORMAT({expr}, '%%d/%%m/%%Y')"
+    if key in {"value_x", "value_y", "offset_opx", "offset_opy",
+               "nominal_x", "nominal_y", "upper_tol", "lower_tol", "offset"}:
+        return f"CAST(CAST({expr} AS DECIMAL(30, 3)) AS CHAR)"
+    return f"CAST({expr} AS CHAR)"
+
+
+def _fetch_export_rows(cols: List[str], where: str, params: list, limit: Optional[int] = None,
+                       sort_by: Optional[str] = None, sort_dir: str = "asc"):
     """ดึงข้อมูลแล้วแปลงเป็น list ของ list ตามลำดับคอลัมน์ใน `cols`"""
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) AS n {_EXPORT_FROM} {where}", params)
             total = cur.fetchone()["n"]
-            sql = f"{EXPORT_SELECT} {where} ORDER BY m.timestamp DESC"
+            sql = f"{EXPORT_SELECT} {where} {_csv_order_by(cols, sort_by, sort_dir)}"
             if limit:
                 sql += f" LIMIT {int(limit)}"
             cur.execute(sql, params)
@@ -456,6 +497,20 @@ def _fetch_export_rows(cols: List[str], where: str, params: list, limit: Optiona
         db.close()
     data = [[EXPORT_COLUMNS[c]["get"](r) for c in cols] for r in rows]
     return data, total
+
+
+class CsvSelection(BaseModel):
+    excluded_measurement_ids: List[int] = []
+
+
+def _without_excluded(where: str, params: list, selection: CsvSelection):
+    ids = sorted({row_id for row_id in selection.excluded_measurement_ids if row_id > 0})
+    if len(ids) > 10000:
+        raise HTTPException(400, "เลือกแถวที่ไม่ต้องการเกิน 10,000 รายการ")
+    if ids:
+        where += (" AND " if where else "WHERE ") + f"m.measurement_id NOT IN ({','.join(['%s'] * len(ids))})"
+        params = [*params, *ids]
+    return where, params
 
 def _count_export_rows(where: str, params: list) -> int:
     """นับจำนวนแถวอย่างเดียว — ใช้เช็คเพดานก่อนดึงข้อมูลจริงมาสร้างไฟล์"""
@@ -467,7 +522,8 @@ def _count_export_rows(where: str, params: list) -> int:
     finally:
         db.close()
 
-def _fetch_export_raw(where: str, params: list, limit: Optional[int] = None):
+def _fetch_export_raw(where: str, params: list, limit: Optional[int] = None,
+                      order_by: Optional[str] = None):
     """เหมือน _fetch_export_rows แต่คืน row ดิบ (dict) ไม่ได้แปลงเป็นคอลัมน์
     ใช้กับรายงาน PDF/Excel ที่ต้องหยิบค่าทีละช่องตามผังตาราง ไม่ใช่เรียงเป็นแถว
     เรียง ASC ตามเวลา เพราะรายงานบนกระดาษอ่านจากเก่าไปใหม่ (ต่างจาก CSV ที่
@@ -478,7 +534,7 @@ def _fetch_export_raw(where: str, params: list, limit: Optional[int] = None):
         with db.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) AS n {_EXPORT_FROM} {where}", params)
             total = cur.fetchone()["n"]
-            sql = f"{EXPORT_SELECT} {where} ORDER BY m.timestamp ASC, m.measurement_id ASC"
+            sql = f"{EXPORT_SELECT} {where} {order_by or 'ORDER BY m.timestamp ASC, m.measurement_id ASC'}"
             if limit:
                 sql += f" LIMIT {int(limit)}"
             cur.execute(sql, params)
@@ -694,15 +750,9 @@ def _load_report_layout(cur, export_template_id: int) -> Dict[str, Any]:
         raise HTTPException(400, f'เทมเพลต "{tpl["name"]}" ยังไม่มีผังตาราง — เปิดแก้ไขแล้วบันทึกใหม่อีกครั้ง')
     return {"name": tpl["name"], "kind": tpl.get("kind") or "pdf", "layout": layout}
 
-@router.get("/api/export/preview")
-def export_preview(
-    export_template_id: int,
-    filters: Dict[str, Any] = Depends(export_filters_dep),
-    limit:   int = Query(100, ge=1, le=100),
-):
-    """คืนหัวคอลัมน์ + ข้อมูลตัวอย่างไม่กี่แถว + จำนวนแถวทั้งหมดที่ตรงกับ filter
-    ให้หน้าเว็บโชว์ก่อนกดดาวน์โหลดจริง (จะได้รู้ว่ากรองถูกไหม ไฟล์ใหญ่แค่ไหน)
-    """
+def _csv_preview(export_template_id: int, filters: Dict[str, Any], limit: int,
+                 selection: Optional[CsvSelection] = None,
+                 sort_by: Optional[str] = None, sort_dir: str = "asc"):
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -712,7 +762,10 @@ def export_preview(
 
     cols = _parse_columns(tpl["columns_json"])
     where, params = _export_filters(filters)
-    data, total = _fetch_export_rows(cols, where, params, limit=limit)
+    if selection is not None:
+        where, params = _without_excluded(where, params, selection)
+    data, total = _fetch_export_rows(cols, where, params, limit=limit,
+                                     sort_by=sort_by, sort_dir=sort_dir)
     return {
         "template_name": tpl["name"],
         "columns": [_csv_header(c) for c in cols],
@@ -721,13 +774,112 @@ def export_preview(
         "total": total,
     }
 
-@router.get("/api/export/csv")
-def export_csv(
-    export_template_id: Optional[int] = None,
-    filename: Optional[str] = None,
+def _report_selection_columns(layout: Dict[str, Any]) -> List[str]:
+    """Data fields in visual order; expand Tolerance into sortable numeric parts."""
+    grid = layout.get("grid") or []
+    keys: List[str] = []
+    for col_index in range(max((len(row or []) for row in grid), default=0)):
+        for row in grid:
+            cell = (row or [])[col_index] if col_index < len(row or []) else None
+            if not isinstance(cell, dict):
+                continue
+            for key in (cell.get("f"), cell.get("spec"), cell.get("hdr")):
+                if not isinstance(key, str) or key not in EXPORT_COLUMNS:
+                    continue
+                expanded = ("nominal_x", "nominal_y", "upper_tol", "lower_tol") if key == "tolerance_spec" else (key,)
+                for field in expanded:
+                    if field not in keys:
+                        keys.append(field)
+    return keys
+
+
+@router.get("/api/export/selection-rows")
+def export_selection_rows(
+    export_template_id: int,
     filters: Dict[str, Any] = Depends(export_filters_dep),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
 ):
-    """Export ประวัติ measurement (พร้อม filter) เป็นไฟล์ CSV ให้ดาวน์โหลด
+    """Paginated rows for CSV and report selection; widths use the full filter."""
+    where, params = _export_filters(filters)
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            tpl = _get_template(cur, export_template_id)
+            if tpl["kind"] == "csv":
+                cols = _parse_columns(tpl["columns_json"])
+            else:
+                cols = _report_selection_columns(_parse_layout(tpl["layout_json"]) or {})
+            order_by = _csv_order_by(cols, sort_by, sort_dir)
+            # The longest displayed text is chosen across all filtered rows.
+            # Prefixing its length lets one aggregate query select that text for
+            # every template column without loading all rows into the browser.
+            display_sql = [_csv_display_sql(c) for c in cols]
+            width_sql = ", ".join(
+                f"MAX(CONCAT(LPAD(CHAR_LENGTH(COALESCE({expr}, '')), 10, '0'), "
+                f"COALESCE({expr}, ''))) AS width_sample_{i}"
+                if expr else f"NULL AS width_sample_{i}"
+                for i, expr in enumerate(display_sql)
+            )
+            cur.execute(
+                f"SELECT COUNT(*) AS n{', ' + width_sql if width_sql else ''} {_EXPORT_FROM} {where}",
+                params,
+            )
+            stats = cur.fetchone()
+            total = stats["n"]
+            max_texts = [(stats.get(f"width_sample_{i}") or "")[10:] for i in range(len(cols))]
+            if "item" in cols:
+                max_texts[cols.index("item")] = str(total)
+            cur.execute(
+                f"{EXPORT_SELECT} {where} {order_by} LIMIT %s OFFSET %s",
+                [*params, limit, offset],
+            )
+            rows = cur.fetchall()
+    finally:
+        db.close()
+    return {
+        "total": total,
+        "columns": [_csv_header(c) for c in cols],
+        "column_keys": cols,
+        "sortable_keys": [c for c in cols if c in _CSV_SORT_COLUMNS],
+        "max_texts": max_texts,
+        "items": [
+            {"measurement_id": r["measurement_id"], "number_alpl": r["number_alpl"],
+             "values": [offset + index + 1 if c == "item" else EXPORT_COLUMNS[c]["get"](r)
+                        for c in cols]}
+            for index, r in enumerate(rows)
+        ],
+    }
+
+
+@router.get("/api/export/preview")
+def export_preview(
+    export_template_id: int,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    limit: int = Query(100, ge=1, le=100),
+):
+    """CSV preview ของทุกแถวที่ตรง filter (API เดิมยังใช้ได้)"""
+    return _csv_preview(export_template_id, filters, limit)
+
+
+@router.post("/api/export/preview-selected")
+def export_preview_selected(
+    selection: CsvSelection,
+    export_template_id: int,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    limit: int = Query(100, ge=1, le=100),
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    return _csv_preview(export_template_id, filters, limit, selection, sort_by, sort_dir)
+
+
+def _csv_download(export_template_id: Optional[int], filename: Optional[str],
+                  filters: Dict[str, Any], selection: Optional[CsvSelection] = None,
+                  sort_by: Optional[str] = None, sort_dir: str = "asc"):
+    """สร้าง CSV ด้วย filter และชุดแถวเดียวกับ Preview
 
     export_template_id: เลือกว่าจะเอาคอลัมน์ไหนและเรียงลำดับยังไง — ถ้าไม่ส่งมา
     จะใช้เทมเพลตที่ is_default = 1 ให้อัตโนมัติ (พฤติกรรมเดิมของ endpoint นี้
@@ -757,7 +909,9 @@ def export_csv(
 
     cols = _parse_columns(tpl["columns_json"])
     where, params = _export_filters(filters)
-    data, _ = _fetch_export_rows(cols, where, params)
+    if selection is not None:
+        where, params = _without_excluded(where, params, selection)
+    data, _ = _fetch_export_rows(cols, where, params, sort_by=sort_by, sort_dir=sort_dir)
 
     df  = pd.DataFrame(data, columns=[_csv_header(c) for c in cols])
     buf = StringIO()
@@ -777,6 +931,27 @@ def export_csv(
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
 
+
+@router.get("/api/export/csv")
+def export_csv(
+    export_template_id: Optional[int] = None,
+    filename: Optional[str] = None,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+):
+    return _csv_download(export_template_id, filename, filters)
+
+
+@router.post("/api/export/csv-selected")
+def export_csv_selected(
+    selection: CsvSelection,
+    export_template_id: int,
+    filename: Optional[str] = None,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    return _csv_download(export_template_id, filename, filters, selection, sort_by, sort_dir)
+
 def _guard_report_size(total: int) -> None:
     if total > REPORT_MAX_ROWS:
         raise HTTPException(
@@ -786,12 +961,9 @@ def _guard_report_size(total: int) -> None:
             f"ถ้าต้องการข้อมูลดิบทั้งหมด",
         )
 
-@router.get("/api/export/report-preview")
-def export_report_preview(
-    export_template_id: int,
-    filters: Dict[str, Any] = Depends(export_filters_dep),
-    full: int = 0,
-):
+def _report_preview(export_template_id: int, filters: Dict[str, Any], full: int,
+                    selection: Optional[CsvSelection] = None,
+                    sort_by: Optional[str] = None, sort_dir: str = "asc"):
     """คืนผังที่คลี่แล้วพร้อมข้อมูลจริง ให้หน้าเว็บวาดเป็นตาราง preview
 
     full=0 → ตัดที่ REPORT_PREVIEW_LIMIT แถว (ดูบนจอเฉยๆ ไม่ต้องครบ)
@@ -809,9 +981,14 @@ def export_report_preview(
         db.close()
 
     where, params = _export_filters(filters)
+    if selection is not None:
+        where, params = _without_excluded(where, params, selection)
+    order_by = (_csv_order_by(_report_selection_columns(tpl["layout"]), sort_by, sort_dir)
+                if selection is not None else None)
     if full:
         _guard_report_size(total_check := _count_export_rows(where, params))
-    rows, total = _fetch_export_raw(where, params, limit=None if full else REPORT_PREVIEW_LIMIT)
+    rows, total = _fetch_export_raw(where, params, limit=None if full else REPORT_PREVIEW_LIMIT,
+                                    order_by=order_by)
     out = _render_report(tpl["layout"], rows)
     out.update({
         "template_name": tpl["name"],
@@ -821,11 +998,49 @@ def export_report_preview(
     })
     return out
 
+@router.get("/api/export/report-preview")
+def export_report_preview(
+    export_template_id: int,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    full: int = 0,
+):
+    return _report_preview(export_template_id, filters, full)
+
+
+@router.post("/api/export/report-preview-selected")
+def export_report_preview_selected(
+    selection: CsvSelection,
+    export_template_id: int,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    full: int = 0,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    return _report_preview(export_template_id, filters, full, selection, sort_by, sort_dir)
+
+
 @router.get("/api/export/xlsx")
 def export_xlsx(
     export_template_id: int,
     filters: Dict[str, Any] = Depends(export_filters_dep),
 ):
+    return _export_xlsx(export_template_id, filters)
+
+
+@router.post("/api/export/xlsx-selected")
+def export_xlsx_selected(
+    selection: CsvSelection,
+    export_template_id: int,
+    filters: Dict[str, Any] = Depends(export_filters_dep),
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+):
+    return _export_xlsx(export_template_id, filters, selection, sort_by, sort_dir)
+
+
+def _export_xlsx(export_template_id: int, filters: Dict[str, Any],
+                 selection: Optional[CsvSelection] = None,
+                 sort_by: Optional[str] = None, sort_dir: str = "asc"):
     """สร้างไฟล์ .xlsx จากผังรายงาน — คงฟอนต์/สี/การผสานเซลล์ตามที่จัดไว้"""
     try:
         from openpyxl import Workbook
@@ -846,7 +1061,11 @@ def export_xlsx(
         db.close()
 
     where, params = _export_filters(filters)
-    rows, total = _fetch_export_raw(where, params)
+    if selection is not None:
+        where, params = _without_excluded(where, params, selection)
+    order_by = (_csv_order_by(_report_selection_columns(tpl["layout"]), sort_by, sort_dir)
+                if selection is not None else None)
+    rows, total = _fetch_export_raw(where, params, order_by=order_by)
     _guard_report_size(total)
     rendered = _render_report(tpl["layout"], rows, excel=True)
 

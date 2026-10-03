@@ -1,11 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api/client";
 
-// useLookups: ดึง dropdown data (operators/owners/vendors/handlers/package-sizes)
-// ครั้งเดียว ใช้ร่วมกันได้ทุกหน้า (Dashboard/Edit) — แก้ปัญหาที่ index.html และ
-// edit.html เดิมต่างคน copy fetch ชุดนี้แยกกันคนละชุด (ดู CLAUDE.md หัวข้อ
-// Frontend Framework Migration) TanStack Query จะ cache ผลลัพธ์ไว้ให้เอง ครั้ง
-// ต่อไปที่ component ไหนเรียก useLookups() จะไม่ยิง fetch ซ้ำถ้าข้อมูลยัง fresh อยู่
+// ข้อมูล dropdown ของหน้า Measure/Edit: cache ผลแต่ละ endpoint แยกกัน และตรวจ
+// ข้อมูลล่าสุดเมื่อกลับเข้าหน้าอีกครั้ง เพื่อรับค่าที่อาจเพิ่งแก้ใน Lookup Tables
 
 export interface Operator {
   operator_id: number;
@@ -29,27 +26,70 @@ export interface PackageSize {
   handlers: string[];
 }
 
+export interface PackageTolerance {
+  package_size: string;
+  tolerance_id: number;
+  nominal_x: number;
+  nominal_y: number;
+  upper_tol: number;
+  lower_tol: number;
+  offset_tol: number;
+}
+
+export interface PartNumber {
+  part_number_name: string;
+  package_size: string;
+  handler: string;
+}
+
+// หน้า Measure/Edit ต้องรอ lookup จนครบหลัง MySQL เริ่มทำงาน โดยแจ้งเตือนทันที
+// ที่คำขอครั้งแรกพลาด แต่ไม่ทิ้งผลลัพธ์ของ endpoint อื่นที่โหลดสำเร็จแล้ว
+const lookupRetry = {
+  retry: true,
+  retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 8000),
+  refetchOnMount: "always" as const,
+  refetchOnWindowFocus: true,
+  networkMode: "always" as const,
+};
+
 export function useLookups() {
   const operators = useQuery({
     queryKey: ["operators"],
-    queryFn: () => apiGet<Operator[]>("/api/operators"),
+    queryFn: ({ signal }) => apiGet<Operator[]>("/api/operators", undefined, signal),
+    ...lookupRetry,
   });
   const owners = useQuery({
     queryKey: ["owners"],
-    queryFn: () => apiGet<Owner[]>("/api/owners"),
+    queryFn: ({ signal }) => apiGet<Owner[]>("/api/owners", undefined, signal),
+    ...lookupRetry,
   });
   const vendors = useQuery({
     queryKey: ["vendors"],
-    queryFn: () => apiGet<Vendor[]>("/api/vendors"),
+    queryFn: ({ signal }) => apiGet<Vendor[]>("/api/vendors", undefined, signal),
+    ...lookupRetry,
   });
   const handlers = useQuery({
     queryKey: ["handlers"],
-    queryFn: () => apiGet<Handler[]>("/api/handlers"),
+    queryFn: ({ signal }) => apiGet<Handler[]>("/api/handlers", undefined, signal),
+    ...lookupRetry,
   });
   const packageSizes = useQuery({
     queryKey: ["package-sizes"],
-    queryFn: () => apiGet<PackageSize[]>("/api/package-sizes"),
+    queryFn: ({ signal }) => apiGet<PackageSize[]>("/api/package-sizes", undefined, signal),
+    ...lookupRetry,
   });
+  const tolerances = useQuery({
+    queryKey: ["package-size-tolerances"],
+    queryFn: ({ signal }) => apiGet<PackageTolerance[]>("/api/package-size-tolerances", undefined, signal),
+    ...lookupRetry,
+  });
+  const partNumbers = useQuery({
+    queryKey: ["part-numbers-all"],
+    queryFn: ({ signal }) => apiGet<PartNumber[]>("/api/part-numbers/all", undefined, signal),
+    ...lookupRetry,
+  });
+
+  const queries = [operators, owners, vendors, handlers, packageSizes, tolerances, partNumbers];
 
   return {
     operators: operators.data ?? [],
@@ -57,11 +97,11 @@ export function useLookups() {
     vendors: vendors.data ?? [],
     handlers: handlers.data ?? [],
     packageSizes: packageSizes.data ?? [],
-    isLoading:
-      operators.isLoading ||
-      owners.isLoading ||
-      vendors.isLoading ||
-      handlers.isLoading ||
-      packageSizes.isLoading,
+    tolerances: tolerances.data ?? [],
+    partNumbers: partNumbers.data ?? [],
+    partNumbersLoaded: partNumbers.data !== undefined,
+    isLoading: queries.some((query) => query.isPending),
+    isFailed: queries.some((query) => query.failureCount > 0 || query.isError),
+    hasAllLoadedData: queries.every((query) => query.data !== undefined),
   };
 }

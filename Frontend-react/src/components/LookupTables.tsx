@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { useToast } from "./Toast";
 import MultiSelectCell from "./MultiSelectCell";
@@ -145,55 +146,61 @@ interface Props {
  */
 export default function LookupTables({ readOnly = false, onDeleted, onChanged, onAlert, onConfirm }: Props) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [kind, setKind] = useState("operator");
-  const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [draft, setDraft] = useState<Record<string, string>>({});   // แถวใหม่ที่ยังไม่บันทึก
   const [edited, setEdited] = useState<Record<string, Record<string, string>>>({});
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState(1);
   /** คำค้นของตารางที่เปิดอยู่ — กรองฝั่ง client ล้วน
    *
-   *  ⚠ ตารางกลุ่มนี้ `load()` ดึงมาทั้งตารางอยู่แล้ว (ไม่มี server-side paging
+   *  ⚠ ตารางกลุ่มนี้ query ดึงมาทั้งตารางอยู่แล้ว (ไม่มี server-side paging
    *    เหมือนตาราง Parts/Measurements) การกรองในหน่วยความจำจึงเห็นครบทุกหน้า
    *    จริง ๆ ไม่ใช่แค่ 10 แถวที่กำลังแสดง — ถ้าวันหลังตารางไหนโตจนต้องแบ่งหน้า
    *    ฝั่ง server ต้องย้ายการกรองไปที่ backend ด้วย ไม่งั้นจะค้นเจอไม่ครบ */
   const [filter, setFilter] = useState("");
 
-  // ตัวเลือกของช่องแบบ FK — โหลดครั้งเดียวใช้ทุกตาราง
-  const [opts, setOpts] = useState({ handler: [] as string[], packageSize: [] as string[], template: [] as string[] });
-
   const cfg = LOOKUP_CONFIG[kind];
-
-  async function loadSupportData() {
-    const get = async (p: string) => { try { return await apiGet<any[]>(p); } catch { return []; } };
-    const [handlers, pkgs, tpls] = await Promise.all([
-      get("/api/handlers"), get("/api/package-sizes"), get("/api/templates"),
-    ]);
-    setOpts({
-      handler: handlers.map((h) => h.handler_name).filter(Boolean),
-      packageSize: pkgs.map((p) => p.package_size).filter(Boolean),
-      template: tpls.map((t) => t.template_name).filter(Boolean),
-    });
-  }
-
-  useEffect(() => { loadSupportData(); }, []);
-
-  async function load() {
-    try {
-      const d = await apiGet<any>(cfg.listUrl);
-      setRows(Array.isArray(d) ? d : (d.items ?? []));
-    } catch {
-      setRows([]);
-      toast.show(`โหลด ${cfg.label} ไม่สำเร็จ`);
-    }
-    setEdited({});
-    setDraft({});
-  }
+  const lookupQuery = useQuery<Record<string, any>[]>({
+    queryKey: ["lookup-table", kind],
+    queryFn: async ({ signal }) => {
+      const d = await apiGet<any>(cfg.listUrl, undefined, signal);
+      return Array.isArray(d) ? d : (d.items ?? []);
+    },
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const handlersQuery = useQuery({
+    queryKey: ["lookup-support", "handler"],
+    queryFn: ({ signal }) => apiGet<{ handler_name: string }[]>("/api/handlers", undefined, signal),
+    retry: false,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const packageSizesQuery = useQuery({
+    queryKey: ["lookup-support", "package-size"],
+    queryFn: ({ signal }) => apiGet<{ package_size: string }[]>("/api/package-sizes", undefined, signal),
+    retry: false,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const templatesQuery = useQuery({
+    queryKey: ["lookup-support", "template"],
+    queryFn: ({ signal }) => apiGet<{ template_name: string }[]>("/api/templates", undefined, signal),
+    retry: false,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const rows = lookupQuery.data ?? [];
+  const opts = {
+    handler: (handlersQuery.data ?? []).map((h) => h.handler_name).filter(Boolean),
+    packageSize: (packageSizesQuery.data ?? []).map((p) => p.package_size).filter(Boolean),
+    template: (templatesQuery.data ?? []).map((t) => t.template_name).filter(Boolean),
+  };
 
   // สลับตารางแล้วต้องกลับหน้า 1 — ไม่งั้นค้างอยู่หน้า 4 ของตารางที่มี 3 แถว
   // ⚠ ต้องล้าง filter ด้วย — คำค้นของตารางเก่าแทบไม่มีทางตรงกับตารางใหม่
   //   ถ้าไม่ล้าง ผู้ใช้จะเจอตารางว่างเปล่าแล้วนึกว่าข้อมูลหาย
-  useEffect(() => { setPage(1); setFilter(""); load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [kind]);
+  useEffect(() => { setPage(1); setFilter(""); setEdited({}); setDraft({}); }, [kind]);
 
   /** ค่าจาก DB → สตริงที่ช่องกรอกใช้ได้
    *  ฟิลด์ multi-* มาจาก backend เป็น array — แปลงเป็นสตริงคั่นคอมมาให้เป็น
@@ -278,8 +285,11 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
     try {
       await apiPost(cfg.basePath, lookupToApiBody(kind, values));
       toast.show(`เพิ่ม ${cfg.label} สำเร็จ`, undefined, "success");
-      await load();
-      await loadSupportData();
+      setDraft({});
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["lookup-table"] }),
+        queryClient.invalidateQueries({ queryKey: ["lookup-support"] }),
+      ]);
       onChanged?.();
     } catch (e: any) {
       toast.show(e?.message ?? `เพิ่ม ${cfg.label} ไม่สำเร็จ`);
@@ -307,12 +317,10 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
     try {
       await apiPatch(`${cfg.basePath}/${id}`, lookupToApiBody(kind, values));
 
-      // ⚠⚠ ห้ามเรียก load() ตรงนี้เด็ดขาด
-      //   load() ดึงทั้งตารางมาใหม่แล้วล้าง edited ทิ้ง ผลคือค่าที่ผู้ใช้พิมพ์ค้าง
-      //   ไว้ในแถวอื่น (ยังไม่ได้กด Save) หายไปเงียบๆ พร้อมปุ่มเขียวของแถวพวกนั้น
-      //   — ดูเหมือน "บันทึกครบทุกแถว" ทั้งที่ PATCH ไปแค่แถวเดียว
-      //   แก้เป็น: อัปเดตเฉพาะแถวนี้ใน rows แล้วปลด dirty ของแถวนี้ตัวเดียว
-      setRows((prev) => prev.map((r) => (String(r[cfg.idField]) === id ? { ...r, ...values } : r)));
+      // อัปเดตแถวที่บันทึกใน cache แล้วปลด dirty เฉพาะแถวนี้
+      // ค่าที่พิมพ์ค้างในแถวอื่นอยู่ใน edited และไม่ถูกล้างเมื่อ query refetch
+      queryClient.setQueryData<Record<string, any>[]>(["lookup-table", kind], (prev) =>
+        prev?.map((r) => (String(r[cfg.idField]) === id ? { ...r, ...values } : r)));
       setEdited((prev) => {
         const next = { ...prev };
         delete next[id];
@@ -325,9 +333,10 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
         ? `บันทึก "${rowName}" แล้ว — ยังมีอีก ${stillDirty} แถวที่แก้ไว้แต่ยังไม่ได้กด Save`
         : `บันทึก "${rowName}" แล้ว`, undefined, "success");
 
-      // อัปเดตเฉพาะรายชื่อใน dropdown (เผื่อชื่อ handler/package size เปลี่ยน)
-      // โดยไม่แตะตาราง — ค่าที่ค้างในแถวอื่นจึงไม่หาย
-      await loadSupportData();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["lookup-table"] }),
+        queryClient.invalidateQueries({ queryKey: ["lookup-support"] }),
+      ]);
       onChanged?.();
     } catch (e: any) {
       toast.show(e?.message ?? `บันทึก ${cfg.label} ไม่สำเร็จ`);
@@ -342,8 +351,15 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
       setBusy(true);
       try {
         await apiDelete(`${cfg.basePath}/${id}`);
-        await load();
-        await loadSupportData();
+        setEdited((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["lookup-table"] }),
+          queryClient.invalidateQueries({ queryKey: ["lookup-support"] }),
+        ]);
         onDeleted?.();
         onChanged?.();
         toast.show(`ลบ ${cfg.label} สำเร็จ`, undefined, "success");
@@ -459,9 +475,19 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
               <td />
             </tr>
 
+            {lookupQuery.isError && rows.length > 0 && (
+              <tr className="empty-row">
+                <td colSpan={cfg.fields.length + 3}>ข้อมูลในตารางเป็นข้อมูลเก่า กำลังลองโหลดใหม่อีกครั้ง</td>
+              </tr>
+            )}
+
             {/* ⚠ แยก 2 ข้อความ — "ค้นไม่เจอ" กับ "ตารางว่าง" คนละเรื่องกัน
                 ถ้าใช้ข้อความเดียวผู้ใช้จะนึกว่าข้อมูลหายไปทั้งตาราง */}
-            {visibleRows.length === 0 ? (
+            {lookupQuery.isPending ? (
+              <tr className="empty-row"><td colSpan={cfg.fields.length + 3}>กำลังโหลด {cfg.label}...</td></tr>
+            ) : lookupQuery.isError && rows.length === 0 ? (
+              <tr className="empty-row"><td colSpan={cfg.fields.length + 3}>โหลด {cfg.label} ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
+            ) : visibleRows.length === 0 ? (
               <tr className="empty-row">
                 <td colSpan={cfg.fields.length + 3}>
                   {rows.length === 0

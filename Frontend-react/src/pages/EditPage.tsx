@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete, ApiError } from "../api/client";
 import { useToast } from "../components/Toast";
 import TrashCard from "../components/TrashCard";
@@ -10,6 +11,7 @@ import { toleranceLabel } from "../utils/toleranceLabel";
 import { axisValue, offsetValue, xyPair, DP_MM, DP_OFF } from "../components/measurementCells";
 import { useSessionState } from "../hooks/useSessionState";
 import { useSSE } from "../hooks/useSSE";
+import { useLookups } from "../hooks/useLookups";
 import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, type FilterState, type MultiKey } from "../components/export/ExportFilters";
 
 // EditPage — พอร์ตจาก Frontend/edit.html (Database Editor) แบบยึดโครงสร้าง/
@@ -24,6 +26,10 @@ import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, typ
 // แทนที่ตำแหน่งเดิม
 
 const PAGE_SIZE = 10;
+const LOOKUP_QUERY_KEYS = [
+  "operators", "owners", "vendors", "handlers", "package-sizes",
+  "package-size-tolerances", "part-numbers-all",
+] as const;
 
 interface Part {
   part_id: number;
@@ -87,18 +93,6 @@ interface Measurement {
   ok_offset?: boolean | null;
 }
 
-interface PackageSizeRow { package_size: string; }
-
-interface ToleranceRow {
-  tolerance_id: number;
-  package_size: string;
-  nominal_x: number;
-  nominal_y: number;
-  upper_tol: number;
-  lower_tol: number;
-  offset_tol: number;
-}
-
 interface EditContext {
   table: "parts" | "measurements" | null;
   mode: "add" | "edit" | null;
@@ -141,41 +135,66 @@ function DerivedCell({ label, value }: { label: string; value: string }) {
 
 export default function EditPage() {
   const toast = useToast();
+  const queryClient = useQueryClient();
 
   // ── ต่อสายกับถังขยะ ──────────────────────────────────────────────────
-  // หน้านี้ถือ state เองด้วย useState (พอร์ตตรงจาก edit.html) ไม่ได้ใช้ TanStack
-  // Query จึงต้องบอก TrashCard ตรงๆ ว่า "เพิ่งลบอะไรไป ไปโหลดใหม่ที"
+  // TrashCard ยังใช้ reloadKey; ส่วน HistoryCard รีเฟรชผ่าน Query invalidation
+  // หลังการเขียน DB
   //
   // ⚠ ทุกจุดที่ยิง DELETE ต้องเรียก bumpTrash() ด้วย — ตอนนี้มี 3 จุด (Part /
   //   Measurement / Lookup) ถ้าวันหลังเพิ่มปุ่มลบที่ 4 แล้วลืมเติม ถังขยะจะไม่
   //   อัปเดตเฉพาะปุ่มนั้น อาการจะสับสนมากเพราะที่อื่นทำงานปกติดี
   //   (ต้นฉบับใช้ afterDelete() เป็นตัวกลางกันลืมด้วยเหตุผลเดียวกัน)
   const [trashReload, setTrashReload] = useState(0);
-  /** ⚠ ประวัติต้องรีเฟรชทุกครั้งที่มีการเขียน DB ไม่ใช่เฉพาะตอนลบเหมือนถังขยะ —
-   *  bumpTrash() เดิมถูกเรียกเฉพาะจุดที่ลบ ถ้าใช้ตัวเดียวกัน การ "เพิ่ม/แก้ไข"
-   *  จะไม่โผล่ในประวัติจนกว่าจะรีเฟรชหน้า */
-  const [historyReload, setHistoryReload] = useState(0);
-  const bumpHistory = () => setHistoryReload((v) => v + 1);
+  /** ประวัติต้องรีเฟรชทุกครั้งที่มีการเขียน DB ไม่ใช่เฉพาะตอนลบ */
+  const bumpHistory = () => { void queryClient.invalidateQueries({ queryKey: ["edit-history"] }); };
   const bumpTrash = () => { setTrashReload((v) => v + 1); bumpHistory(); };
   const formRef = useRef<HTMLFormElement>(null);
 
   // ── Parts state (server-side pagination + search) ──────────────────
-  const [partsData, setPartsData] = useState<Part[]>([]);
-  const [partsTotal, setPartsTotal] = useState(0);
   const [partsPage, setPartsPage] = useState(1);
   const [partsFilters, setPartsFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
-  const partsFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const [appliedPartsFilters, setAppliedPartsFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const partsSearchTimer = useRef<number | null>(null);
-  const partsRequestRef = useRef(0);
+  const partsParams = toParams(appliedPartsFilters, null);
+  partsParams.delete("latest_only");
+  partsParams.set("limit", String(PAGE_SIZE));
+  partsParams.set("offset", String((partsPage - 1) * PAGE_SIZE));
+  const partsQueryString = partsParams.toString();
+  const partsQuery = useQuery<{ items: Part[]; total: number }, ApiError>({
+    queryKey: ["edit-parts", partsQueryString],
+    queryFn: ({ signal }) => apiGet<{ items: Part[]; total: number }>(`/api/parts?${partsQueryString}`, undefined, signal),
+    enabled: !validateAlpl(appliedPartsFilters.alpl),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const partsFilterPending = toParams(partsFilters, null).toString() !== toParams(appliedPartsFilters, null).toString();
+  const partsData = partsQuery.isError ? [] : partsQuery.data?.items ?? [];
+  const partsTotal = partsQuery.isError ? 0 : partsQuery.data?.total ?? 0;
 
   // ── Measurements state (server-side pagination + filter) ───────────
-  const [measurementsData, setMeasurementsData] = useState<Measurement[]>([]);
-  const [measTotal, setMeasTotal] = useState(0);
   const [measPage, setMeasPage] = useState(1);
   const [measFilters, setMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
-  const measFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const [appliedMeasFilters, setAppliedMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const measSearchTimer = useRef<number | null>(null);
-  const measRequestRef = useRef(0);
+  const measParams = toParams(appliedMeasFilters, null);
+  measParams.set("limit", String(PAGE_SIZE));
+  measParams.set("offset", String((measPage - 1) * PAGE_SIZE));
+  const measQueryString = measParams.toString();
+  const measurementsQuery = useQuery<{ items: Measurement[]; total: number }, ApiError>({
+    queryKey: ["edit-measurements-history", measQueryString],
+    queryFn: ({ signal }) => apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${measQueryString}`, undefined, signal),
+    enabled: !validateAlpl(appliedMeasFilters.alpl),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const measFilterPending = toParams(measFilters, null).toString() !== toParams(appliedMeasFilters, null).toString();
+  const measurementsData = measurementsQuery.isError ? [] : measurementsQuery.data?.items ?? [];
+  const measTotal = measurementsQuery.isError ? 0 : measurementsQuery.data?.total ?? 0;
 
   // ── Session running lock ────────────────────────────────────────────
   /** กำลังมีการวัดอยู่ไหม — ใช้ล็อกปุ่มแก้/ลบทั้งหน้า
@@ -199,17 +218,15 @@ export default function EditPage() {
   const liveRefreshTimer = useRef<number | null>(null);
   const lastSessionSig = useRef<string | null>(null);
 
-  // ── Dropdown lookups ─────────────────────────────────────────────────
-  /* Handler กลับมาเป็น field ที่กรอกตรงๆ อีกครั้ง — `parts_specifications` เก็บ
-     `handler_id` ของตัวเองแล้ว ไม่ได้ derive จาก part_number อย่างเดียว
-     (คอมเมนต์เดิมตรงนี้บอกว่าไม่มี Handler แล้ว ซึ่งตกรุ่นไปตั้งแต่เพิ่มคอลัมน์) */
-  const [handlerOptions, setHandlerOptions] = useState<string[]>([]);
-  const [vendorOptions, setVendorOptions] = useState<string[]>([]);
-  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
-  const [operatorOptions, setOperatorOptions] = useState<string[]>([]);
-  const [packageSizeOptions, setPackageSizeOptions] = useState<string[]>([]);
-  const [partNumberCatalog, setPartNumberCatalog] = useState<{ part_number_name: string; package_size: string }[]>([]);
-  const [toleranceCatalog, setToleranceCatalog] = useState<ToleranceRow[]>([]);
+  // Filter และฟอร์มแก้ไขใช้ lookup cache ชุดเดียวกับหน้า Measure
+  const lookups = useLookups();
+  const handlerOptions = lookups.handlers.map((h) => h.handler_name);
+  const vendorOptions = lookups.vendors.map((v) => v.vendor_name);
+  const ownerOptions = lookups.owners.map((o) => o.owner_name);
+  const operatorOptions = lookups.operators.map((o) => o.operator_name);
+  const packageSizeOptions = lookups.packageSizes.map((p) => p.package_size);
+  const partNumberCatalog = lookups.partNumbers;
+  const toleranceCatalog = lookups.tolerances;
 
   // ── Modal / form state ───────────────────────────────────────────────
   const [editContext, setEditContext] = useState<EditContext>({ table: null, mode: null, key: null, original: null });
@@ -226,12 +243,13 @@ export default function EditPage() {
   const [pkgValue, setPkgValue] = useState("");
   const [toleranceValue, setToleranceValue] = useState("");
   const [pnValue, setPnValue] = useState("");
-  const [pnOptions, setPnOptions] = useState<string[]>([]);
+  const pnOptions = partNumberCatalog
+    .filter((p) => p.package_size === pkgValue.trim())
+    .map((p) => p.part_number_name);
   const [handlerValue, setHandlerValue] = useState("");
   const [vendorValue, setVendorValue] = useState("");
   const [ownerValue, setOwnerValue] = useState("");
   const [measOperatorValue, setMeasOperatorValue] = useState("");
-  const pnImmediate = useRef(false);
 
   // ── Row highlight (highlight-row, 2.2s fade — เหมือนต้นฉบับ) ─────────
   const [highlight, setHighlight] = useState<{ table: "parts" | "measurements"; key: number } | null>(null);
@@ -240,65 +258,50 @@ export default function EditPage() {
     window.setTimeout(() => setHighlight((h) => (h && h.key === key && h.table === table ? null : h)), 2300);
   }
 
-  async function loadParts(page: number, filters = partsFiltersRef.current) {
-    if (validateAlpl(filters.alpl)) return [];
-    const request = ++partsRequestRef.current;
+  async function loadParts(page: number, filters: FilterState) {
+    if (validateAlpl(filters.alpl)) return null;
     const params = toParams(filters, null);
     params.delete("latest_only");
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String((page - 1) * PAGE_SIZE));
+    const queryString = params.toString();
     try {
-      const d = await apiGet<{ items: Part[]; total: number }>(`/api/parts?${params}`);
-      if (request !== partsRequestRef.current) return [];
-      setPartsData(d.items ?? []);
-      setPartsTotal(d.total ?? 0);
+      const d = await queryClient.fetchQuery({
+        queryKey: ["edit-parts", queryString],
+        queryFn: ({ signal }) => apiGet<{ items: Part[]; total: number }>(`/api/parts?${queryString}`, undefined, signal),
+        staleTime: 0,
+      });
       return d.items ?? [];
     } catch (e) {
       console.error("loadParts:", e);
       toast.show("ไม่สามารถดึงข้อมูล Parts จาก Database ได้");
-      return [];
+      return null;
     }
   }
 
-  async function loadMeasurements(page: number, filters = measFiltersRef.current) {
-    if (validateAlpl(filters.alpl)) return [];
-    const request = ++measRequestRef.current;
+  async function loadMeasurements(page: number, filters: FilterState) {
+    if (validateAlpl(filters.alpl)) return null;
     const params = toParams(filters, null);
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String((page - 1) * PAGE_SIZE));
+    const queryString = params.toString();
     try {
-      const d = await apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${params}`);
-      if (request !== measRequestRef.current) return [];
-      setMeasurementsData(d.items ?? []);
-      setMeasTotal(d.total ?? 0);
+      const d = await queryClient.fetchQuery({
+        queryKey: ["edit-measurements-history", queryString],
+        queryFn: ({ signal }) => apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${queryString}`, undefined, signal),
+        staleTime: 0,
+      });
       return d.items ?? [];
     } catch (e) {
       console.error("loadMeasurements:", e);
       toast.show("ไม่สามารถดึงข้อมูล Measurements จาก Database ได้");
-      return [];
+      return null;
     }
   }
 
-  async function loadDropdownData() {
-    /* ⚠ ลำดับชื่อทางซ้ายต้องตรงกับลำดับ promise ทางขวาเป๊ะ — แทรกตัวใหม่ตรงกลาง
-       แล้วลืมเติมชื่อ จะทำให้ทุกตัวหลังจากนั้นรับข้อมูลผิดชนิดโดยไม่มี error
-       (TypeScript จับให้ได้เพราะ type ต่างกัน แต่ถ้าบังเอิญเหมือนกันจะเงียบสนิท) */
-    const [vendors, handlers, owners, packageSizes, tolerances, operators, partNumbers] = await Promise.all([
-      apiGet<{ vendor_name: string }[]>("/api/vendors").catch(() => []),
-      apiGet<{ handler_name: string }[]>("/api/handlers").catch(() => []),
-      apiGet<{ owner_name: string }[]>("/api/owners").catch(() => []),
-      apiGet<PackageSizeRow[]>("/api/package-sizes").catch(() => []),
-      apiGet<ToleranceRow[]>("/api/package-size-tolerances").catch(() => []),
-      apiGet<{ operator_name: string }[]>("/api/operators").catch(() => []),
-      apiGet<{ part_number_name: string; package_size: string }[]>("/api/part-numbers/all").catch(() => []),
-    ]);
-    setHandlerOptions(handlers.map((h) => h.handler_name));
-    setVendorOptions(vendors.map((v) => v.vendor_name));
-    setOwnerOptions(owners.map((o) => o.owner_name));
-    setOperatorOptions(operators.map((o) => o.operator_name));
-    setToleranceCatalog(tolerances);
-    setPackageSizeOptions(packageSizes.map((p) => p.package_size));
-    setPartNumberCatalog(partNumbers);
+  async function refreshLookups() {
+    await Promise.all(LOOKUP_QUERY_KEYS.map((key) =>
+      queryClient.invalidateQueries({ queryKey: [key] })));
   }
 
   function scheduleLiveRefresh() {
@@ -306,9 +309,8 @@ export default function EditPage() {
     liveRefreshTimer.current = window.setTimeout(() => {
       liveRefreshTimer.current = null;
       void Promise.all([
-        loadParts(partsPage),
-        loadMeasurements(measPage),
-        loadDropdownData(),
+        queryClient.invalidateQueries({ queryKey: ["edit-parts"] }),
+        queryClient.invalidateQueries({ queryKey: ["edit-measurements-history"] }),
       ]);
       bumpHistory();
     }, 150);
@@ -343,35 +345,27 @@ export default function EditPage() {
     if (liveRefreshTimer.current !== null) window.clearTimeout(liveRefreshTimer.current);
     if (partsSearchTimer.current !== null) window.clearTimeout(partsSearchTimer.current);
     if (measSearchTimer.current !== null) window.clearTimeout(measSearchTimer.current);
-    ++partsRequestRef.current;
-    ++measRequestRef.current;
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      await Promise.all([loadParts(1), loadMeasurements(1), loadDropdownData()]);
-    })();
-    // ไม่มี setInterval แล้ว — สถานะ session มาจาก useSessionState() ข้างบน
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function reloadPartsAfterMutation(highlightAlpl?: number) {
+    await queryClient.invalidateQueries({ queryKey: ["edit-parts"], refetchType: "none" });
     let page = partsPage;
-    let items = await loadParts(page);
-    if (items.length === 0 && page > 1) {
+    let items = await loadParts(page, appliedPartsFilters);
+    if (items?.length === 0 && page > 1) {
       page -= 1;
       setPartsPage(page);
-      items = await loadParts(page);
+      items = await loadParts(page, appliedPartsFilters);
     }
     if (highlightAlpl != null) flashHighlight("parts", highlightAlpl);
   }
   async function reloadMeasAfterMutation(highlightId?: number) {
+    await queryClient.invalidateQueries({ queryKey: ["edit-measurements-history"], refetchType: "none" });
     let page = measPage;
-    let items = await loadMeasurements(page);
-    if (items.length === 0 && page > 1) {
+    let items = await loadMeasurements(page, appliedMeasFilters);
+    if (items?.length === 0 && page > 1) {
       page -= 1;
       setMeasPage(page);
-      items = await loadMeasurements(page);
+      items = await loadMeasurements(page, appliedMeasFilters);
     }
     if (highlightId != null) flashHighlight("measurements", highlightId);
   }
@@ -380,66 +374,52 @@ export default function EditPage() {
   function onPartsFiltersChange(next: FilterState) {
     setPartsFilters(next);
     if (partsSearchTimer.current) window.clearTimeout(partsSearchTimer.current);
-    partsFiltersRef.current = next;
-    ++partsRequestRef.current;
     if (validateAlpl(next.alpl)) return;
     partsSearchTimer.current = window.setTimeout(() => {
       setPartsPage(1);
-      void loadParts(1, next);
+      setAppliedPartsFilters(next);
     }, 300);
   }
   function onPartsClearFilter() {
     if (partsSearchTimer.current) window.clearTimeout(partsSearchTimer.current);
     const empty: FilterState = { ...EMPTY_FILTERS, multi: { ...EMPTY_FILTERS.multi }, latestOnly: false };
     setPartsFilters(empty);
-    partsFiltersRef.current = empty;
     setPartsPage(1);
-    void loadParts(1, empty);
+    setAppliedPartsFilters(empty);
   }
-  async function onPartsPrev() {
+  function onPartsPrev() {
     if (partsPage <= 1) return;
-    const p = partsPage - 1;
-    setPartsPage(p);
-    await loadParts(p);
+    setPartsPage(partsPage - 1);
   }
-  async function onPartsNext() {
+  function onPartsNext() {
     if ((partsPage - 1) * PAGE_SIZE + partsData.length >= partsTotal) return;
-    const p = partsPage + 1;
-    setPartsPage(p);
-    await loadParts(p);
+    setPartsPage(partsPage + 1);
   }
 
   // ── Measurements filter handlers ─────────────────────────────────────
   function onMeasFiltersChange(next: FilterState) {
     setMeasFilters(next);
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-    measFiltersRef.current = next;
-    ++measRequestRef.current;
     if (validateAlpl(next.alpl)) return;
     measSearchTimer.current = window.setTimeout(() => {
       setMeasPage(1);
-      void loadMeasurements(1, next);
+      setAppliedMeasFilters(next);
     }, 300);
   }
   function onMeasClearFilter() {
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
     const empty: FilterState = { ...EMPTY_FILTERS, multi: { ...EMPTY_FILTERS.multi }, latestOnly: false };
     setMeasFilters(empty);
-    measFiltersRef.current = empty;
     setMeasPage(1);
-    void loadMeasurements(1, empty);
+    setAppliedMeasFilters(empty);
   }
-  async function onMeasPrev() {
+  function onMeasPrev() {
     if (measPage <= 1) return;
-    const p = measPage - 1;
-    setMeasPage(p);
-    await loadMeasurements(p);
+    setMeasPage(measPage - 1);
   }
-  async function onMeasNext() {
+  function onMeasNext() {
     if ((measPage - 1) * PAGE_SIZE + measurementsData.length >= measTotal) return;
-    const p = measPage + 1;
-    setMeasPage(p);
-    await loadMeasurements(p);
+    setMeasPage(measPage + 1);
   }
 
   // ── Modal open/close ─────────────────────────────────────────────────
@@ -448,52 +428,24 @@ export default function EditPage() {
     setEditContext({ table: "parts", mode, key: partId, original: part });
     setFieldErrors({});
     setAlplNoteConsumed(false);
-    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — effect ด้านล่างจะไปโหลด option ของ
-    // Part Number ให้เองตาม pkgValue แล้วคงค่า pnValue เดิมไว้ถ้ายังเลือกได้อยู่
+    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — Part Number กรองจาก catalog ใน Query
     setPkgValue(String(part?.package_size ?? ""));
     setToleranceValue(String(part?.tolerance_id ?? ""));
     setPnValue(String(part?.part_number ?? ""));
     setHandlerValue(String(part?.handler ?? ""));
     setVendorValue(String(part?.vendor ?? ""));
     setOwnerValue(String(part?.owner ?? ""));
-    setPnOptions([]);
-    // รอบแรกตอนเปิด modal ต้องโหลดทันที ไม่ต้อง debounce — ไม่งั้นช่อง Part Number
-    // จะขึ้น disabled ค้างอยู่ 250ms ทั้งที่ Package Size มีค่าอยู่แล้ว (โหมด Edit)
-    pnImmediate.current = true;
   }
 
-  /* Package Size → Part Number (cascade)
-   *
-   * Part Number เป็น catalog ที่ผูก package_size ของตัวเองไว้แล้ว จึงเลือกได้
-   * เฉพาะตัวที่อยู่ใน Package Size ที่กรอกไว้เท่านั้น — debounce 250ms เพราะช่อง
-   * Package Size เป็น input ที่พิมพ์ได้ (datalist) ไม่ใช่ dropdown ปิด ถ้ายิงทุก
-   * keystroke จะได้ request ท่วมและผลกลับมาสลับลำดับกันเอง
-   *
-   * ⚠ ต้อง cleanup timer ทุกครั้ง — ไม่งั้นพิมพ์เร็วๆ แล้ว request ของค่าเก่า
-   *   ตอบทีหลัง จะทับ option ของค่าล่าสุด
-   */
+  // Package Size → Part Number: กรองจาก catalog ที่โหลดไว้แล้ว ไม่ยิง request
+  // ทุกครั้งที่เปลี่ยนขนาด และยังคงค่าเดิมไว้ระหว่างที่ catalog โหลดครั้งแรก
   useEffect(() => {
-    if (editContext.table !== "parts") return;
-    const pkg = pkgValue.trim();
-    if (!pkg) {
-      setPnOptions([]);
-      return;
-    }
-    const delay = pnImmediate.current ? 0 : 250;
-    pnImmediate.current = false;
-    const t = window.setTimeout(async () => {
-      try {
-        const names = await apiGet<string[]>("/api/part-numbers", { package_size: pkg });
-        setPnOptions(names);
-        // Package Size ใหม่อาจไม่มี Part Number ตัวเดิมอยู่ → ล้างทิ้ง ไม่ปล่อยให้
-        // ค้างค่าที่เลือกไม่ได้แล้ว (กล่องค่า read-only จะได้ไม่โชว์ของผิดชุด)
-        setPnValue((v) => (names.includes(v) ? v : ""));
-      } catch {
-        setPnOptions([]);
-      }
-    }, delay);
-    return () => window.clearTimeout(t);
-  }, [pkgValue, editContext.table]);
+    if (editContext.table !== "parts" || !lookups.partNumbersLoaded) return;
+    const validNames = new Set(partNumberCatalog
+      .filter((p) => p.package_size === pkgValue.trim())
+      .map((p) => p.part_number_name));
+    setPnValue((value) => validNames.has(value) ? value : "");
+  }, [pkgValue, editContext.table, partNumberCatalog, lookups.partNumbersLoaded]);
   function openMeasModal(mode: "add" | "edit", measurementId: number | null = null) {
     const m = mode === "edit" ? measurementsData.find((x) => x.measurement_id === measurementId) ?? null : null;
     setEditContext({ table: "measurements", mode, key: measurementId, original: m });
@@ -760,10 +712,9 @@ export default function EditPage() {
             options={filterOptions} partNumberCatalog={partNumberCatalog} toleranceCatalog={toleranceCatalog}
             showLatestOnly={false} showMeasureDate={false}
             hiddenMultiKeys={["result", "operator", "measure_type"]}
+            collapsibleAdvanced
           />
         </div>
-        <div className="filter-result-note" />
-
         <div className="table-wrap">
           <table>
             <thead>
@@ -798,7 +749,13 @@ export default function EditPage() {
               </tr>
             </thead>
             <tbody>
-              {partsData.length === 0 ? (
+              {validateAlpl(partsFilters.alpl) ? (
+                <tr className="empty-row"><td colSpan={16}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+              ) : partsFilterPending || partsQuery.isPending ? (
+                <tr className="empty-row"><td colSpan={16}>กำลังโหลด ALPL Profile...</td></tr>
+              ) : partsQuery.isError ? (
+                <tr className="empty-row"><td colSpan={16}>โหลด ALPL Profile ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
+              ) : partsData.length === 0 ? (
                 <tr className="empty-row">
                   <td colSpan={16}>{hasAnyFilter(partsFilters) ? "ไม่พบ Part ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Parts"}</td>
                 </tr>
@@ -861,14 +818,14 @@ export default function EditPage() {
           </table>
         </div>
         <div className="pagination-bar">
-          <button type="button" className="btn-icon" disabled={partsPage <= 1} onClick={onPartsPrev}>
+          <button type="button" className="btn-icon" disabled={partsPage <= 1 || partsFilterPending || partsQuery.isPending || partsQuery.isError} onClick={onPartsPrev}>
             ‹ Previous
           </button>
           <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>{pageInfoText(partsPage, partsTotal, partsData.length)}</span>
           <button
             type="button"
             className="btn-icon"
-            disabled={(partsPage - 1) * PAGE_SIZE + partsData.length >= partsTotal}
+            disabled={partsFilterPending || partsQuery.isPending || partsQuery.isError || (partsPage - 1) * PAGE_SIZE + partsData.length >= partsTotal}
             onClick={onPartsNext}
           >
             Next ›
@@ -889,9 +846,9 @@ export default function EditPage() {
             value={measFilters} onChange={onMeasFiltersChange} onClear={onMeasClearFilter}
             options={filterOptions} partNumberCatalog={partNumberCatalog} toleranceCatalog={toleranceCatalog}
             showLatestOnly={false}
+            collapsibleAdvanced primaryMultiKeys={["result", "package_size"]}
           />
         </div>
-        <div className="filter-result-note" />
 
         <div className="table-wrap">
           <table>
@@ -927,7 +884,13 @@ export default function EditPage() {
               </tr>
             </thead>
             <tbody>
-              {measurementsData.length === 0 ? (
+              {validateAlpl(measFilters.alpl) ? (
+                <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+              ) : measFilterPending || measurementsQuery.isPending ? (
+                <tr className="empty-row"><td colSpan={12}>กำลังโหลด Measurement History...</td></tr>
+              ) : measurementsQuery.isError ? (
+                <tr className="empty-row"><td colSpan={12}>โหลด Measurement History ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
+              ) : measurementsData.length === 0 ? (
                 <tr className="empty-row">
                   <td colSpan={12}>{hasAnyFilter(measFilters) ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Measurements"}</td>
                 </tr>
@@ -1000,14 +963,14 @@ export default function EditPage() {
           </table>
         </div>
         <div className="pagination-bar">
-          <button type="button" className="btn-icon" disabled={measPage <= 1} onClick={onMeasPrev}>
+          <button type="button" className="btn-icon" disabled={measPage <= 1 || measFilterPending || measurementsQuery.isPending || measurementsQuery.isError} onClick={onMeasPrev}>
             ‹ Previous
           </button>
           <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>{pageInfoText(measPage, measTotal, measurementsData.length)}</span>
           <button
             type="button"
             className="btn-icon"
-            disabled={(measPage - 1) * PAGE_SIZE + measurementsData.length >= measTotal}
+            disabled={measFilterPending || measurementsQuery.isPending || measurementsQuery.isError || (measPage - 1) * PAGE_SIZE + measurementsData.length >= measTotal}
             onClick={onMeasNext}
           >
             Next ›
@@ -1021,7 +984,7 @@ export default function EditPage() {
       <LookupTables
         readOnly={sessionRunning}
         onDeleted={bumpTrash}
-        onChanged={() => { loadDropdownData(); bumpHistory(); }}
+        onChanged={() => { void refreshLookups(); bumpHistory(); }}
         onAlert={setAlertText}
         // ใช้ confirm modal ตัวเดียวกับ Parts/Measurements — ปุ่มลบทุกจุดในหน้านี้
         // จะได้ถามยืนยันหน้าตาเหมือนกันหมด ไม่มีจุดไหนลบทันทีโดยไม่ถาม
@@ -1033,7 +996,7 @@ export default function EditPage() {
       {/* ── ประวัติการแก้ไข ─────────────────────────────────────────────
           วางก่อนถังขยะ — เป็นของที่เปิดดูบ่อยกว่า ส่วนถังขยะยังอยู่ท้ายสุด
           ตามต้นฉบับ (เผลอลบแล้วเลื่อนลงมากู้ได้ทันที) */}
-      <HistoryCard reloadKey={historyReload} />
+      <HistoryCard />
 
       {/* ── ถังขยะ ────────────────────────────────────────────────────────
           วางไว้ท้ายสุดของหน้าโดยตั้งใจ (ตามต้นฉบับ) — เป็นหน้าเดียวกับที่ผู้ใช้
@@ -1050,7 +1013,7 @@ export default function EditPage() {
           await Promise.all([
             reloadPartsAfterMutation(),
             reloadMeasAfterMutation(),
-            loadDropdownData(),
+            refreshLookups(),
           ]);
         }}
       />

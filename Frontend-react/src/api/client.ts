@@ -52,7 +52,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function apiGet<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+export async function apiGet<T>(path: string, params?: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<T> {
   const qs = params
     ? "?" +
       new URLSearchParams(
@@ -61,7 +61,7 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
           .map(([k, v]) => [k, String(v)]),
       ).toString()
     : "";
-  const res = await fetch(`${path}${qs}`);
+  const res = await fetch(`${path}${qs}`, { signal });
   return handleResponse<T>(res);
 }
 

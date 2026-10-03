@@ -1,0 +1,18 @@
+{
+  "order": "image-first",
+  "old_txt_accepted": false,
+  "posted": {
+    "session_id": 1,
+    "capture_id": "repro-capture",
+    "value_x": 5.031,
+    "value_y": 5.032,
+    "horizon_left": 2.498,
+    "horizon_right": 2.523,
+    "vertical_bottom": 2.466,
+    "vertical_top": 2.555,
+    "offset_opx": 0.025,
+    "offset_opy": 0.089
+  },
+  "events": [],
+  "receiver_log": "D:\\All Work\\TM-X React\\output\\ftp_replay_offline\\20261002_231442_image-first\\receiver.log"
+}

@@ -219,11 +219,6 @@ export default function Layout() {
           ข้างในถูกปิดหมดโดยอัตโนมัติ รวมถึงตัวที่ render ขึ้นมาทีหลังด้วย
           (ฝั่ง vanilla ต้องใช้ MutationObserver ไล่ปิดเอง เพราะไม่มีอะไร
           ครอบแบบนี้ให้) · เมนูบนอยู่นอก fieldset จึงยังกดออกจากหน้าได้ */}
-      {lockPage && (
-        <div className="db-lock-banner">
-          ⛔ ต่อฐานข้อมูลไม่ได้ — ดูข้อมูลเดิมได้ แต่บันทึก/แก้ไข/ลบไม่ได้จนกว่าจะเชื่อมต่อได้อีกครั้ง
-        </div>
-      )}
       <fieldset className="page-lock" disabled={lockPage}>
         <Outlet />
       </fieldset>

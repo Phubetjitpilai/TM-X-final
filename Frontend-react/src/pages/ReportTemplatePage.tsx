@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPatch, apiPost, ApiError } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDialog } from "../components/Dialog";
@@ -103,12 +104,30 @@ export default function ReportTemplatePage() {
   const toast = useToast();
   const dialog = useDialog();
   const { data: sessionState } = useSessionState();
+  const queryClient = useQueryClient();
   const sessionRunning = sessionState?.state === "running";
 
   const format = (params.get("format") ?? params.get("kind") ?? "pdf").toLowerCase();
   const output = format === "excel" ? "Excel" : "PDF";
   const openId = params.get("id") != null ? Number(params.get("id")) : null;
+  const editorKey = `${format}:${openId ?? "new"}`;
   const backToWizard = () => navigate(`/export?format=${format}`);
+  const columnsQuery = useQuery<CatalogCol[], ApiError>({
+    queryKey: ["export-columns", format],
+    queryFn: ({ signal }) => apiGet<CatalogCol[]>("/api/export/columns", { kind: format }, signal),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const templatesQuery = useQuery<TemplateRow[], ApiError>({
+    queryKey: ["export-templates", format],
+    queryFn: ({ signal }) => apiGet<TemplateRow[]>("/api/export/templates", { kind: format }, signal),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
 
   // ── สถานะที่ต้องแก้ในที่ (ดูหมายเหตุหัวไฟล์) ────────────────────────────
   const [, bump] = useReducer((x: number) => x + 1, 0);
@@ -130,6 +149,7 @@ export default function ReportTemplatePage() {
   /** เปิดตัวที่ระบบล็อกไว้อยู่ → บันทึกเป็นตัวใหม่แทนการทับ */
   const [lockedDefault, setLockedDefault] = useState(false);
   const [ready, setReady] = useState(false);
+  const initializedKeyRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
   /** เมนูของหัวคอลัมน์/เลขแถว — ต้นฉบับใช้ prompt() ให้พิมพ์เลข ซึ่งไม่มีใคร
    *  เดาได้ว่ามีฟีเจอร์นี้ และ prompt() บล็อก event loop ทั้งเส้น */
@@ -362,40 +382,40 @@ export default function ReportTemplatePage() {
 
   // ── โหลดข้อมูลตั้งต้น ────────────────────────────────────────────────────
   useEffect(() => {
-    (async () => {
-      // kind=pdf|excel → ได้ช่องรวม "Tolerance" ช่องเดียวแทน Nominal X/Y + Upper/Lower Tol
-      const cols = await apiGet<CatalogCol[]>("/api/export/columns", { kind: format }).catch(() => []);
-      const tpls = await apiGet<TemplateRow[]>("/api/export/templates", { kind: format }).catch(() => []);
-      setCatalog(cols);
+    // Query refetch ได้ระหว่างแก้ผัง แต่ห้ามนำผลใหม่มาเขียนทับ grid/name ที่ผู้ใช้แก้ค้าง
+    if (initializedKeyRef.current === editorKey || columnsQuery.isError || templatesQuery.isError) return;
+    if (!columnsQuery.data || !templatesQuery.data) return;
+    // kind=pdf|excel → ได้ช่องรวม "Tolerance" ช่องเดียวแทน Nominal X/Y + Upper/Lower Tol
+    setCatalog(columnsQuery.data);
 
-      const t = openId != null ? tpls.find((x) => x.export_template_id === openId) : null;
-      // เปิดมาด้วย id ที่หาไม่เจอ (ถูกลบไปแล้ว / ลิงก์เก่า) — ต้องบอก ไม่ใช่ตกไป
-      // สร้างผังเปล่าเงียบๆ แล้วผู้ใช้บันทึกทับเป็นตัวใหม่โดยไม่รู้ตัว
-      if (openId != null && !t) toast.show("ไม่พบเทมเพลตนี้ (อาจถูกลบไปแล้ว) — เริ่มผังใหม่ให้แทน");
-      const locked = !!t?.is_default;
-      // เทมเพลตค่าเริ่มต้นแก้ไม่ได้ (backend ปฏิเสธด้วย 403) — บอกตั้งแต่ตอนเปิด
-      // ดีกว่าปล่อยให้จัดผังจนเสร็จแล้วค่อยเด้ง error ตอนกดบันทึก งานที่ทำหายหมด
-      if (locked) toast.show("เทมเพลตค่าเริ่มต้นแก้ไม่ได้ — บันทึกจะกลายเป็นตัวใหม่ให้อัตโนมัติ");
-      setLockedDefault(locked);
-      setEditingId(t && !locked ? t.export_template_id : null);
-      setName(t ? (locked ? `${t.name} (สำเนา)` : t.name) : "");
+    const t = openId != null ? templatesQuery.data.find((x) => x.export_template_id === openId) : null;
+    // เปิดมาด้วย id ที่หาไม่เจอ (ถูกลบไปแล้ว / ลิงก์เก่า) — ต้องบอก ไม่ใช่ตกไป
+    // สร้างผังเปล่าเงียบๆ แล้วผู้ใช้บันทึกทับเป็นตัวใหม่โดยไม่รู้ตัว
+    if (openId != null && !t) toast.show("ไม่พบเทมเพลตนี้ (อาจถูกลบไปแล้ว) — เริ่มผังใหม่ให้แทน");
+    const locked = !!t?.is_default;
+    // เทมเพลตค่าเริ่มต้นแก้ไม่ได้ (backend ปฏิเสธด้วย 403) — บอกตั้งแต่ตอนเปิด
+    // ดีกว่าปล่อยให้จัดผังจนเสร็จแล้วค่อยเด้ง error ตอนกดบันทึก งานที่ทำหายหมด
+    if (locked) toast.show("เทมเพลตค่าเริ่มต้นแก้ไม่ได้ — บันทึกจะกลายเป็นตัวใหม่ให้อัตโนมัติ");
+    setLockedDefault(locked);
+    setEditingId(t && !locked ? t.export_template_id : null);
+    setName(t ? (locked ? `${t.name} (สำเนา)` : t.name) : "");
 
-      if (t?.layout?.grid) {
-        // โหลดผังเดิมกลับมา — เติมเซลล์ที่ขาดให้ครบกันกรณี layout เก่ามีคอลัมน์น้อยกว่า
-        const nr = t.layout.nRows, nc = t.layout.nCols;
-        sizeRef.current = { nRows: nr, nCols: nc };
-        dataRowRef.current = t.layout.dataRow ?? 2;
-        gridRef.current = Array.from({ length: nr }, (_, r) =>
-          Array.from({ length: nc }, (_, c) => ({ ...blank(), ...(t.layout!.grid[r]?.[c] || {}) })));
-      } else {
-        newGrid();
-      }
-      selRef.current = { anchor: { r: 0, c: 0 }, focus: { r: 0, c: 0 } };
-      setReady(true);
-      bump();
-    })();
+    if (t?.layout?.grid) {
+      // โหลดผังเดิมกลับมา — เติมเซลล์ที่ขาดให้ครบกันกรณี layout เก่ามีคอลัมน์น้อยกว่า
+      const nr = t.layout.nRows, nc = t.layout.nCols;
+      sizeRef.current = { nRows: nr, nCols: nc };
+      dataRowRef.current = t.layout.dataRow ?? 2;
+      gridRef.current = Array.from({ length: nr }, (_, r) =>
+        Array.from({ length: nc }, (_, c) => ({ ...blank(), ...(t.layout!.grid[r]?.[c] || {}) })));
+    } else {
+      newGrid();
+    }
+    selRef.current = { anchor: { r: 0, c: 0 }, focus: { r: 0, c: 0 } };
+    initializedKeyRef.current = editorKey;
+    setReady(true);
+    bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, openId]);
+  }, [editorKey, openId, columnsQuery.data, columnsQuery.isError, templatesQuery.data, templatesQuery.isError]);
 
   // ── การเลือก / แก้ไขในเซลล์ ─────────────────────────────────────────────
   function selectCell(r: number, c: number, extend = false) {
@@ -572,6 +592,7 @@ export default function ReportTemplatePage() {
   // ── คีย์ลัดบนตาราง (เหมือน Excel) ───────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!ready || initializedKeyRef.current !== editorKey) return;
       // ไม่แย่งคีย์ตอนโฟกัสอยู่ในช่องกรอกอื่น (ชื่อเทมเพลต, fx, ช่องแก้เซลล์)
       const tag = (document.activeElement as HTMLElement | null)?.tagName;
       if (editRef.current || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
@@ -616,7 +637,7 @@ export default function ReportTemplatePage() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog]);
+  }, [catalog, ready, editorKey]);
 
   // โฟกัสช่องกรอกทันทีที่เข้าโหมดพิมพ์
   useEffect(() => {
@@ -646,6 +667,7 @@ export default function ReportTemplatePage() {
       // ตัวที่ถูกล็อกไว้ → สร้างเป็นตัวใหม่เสมอ ไม่ยิง PATCH ไปให้โดนปฏิเสธ
       if (editingId != null && !lockedDefault) await apiPatch(`/api/export/templates/${editingId}`, body);
       else await apiPost("/api/export/templates", body);
+      void queryClient.invalidateQueries({ queryKey: ["export-templates", format] });
       toast.show("บันทึกแล้ว", undefined, "success");
       backToWizard();
     } catch (err) {
@@ -656,7 +678,12 @@ export default function ReportTemplatePage() {
   }
 
   // ── วาด ─────────────────────────────────────────────────────────────────
-  if (!ready) return <div className="main-edit"><div className="filter-result-note">กำลังโหลด…</div></div>;
+  if (!ready || initializedKeyRef.current !== editorKey) {
+    const failed = columnsQuery.isError || templatesQuery.isError;
+    return <div className="main-edit"><div className="filter-result-note">
+      {failed ? "โหลดข้อมูล Report Template ไม่สำเร็จ กำลังลองใหม่อีกครั้ง" : "กำลังโหลด…"}
+    </div></div>;
+  }
 
   const sel = range();
   const focus = selRef.current.focus;

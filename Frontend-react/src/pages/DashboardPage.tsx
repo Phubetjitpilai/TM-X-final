@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { apiGet, apiGetRetry, apiPost, ApiError } from "../api/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiGet, apiPost, ApiError } from "../api/client";
 import { useSSE } from "../hooks/useSSE";
 import { useSessionState, sessionStateLabel } from "../hooks/useSessionState";
+import { useLookups } from "../hooks/useLookups";
 import { useToast } from "../components/Toast";
 import { useDialog } from "../components/Dialog";
 import AlplIcon from "../components/AlplIcon";
@@ -24,7 +26,7 @@ import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, typ
 
 const PART_ENTRY_STORAGE_KEY = "tmx_part_entry_state_v1";
 const MEAS_PAGE_SIZE = 10;
-const SESSION_STOP_ERROR_EVENTS = new Set(["PI_ERROR", "START_FAILED", "STOP_NOT_DELIVERED"]);
+const SESSION_STOP_ERROR_EVENTS = new Set(["PI_ERROR", "START_FAILED", "STOP_NOT_DELIVERED", "TIMEOUT_STOP_FAILED"]);
 
 interface SessionState {
   state: "idle" | "running" | "stopped" | "timeout";
@@ -512,27 +514,17 @@ export default function DashboardPage() {
   // ── Parts cache (ใช้ validate ALPL + report modal — ไม่มีตารางแสดงในหน้านี้) ──
   const partsRef = useRef<Part[]>([]);
 
-  // ── Dropdown lookups (Operator/Owner/Vendor/Handler/Package Size) ────
-  // โหลดครั้งเดียวตอนเปิดหน้าจาก endpoint ของแต่ละตัวจริงๆ (เหมือน index.html
-  // ต้นฉบับ) ไม่ใช่ derive จาก parts cache (เดิมทำผิดไป — ทำให้ Operator ไม่มี
-  // ตัวเลือกเลยเพราะ parts ไม่มี field operator, และ Handler/Vendor/Owner/
-  // Package Size ก็โชว์ไม่ครบเพราะเห็นแค่ค่าที่เคยผูกกับ part ที่โหลดมาแล้ว)
-  const [operatorOptions, setOperatorOptions] = useState<string[]>([]);
-  const [ownerOptions, setOwnerOptions] = useState<string[]>([]);
-  const [vendorOptions, setVendorOptions] = useState<string[]>([]);
-  const [handlerOptions, setHandlerOptions] = useState<string[]>([]);
-  const [packageSizeOptions, setPackageSizeOptions] = useState<string[]>([]);
-  /** แถวเต็มของ package_size — ต้องเก็บทั้งก้อนเพราะช่อง Handler ในฟอร์ม
-   *  ต้องใช้ `handlers` ที่แนบมาด้วย ถ้าเก็บแค่ชื่อเหมือนเดิมจะต้องยิง API
-   *  เพิ่มทุกครั้งที่เปลี่ยน Package Size */
-  const [packageSizeCatalog, setPackageSizeCatalog] =
-    useState<{ package_size: string; handlers: string[] }[]>([]);
-  const [toleranceCatalog, setToleranceCatalog] = useState<{
-    package_size: string; tolerance_id: number; nominal_x: number; nominal_y: number;
-    upper_tol: number; lower_tol: number; offset_tol: number;
-  }[]>([]);
-  const [partNumberCatalog, setPartNumberCatalog] =
-    useState<{ part_number_name: string; package_size: string; handler: string }[]>([]);
+  // Lookup แต่ละชุดใช้ cache และ retry ของ TanStack Query; ข้อมูลจาก endpoint
+  // จริงโดยตรง เพื่อให้ช่องที่ยังโหลดไม่ได้ไม่ถูกเข้าใจว่าไม่มีรายการใน DB
+  const lookups = useLookups();
+  const operatorOptions = lookups.operators.map((o) => o.operator_name);
+  const ownerOptions = lookups.owners.map((o) => o.owner_name);
+  const vendorOptions = lookups.vendors.map((v) => v.vendor_name);
+  const handlerOptions = lookups.handlers.map((h) => h.handler_name);
+  const packageSizeCatalog = lookups.packageSizes;
+  const packageSizeOptions = packageSizeCatalog.map((p) => p.package_size);
+  const toleranceCatalog = lookups.tolerances;
+  const partNumberCatalog = lookups.partNumbers;
 
   // ── Part Entry queues ────────────────────────────────────────────────
   /** คิวเดียวใช้ทั้ง 3 โหมด — โครง groups[] เหมือนกันหมด ต่างแค่ field ในกลุ่ม
@@ -551,9 +543,7 @@ export default function DashboardPage() {
   const [resumeTrigger, setResumeTrigger] = useState<{ sessionId: number; mode: TriggerMode } | null>(null);
   const resumeTriggerRef = useRef(resumeTrigger);
   resumeTriggerRef.current = resumeTrigger;
-  /** มีเส้นไหนของ loadDropdownData() โหลดไม่สำเร็จไหม — ใช้ขึ้นแถบเตือน
-   *  ไม่ให้อาการ "ช่องเลือกว่าง" เงียบอีกต่อไป (ดู loadDropdownData) */
-  const [dropdownFailed, setDropdownFailed] = useState(false);
+  const dropdownFailed = lookups.isFailed;
   const [peSummaryOpen, setPeSummaryOpen] = useState(false);
 
 
@@ -570,17 +560,50 @@ export default function DashboardPage() {
   }
 
   // ── Measurements table (server-side pagination + filter) ─────────────
-  const [measurements, setMeasurements] = useState<Measurement[]>([]);
-  const [measTotal, setMeasTotal] = useState(0);
+  const queryClient = useQueryClient();
   const [measPage, setMeasPage] = useState(1);
   const [measFilters, setMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
+  const [appliedMeasFilters, setAppliedMeasFilters] = useState<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const measFiltersRef = useRef<FilterState>({ ...EMPTY_FILTERS, latestOnly: false });
   const measSearchTimer = useRef<number | null>(null);
-  const measRequestRef = useRef(0);
+  const measParams = toParams(appliedMeasFilters, null);
+  measParams.set("limit", String(MEAS_PAGE_SIZE));
+  measParams.set("offset", String((measPage - 1) * MEAS_PAGE_SIZE));
+  const measQueryString = measParams.toString();
+  const measurementsQuery = useQuery<{ items: Measurement[]; total: number }, ApiError>({
+    queryKey: ["measurements-history", measQueryString],
+    queryFn: () => apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${measQueryString}`),
+    enabled: !validateAlpl(appliedMeasFilters.alpl),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    // เมื่อ MySQL/Backend กลับมา ตารางจะฟื้นเอง; ช่วงปกติดึงเป็นตัวสำรองของ SSE
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const measFilterPending = toParams(measFilters, null).toString() !== toParams(appliedMeasFilters, null).toString();
+  const measurements = measurementsQuery.isError ? [] : measurementsQuery.data?.items ?? [];
+  const measTotal = measurementsQuery.isError ? 0 : measurementsQuery.data?.total ?? 0;
   const [highlightId, setHighlightId] = useState<number | null>(null);
 
   // ── Report modal ───────────────────────────────────────────────────────
-  const [reportModal, setReportModal] = useState<{ measurement: Measurement; part: Part | null; imageUrl: string | null; imageState: "loading" | "ok" | "none" } | null>(null);
+  const [reportModal, setReportModal] = useState<{ measurement: Measurement } | null>(null);
+  const reportPartId = reportModal?.measurement.part_id ?? 0;
+  const reportMeasurementId = reportModal?.measurement.measurement_id ?? 0;
+  const reportImagePath = reportModal?.measurement.image_path;
+  const reportPartQuery = useQuery<Part, ApiError>({
+    queryKey: ["measurement-report-part", reportPartId],
+    queryFn: ({ signal }) => apiGet<Part>(`/api/parts/${reportPartId}`, undefined, signal),
+    enabled: reportPartId > 0,
+    retry: false,
+    refetchOnWindowFocus: true,
+  });
+  const reportImageQuery = useQuery<{ url: string }, ApiError>({
+    queryKey: ["measurement-report-image", reportMeasurementId, reportImagePath],
+    queryFn: ({ signal }) => apiGet<{ url: string }>(`/api/image-url/${reportMeasurementId}`, undefined, signal),
+    enabled: reportMeasurementId > 0 && !!reportImagePath,
+    retry: false,
+    refetchOnWindowFocus: true,
+  });
 
   const { show: showToast } = useToast();
   const dialog = useDialog();
@@ -593,6 +616,7 @@ export default function DashboardPage() {
     session_work_ended: (d) => onWorkEnded(d),
     session_complete: (d) => onSessionComplete(d),
     session_timeout: () => onSessionTimeout(),
+    session_timeout_stop_failed: (d) => onTimeoutStopFailed(d),
     image_updated: (d) => onImageUpdated(d),
     measure_timeout: (d) => onMeasureTimeout(d),
     tray_full: (d) => setTrayModal(d),
@@ -728,22 +752,6 @@ export default function DashboardPage() {
   }
 
 
-  async function loadMeasurementsPage(page = measPage, filters = measFiltersRef.current) {
-    if (validateAlpl(filters.alpl)) return;
-    const request = ++measRequestRef.current;
-    const params = toParams(filters, null);
-    params.set("limit", String(MEAS_PAGE_SIZE));
-    params.set("offset", String((page - 1) * MEAS_PAGE_SIZE));
-    try {
-      const d = await apiGet<{ items: Measurement[]; total: number }>(`/api/measurements?${params}`);
-      if (request !== measRequestRef.current) return;
-      setMeasurements(d.items ?? []);
-      setMeasTotal(d.total ?? 0);
-    } catch (e) {
-      console.warn("loadMeasurementsPage:", e);
-    }
-  }
-
   async function updateStats(sid: number | null) {
     const request = ++statsRequestRef.current;
     if (isTelemetryCleared()) { setStats({ total: 0, ok: 0, ng: 0 }); return; }
@@ -812,61 +820,6 @@ export default function DashboardPage() {
     } catch (e) {
       console.warn("updateStats:", e);
     }
-  }
-
-  /** โหลดข้อมูลตั้งต้นของ dropdown ทั้งหมด — เรียกครั้งเดียวตอน mount
-   *
-   *  ⚠ เดิมทุกเส้นเป็น `apiGet(...).catch(() => [])` ซึ่งมีปัญหา 2 ข้อ
-   *
-   *    1. **ไม่ลองใหม่เลย** ยิงครั้งเดียวจบ · ถ้ารีสตาร์ททั้งระบบแล้วเปิดเว็บ
-   *       ก่อน MySQL บูตเสร็จ จะได้ 503 แล้วจบเลย dropdown ว่างค้างจนกว่า
-   *       ผู้ใช้จะกด F5 เอง (และไม่มีอะไรบอกว่าต้องกด)
-   *
-   *    2. **`[]` ทำให้ "โหลดไม่ได้" หน้าตาเหมือน "ตารางว่างจริง" เป๊ะ**
-   *       ผู้ใช้เห็น Operator ว่างแล้วเข้าใจว่ายังไม่มีใครลงทะเบียน ทั้งที่มี
-   *       อยู่ใน DB ครบ · และ autofill ALPL จะบอกว่า Handler "ไม่มีในระบบ"
-   *       ซึ่งชี้ไปผิดที่ทั้งหมด
-   *
-   *  `apiGetRetry` แก้ทั้งสองข้อ — **ลองใหม่ไปเรื่อย ๆ จนกว่าจะได้** (หน่วง
-   *  1→2→4→8→8... วิ) และรายงานผ่าน `setDropdownFailed` ทันทีที่พลาดครั้งแรก
-   *  เพื่อให้ผู้ใช้รู้ตัวระหว่างที่ระบบยังพยายามอยู่เบื้องหลัง
-   *
-   *  ⚠ ไม่จำกัดจำนวนครั้ง จึง **ต้องส่ง `signal` เสมอ** — effect ที่เรียก
-   *    ฟังก์ชันนี้ abort ให้ตอน unmount (ดู useEffect ท้ายไฟล์) ไม่งั้นลูปจะ
-   *    เดินต่อหลังสลับไปหน้า Edit แล้วค้างอยู่ตลอดอายุแท็บ
-   */
-  async function loadDropdownData(signal?: AbortSignal) {
-    // พลาดครั้งไหนก็ขึ้นเตือนทันที ไม่ต้องรอให้ครบทุกเส้น — ระหว่างนั้นระบบ
-    // ยังลองต่ออยู่เบื้องหลัง พอได้ครบธงจะถูกล้างเองด้านล่าง
-    const onFail = () => setDropdownFailed(true);
-    const [operators, owners, vendors, handlers, packageSizes, tolerances, partNumbers] = await Promise.all([
-      apiGetRetry<{ operator_name: string }>("/api/operators", { signal, onFail }),
-      apiGetRetry<{ owner_name: string }>("/api/owners", { signal, onFail }),
-      apiGetRetry<{ vendor_name: string }>("/api/vendors", { signal, onFail }),
-      apiGetRetry<{ handler_name: string }>("/api/handlers", { signal, onFail }),
-      apiGetRetry<{ package_size: string; handlers: string[] }>("/api/package-sizes", { signal, onFail }),
-      apiGetRetry<{ package_size: string; tolerance_id: number; nominal_x: number; nominal_y: number; upper_tol: number; lower_tol: number; offset_tol: number }>("/api/package-size-tolerances", { signal, onFail }),
-      // catalog part number พร้อม package size — ใช้กรอง Part Number ตามขนาด
-      // ที่เลือกในกลุ่มนั้น (cascade) ดู partNumbersFor ที่ส่งให้ PartEntryModal
-      apiGetRetry<{ part_number_name: string; package_size: string; handler: string }>(
-        "/api/part-numbers/all", { signal, onFail }),
-    ]);
-
-    // ถูก abort (ผู้ใช้สลับหน้าไปแล้ว) — อย่าแตะ state ของ component ที่ตายแล้ว
-    if (signal?.aborted) return;
-
-    // มาถึงบรรทัดนี้โดยไม่ถูก abort = ทุกเส้นสำเร็จ (ไม่งั้นมันยังวนอยู่)
-    // → ล้างธงให้กล่องเตือนหายไปเอง ผู้ใช้ไม่ต้องกดรีเฟรช
-    setDropdownFailed(false);
-
-    setOperatorOptions((operators ?? []).map((o) => o.operator_name));
-    setOwnerOptions((owners ?? []).map((o) => o.owner_name));
-    setVendorOptions((vendors ?? []).map((v) => v.vendor_name));
-    setHandlerOptions((handlers ?? []).map((h) => h.handler_name));
-    setPackageSizeOptions((packageSizes ?? []).map((p) => p.package_size));
-    setPackageSizeCatalog(packageSizes ?? []);
-    setToleranceCatalog(tolerances ?? []);
-    setPartNumberCatalog(partNumbers ?? []);
   }
 
   /* ── ผล poll เปลี่ยน → อัปเดตหน้าจอ ──────────────────────────────────────
@@ -1120,7 +1073,7 @@ export default function DashboardPage() {
       if (selectedQueueRef.current === null || selectedQueueRef.current === review.queueIndex) applyTelemetry(d);
       updateSession({ measured_count: d.measured, target_count: d.target });
       savePartEntryState();
-      await loadMeasurementsPage();
+      await queryClient.invalidateQueries({ queryKey: ["measurements-history"] });
       return;
     }
     updateSession({ measured_count: d.measured, target_count: d.target });
@@ -1138,8 +1091,8 @@ export default function DashboardPage() {
     );
     savePartEntryState();
     updateStats(sessionRef.current.session_id);
+    await queryClient.invalidateQueries({ queryKey: ["measurements-history"] });
     if (measPage === 1 && !hasAnyFilter(measFiltersRef.current)) {
-      await loadMeasurementsPage(1);
       setHighlightId(d.measurement_id);
       window.setTimeout(() => setHighlightId((h) => (h === d.measurement_id ? null : h)), 2600);
     }
@@ -1167,7 +1120,7 @@ export default function DashboardPage() {
     if (review) updateSession({ measured_count: d.measured, target_count: d.target });
     savePartEntryState();
     updateStats(d.session_id);
-    await loadMeasurementsPage();
+    await queryClient.invalidateQueries({ queryKey: ["measurements-history"] });
   }
   function onMeasureTimeout(d: any) {
     setMtModal(d);
@@ -1451,8 +1404,25 @@ export default function DashboardPage() {
     if (mtTimerRef.current) { window.clearInterval(mtTimerRef.current); mtTimerRef.current = null; }
     savePartEntryState();
   }
+  function onTimeoutStopFailed(d: { session_id: number; detail: string }) {
+    if (d.session_id !== sessionRef.current.session_id) return;
+    updateSession({ state: "timeout", last_event: "TIMEOUT_STOP_FAILED", last_event_detail: d.detail });
+    dialog.alert(d.detail, { title: "⚠ Pi ยังไม่หยุด", danger: true });
+  }
   async function onImageUpdated(d: any) {
-    setMeasurements((prev) => prev.map((m) => (m.measurement_id === d.measurement_id ? { ...m, image_path: d.image_path, image_upload_failed: !!d.upload_failed } : m)));
+    void queryClient.invalidateQueries({ queryKey: ["measurement-report-image", d.measurement_id] });
+    setReportModal((prev) => prev && prev.measurement.measurement_id === d.measurement_id
+      ? { measurement: { ...prev.measurement, image_path: d.image_path, image_upload_failed: !!d.upload_failed } }
+      : prev);
+    queryClient.setQueriesData<{ items: Measurement[]; total: number }>(
+      { queryKey: ["measurements-history"] },
+      (prev) => prev ? {
+        ...prev,
+        items: prev.items.map((m) => m.measurement_id === d.measurement_id
+          ? { ...m, image_path: d.image_path, image_upload_failed: !!d.upload_failed } : m),
+      } : prev,
+    );
+    void queryClient.invalidateQueries({ queryKey: ["measurements-history"] });
     if (d.measurement_id !== telemetryRef.current?.measurement_id) return;
     if (d.upload_failed) {
       cameraRequestRef.current += 1;
@@ -1521,21 +1491,9 @@ export default function DashboardPage() {
     // สถานะ session ไม่ต้องโหลดตรงนี้แล้ว — useSessionState() ยิงให้ตั้งแต่ render
     // แรก แล้ว effect ที่ผูกกับ sessionSig จะรับช่วงต่อเองตอน response มาถึง
     //
-    // ⚠ `dropdownAbort` จำเป็นเพราะ loadDropdownData() ลองใหม่ไม่จำกัดจำนวนครั้ง
-    //   ถ้าไม่ยกเลิกตอน unmount ลูปจะเดินต่อหลังผู้ใช้สลับไปหน้า Edit แล้ว
-    //   ค้างยิงทุก 8 วิไปจนกว่าจะปิดแท็บ
-    const dropdownAbort = new AbortController();
-    (async () => {
-      await Promise.all([
-        loadMeasurementsPage(1),
-        refreshParts(),
-        loadDropdownData(dropdownAbort.signal),
-      ]);
-    })();
+    void refreshParts();
     return () => {
-      dropdownAbort.abort();
       if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
-      ++measRequestRef.current;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1555,14 +1513,13 @@ export default function DashboardPage() {
     setMeasFilters(next);
     if (measSearchTimer.current) window.clearTimeout(measSearchTimer.current);
     measFiltersRef.current = next;
-    ++measRequestRef.current;
     if (validateAlpl(next.alpl)) {
       return;
     }
     // ช่องข้อความพิมพ์ต่อเนื่องได้โดยไม่ยิง API ทุกตัวอักษร
     measSearchTimer.current = window.setTimeout(() => {
       setMeasPage(1);
-      void loadMeasurementsPage(1, next);
+      setAppliedMeasFilters(next);
     }, 300);
   }
   function onMeasClearFilter() {
@@ -1571,19 +1528,15 @@ export default function DashboardPage() {
     setMeasFilters(empty);
     measFiltersRef.current = empty;
     setMeasPage(1);
-    void loadMeasurementsPage(1, empty);
+    setAppliedMeasFilters(empty);
   }
-  async function onMeasPrev() {
+  function onMeasPrev() {
     if (measPage <= 1) return;
-    const p = measPage - 1;
-    setMeasPage(p);
-    await loadMeasurementsPage(p);
+    setMeasPage(measPage - 1);
   }
-  async function onMeasNext() {
+  function onMeasNext() {
     if ((measPage - 1) * MEAS_PAGE_SIZE + measurements.length >= measTotal) return;
-    const p = measPage + 1;
-    setMeasPage(p);
-    await loadMeasurementsPage(p);
+    setMeasPage(measPage + 1);
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -1760,6 +1713,7 @@ export default function DashboardPage() {
       onSessionStarted(data);
       if (sessionRef.current.state !== "running") clearAllQueuesAndForms();
       refreshParts();
+      void queryClient.invalidateQueries({ queryKey: ["part-numbers-all"] });
     } catch (e) {
       dialog.alert(e instanceof ApiError ? e.message : "เริ่ม session ไม่สำเร็จ", { title: "เริ่มการวัดไม่สำเร็จ", danger: true });
     }
@@ -1821,24 +1775,10 @@ export default function DashboardPage() {
   // ══════════════════════════════════════════════════════════════════
   // Report modal (คลิกแถวในตาราง Measurements)
   // ══════════════════════════════════════════════════════════════════
-  async function openReportModal(measurementId: number) {
+  function openReportModal(measurementId: number) {
     const m = measurements.find((x) => x.measurement_id === measurementId);
     if (!m) return;
-    let part: Part | null = null;
-    try {
-      part = await apiGet<Part>(`/api/parts/${m.part_id}`);
-    } catch {
-      part = partsRef.current.find((p) => p.part_id === m.part_id) ?? null;
-    }
-    setReportModal({ measurement: m, part, imageUrl: null, imageState: m.image_path ? "loading" : "none" });
-    if (m.image_path) {
-      try {
-        const data = await apiGet<{ url: string }>(`/api/image-url/${measurementId}`);
-        setReportModal((prev) => (prev && prev.measurement.measurement_id === measurementId ? { ...prev, imageUrl: data.url, imageState: "ok" } : prev));
-      } catch {
-        setReportModal((prev) => (prev && prev.measurement.measurement_id === measurementId ? { ...prev, imageState: "none" } : prev));
-      }
-    }
+    setReportModal({ measurement: m });
   }
 
   const isRunning = session.state === "running";
@@ -1876,7 +1816,7 @@ export default function DashboardPage() {
     {isRunning && <button className="btn-stop" onClick={stopSession}><span className="btn-stop-square" aria-hidden="true" />Stop</button>}
   </>;
   const canEditQueue = session.state !== "running" && !pendingWork;
-  const sessionStopError = session.state === "stopped" &&
+  const sessionStopError = (session.state === "stopped" || session.state === "timeout") &&
     !!session.last_event && SESSION_STOP_ERROR_EVENTS.has(session.last_event);
 
   return (
@@ -2292,6 +2232,7 @@ export default function DashboardPage() {
                 onChange={onMeasFiltersChange}
                 onClear={onMeasClearFilter}
                 showLatestOnly={false}
+                collapsibleAdvanced primaryMultiKeys={["result", "package_size"]}
                 options={{
                   result: ["OK", "NG"],
                   package_size: packageSizeOptions,
@@ -2339,7 +2280,13 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {measurements.length === 0 ? (
+                  {validateAlpl(measFilters.alpl) ? (
+                    <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+                  ) : measFilterPending || measurementsQuery.isPending ? (
+                    <tr className="empty-row"><td colSpan={12}>กำลังโหลด Measurement History...</td></tr>
+                  ) : measurementsQuery.isError ? (
+                    <tr className="empty-row"><td colSpan={12}>โหลด Measurement History ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
+                  ) : measurements.length === 0 ? (
                     <tr className="empty-row">
                       <td colSpan={12}>{hasAnyFilter(measFilters) ? "ไม่พบ Measurement ที่ตรงกับตัวกรอง" : "No measurements"}</td>
                     </tr>
@@ -2411,13 +2358,13 @@ export default function DashboardPage() {
               </table>
             </div>
             <div className="pagination-bar">
-              <button type="button" className="btn-icon" disabled={measPage <= 1} onClick={onMeasPrev}>
+              <button type="button" className="btn-icon" disabled={measPage <= 1 || measFilterPending || measurementsQuery.isPending || measurementsQuery.isError} onClick={onMeasPrev}>
                 ‹ Previous
               </button>
               <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--muted)" }}>
                 {measTotal === 0 ? "ไม่มีรายการ" : `แสดง ${(measPage - 1) * MEAS_PAGE_SIZE + 1}–${(measPage - 1) * MEAS_PAGE_SIZE + measurements.length} จาก ${measTotal} รายการ`}
               </span>
-              <button type="button" className="btn-icon" disabled={(measPage - 1) * MEAS_PAGE_SIZE + measurements.length >= measTotal} onClick={onMeasNext}>
+              <button type="button" className="btn-icon" disabled={measFilterPending || measurementsQuery.isPending || measurementsQuery.isError || (measPage - 1) * MEAS_PAGE_SIZE + measurements.length >= measTotal} onClick={onMeasNext}>
                 Next ›
               </button>
             </div>
@@ -2556,7 +2503,9 @@ export default function DashboardPage() {
         <div className="report-modal-box">
           {reportModal && (() => {
             const m = reportModal.measurement;
-            const part = reportModal.part;
+            const part = reportPartQuery.data ?? partsRef.current.find((p) => p.part_id === m.part_id) ?? null;
+            const imageUrl = reportImageQuery.data?.url ?? null;
+            const imageState = !m.image_path ? "none" : imageUrl ? "ok" : reportImageQuery.isPending ? "loading" : "none";
             const verdict = m.result === "OK" ? "ok" : m.result === "NG" ? "ng" : "";
             // เกณฑ์เอาจากแถว measurement ก่อน (backend เลือกแหล่งตามโหมดให้แล้ว)
             // ค่อยถอยไปใช้ของ part ถ้าแถวเก่าไม่มี — ห้ามใช้ของ part เป็นหลัก
@@ -2597,14 +2546,14 @@ export default function DashboardPage() {
                       เขียน listener ซ้ำ · `.img-zoom` z-index สูงกว่า `.modal-overlay`
                       จึงลอยทับโมดัลรายงานที่เปิดค้างอยู่ได้ */}
                   <div className="report-image-cell">
-                    {reportModal.imageState === "loading" ? (
+                    {imageState === "loading" ? (
                       <span className="report-no-image">Loading…</span>
-                    ) : reportModal.imageState === "ok" && reportModal.imageUrl ? (
+                    ) : imageState === "ok" && imageUrl ? (
                       <img
-                        src={reportModal.imageUrl}
+                        src={imageUrl}
                         alt={`Measurement #${m.measurement_id} image`}
                         title="คลิกเพื่อดูเต็มจอ"
-                        onClick={() => setZoomImgUrl(reportModal.imageUrl)}
+                        onClick={() => setZoomImgUrl(imageUrl)}
                       />
                     ) : (
                       <span className="report-no-image">No image</span>
@@ -2677,6 +2626,7 @@ export default function DashboardPage() {
              เพราะจุดที่ผู้ใช้เจอปัญหาคือตอนกดเปิด dropdown แล้วไม่มีอะไรให้เลือก
              ระบบยังลองใหม่อยู่เบื้องหลัง พอได้ครบแถบจะหายเอง */
           lookupFailed={dropdownFailed}
+          lookupCached={lookups.hasAllLoadedData}
           operators={operatorOptions}
           vendors={vendorOptions}
           owners={ownerOptions}

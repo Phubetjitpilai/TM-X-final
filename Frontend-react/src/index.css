@@ -379,6 +379,7 @@ button.topbar-link {
 .filters .description-filter { grid-column: span 2; }
 .filters .tolerance-filter { grid-column: span 2; }
 .filters-actions { display: flex; justify-content: flex-end; margin-top: 0.9rem; }
+.filters-actions.compact { justify-content: space-between; }
 .measurement-history-filters { margin-bottom: 1rem; }
 @media (max-width: 1250px) { .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 1000px) { .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -405,6 +406,28 @@ button.topbar-link {
   border-bottom: 1px solid var(--border); text-align: left;
 }
 .pv-wrap th { background: var(--surface2); position: sticky; top: 0; font-weight: 600; }
+.csv-selection-wrap table { table-layout: fixed; }
+.csv-selection-wrap th:first-child, .csv-selection-wrap td:first-child { width: 3rem; text-align: center; }
+.csv-selection-wrap thead th:not(:first-child) { padding: 0; }
+.csv-selection-wrap thead th:not(:last-child)::after {
+  content: ""; position: absolute; right: 0; top: 22%; height: 56%;
+  border-right: 1px solid #c9c7c0; pointer-events: none;
+}
+.csv-selection-wrap td:not(:first-child) { overflow: hidden; text-overflow: ellipsis; }
+.csv-selection-wrap input[type="checkbox"] { width: auto; cursor: pointer; }
+.csv-sort-button {
+  display: flex; align-items: center; gap: 0.45rem; width: 100%; min-height: 2.15rem;
+  padding: 0.4rem 0.6rem; border: 0; border-radius: 0; background: transparent;
+  color: inherit; font: inherit; font-weight: inherit; text-align: left;
+  white-space: nowrap; overflow: hidden; cursor: pointer;
+}
+.csv-sort-button:hover { color: var(--accent); background: rgba(55, 138, 222, .07); }
+.csv-sort-button:disabled { cursor: wait; }
+.csv-sort-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.csv-sort-button span { font-size: 1.05em; line-height: 1; }
+.csv-static-header { display: flex; align-items: center; min-height: 2.15rem; padding: 0.4rem 0.6rem; }
+.csv-selection-loading { margin-left: 0.7rem; color: var(--accent); }
+.csv-select-all { margin-left: 0.6rem; }
 
 /* ผังรายงาน — เส้นขอบหนาเฉพาะช่องที่มีเนื้อหา ตรงกับกติกาที่ตกลงไว้ว่าหน้าแก้ไข
    ไม่ต้องโชว์เส้น แต่ตอน preview/export ต้องมี (เหมือนที่ openpyxl ใส่ให้ใน .xlsx)
@@ -1123,16 +1146,6 @@ button.topbar-link {
 .entry-single-select-radio.selected { border: 4px solid var(--accent); }
 
 /* ── ล็อกทั้งหน้าเมื่อต่อ DB ไม่ได้ (Layout.tsx) ──────────────────────── */
-.db-lock-banner {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn);
-  color: var(--warn);
-  border-radius: var(--radius);
-  padding: 0.6rem 1rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin: 1rem 2rem 0;
-}
 /* <fieldset> มี style ติดมาจากเบราว์เซอร์เยอะ (border/margin/padding/min-width)
    ต้องล้างให้หมด ไม่งั้นมีกรอบโผล่มาครอบทั้งหน้าและ layout เพี้ยน
    ⚠ min-width: 0 สำคัญ — ค่า default ของ fieldset คือ min-content ซึ่งทำให้

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import MultiSelect from "../MultiSelect";
 import SingleSelect from "../SingleSelect";
 import DateRangeFilter from "./DateRangeFilter";
@@ -24,6 +25,7 @@ export const MULTI_KEYS = [
 ] as const;
 
 export type MultiKey = (typeof MULTI_KEYS)[number]["key"];
+const PROFILE_PRIMARY_MULTI_KEYS: MultiKey[] = ["package_size", "part_number", "handler"];
 
 export interface FilterState {
   latestOnly: boolean;
@@ -116,12 +118,25 @@ interface Props {
   showLatestOnly?: boolean;
   showMeasureDate?: boolean;
   hiddenMultiKeys?: MultiKey[];
+  /** ย่อช่องที่ใช้น้อยไว้ใต้ More Filters เฉพาะหน้าที่เปิดใช้ */
+  collapsibleAdvanced?: boolean;
+  primaryMultiKeys?: MultiKey[];
 }
 
 export default function ExportFilters({
   value, onChange, options, partNumberCatalog, toleranceCatalog, onClear, serverAlplError,
   showLatestOnly = true, showMeasureDate = true, hiddenMultiKeys = [],
+  collapsibleAdvanced = false, primaryMultiKeys = PROFILE_PRIMARY_MULTI_KEYS,
 }: Props) {
+  const advancedCount = [
+    ...MULTI_KEYS.filter((m) => !hiddenMultiKeys.includes(m.key) && !primaryMultiKeys.includes(m.key))
+      .map((m) => value.multi[m.key].length > 0),
+    !!value.poNumber.trim(),
+    !!value.description.trim(),
+    !!value.toleranceId,
+  ].filter(Boolean).length;
+  const [showAdvanced, setShowAdvanced] = useState(() => advancedCount > 0);
+  const advancedVisible = !collapsibleAdvanced || showAdvanced;
   const set = <K extends keyof FilterState>(k: K, v: FilterState[K]) => onChange({ ...value, [k]: v });
   const setMulti = (k: MultiKey, v: string[]) => onChange({
     ...value,
@@ -191,10 +206,13 @@ export default function ExportFilters({
             value={value.alpl}
             onChange={(e) => set("alpl", e.target.value)}
           />
-          <div className="err">{alplError ?? ""}</div>
+          {alplError && <div className="err">{alplError}</div>}
         </div>
 
-        {MULTI_KEYS.filter((m) => !hiddenMultiKeys.includes(m.key)).map((m) => (
+        {MULTI_KEYS.filter((m) =>
+          !hiddenMultiKeys.includes(m.key) &&
+          (advancedVisible || primaryMultiKeys.includes(m.key)),
+        ).map((m) => (
           <MultiSelect
             key={m.key}
             label={m.label}
@@ -212,6 +230,7 @@ export default function ExportFilters({
           />
         ))}
 
+        {advancedVisible && <>
         <div className="fg">
           <label>PO Number</label>
           {/* ⚠ `type="text"` ไม่ใช่ `type="number"` — number มีลูกศรขึ้น/ลงติดมา
@@ -249,9 +268,16 @@ export default function ExportFilters({
             showRadio={false}
           />
         </div>
+        </>}
       </div>
 
-      <div className="filters-actions">
+      <div className={`filters-actions${collapsibleAdvanced ? " compact" : ""}`}>
+        {collapsibleAdvanced && (
+          <button type="button" className="btn-ghost" aria-expanded={showAdvanced}
+            onClick={() => setShowAdvanced((open) => !open)}>
+            {showAdvanced ? "Less Filters" : `More Filters${advancedCount ? ` (${advancedCount})` : ""}`}
+          </button>
+        )}
         <button type="button" className="btn-ghost" onClick={onClear}>✕ Clear Filters</button>
       </div>
     </>

@@ -7,7 +7,7 @@ import { useToast } from "../components/Toast";
 import { useDialog } from "../components/Dialog";
 import ExportFilters, {
   EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl,
-  type FilterState, type MultiKey,
+  type FilterState, type MultiKey, type ToleranceOption,
 } from "../components/export/ExportFilters";
 import TemplateModal, { type ExportColumn } from "../components/export/TemplateModal";
 import { useSessionState } from "../hooks/useSessionState";
@@ -32,6 +32,48 @@ interface Template {
   /** ผังตาราง — มีเฉพาะเทมเพลตชนิด pdf/excel (csv ใช้ columns เรียงเป็นแถวแทน) */
   layout?: { grid?: any[][]; nRows?: number; nCols?: number } | null;
   is_default: boolean;
+}
+
+interface FilterOptionsData {
+  options: Record<MultiKey, string[]>;
+  partNumberCatalog: { part_number_name: string; package_size: string }[];
+  toleranceCatalog: ToleranceOption[];
+}
+
+interface CsvSelectionRow {
+  measurement_id: number;
+  number_alpl: number;
+  values: (string | number | null)[];
+}
+
+interface CsvSelectionPage {
+  total: number;
+  columns: string[];
+  column_keys: string[];
+  sortable_keys: string[];
+  max_texts: string[];
+  items: CsvSelectionRow[];
+}
+interface CsvPreview { columns: string[]; rows: any[][]; total: number; template_name: string }
+
+const CSV_SELECTION_PAGE_SIZE = 20;
+
+function measureSelectionColumns(headers: string[], longestTexts: string[]): number[] {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return headers.map(() => 120);
+  const rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const family = getComputedStyle(document.body).fontFamily;
+  const fontSize = rootSize * 0.78; // .pv-wrap th/td
+  const padding = rootSize * 1.2; // 0.6rem on each side
+  return headers.map((header, index) => {
+    context.font = `400 ${fontSize}px ${family}`;
+    const valueWidth = context.measureText(longestTexts[index] ?? "").width;
+    context.font = `600 ${fontSize}px ${family}`;
+    // Reserve the arrow even in Clear state, so the header never changes width.
+    const headerWidth = context.measureText(header).width + fontSize * 1.7;
+    return Math.ceil(Math.max(valueWidth, headerWidth) + padding + 2);
+  });
 }
 
 const STEPS = ["Select Template", "Filter Data", "Examine & Export"];
@@ -99,6 +141,7 @@ export default function ExportPage() {
     refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null;
       void qc.invalidateQueries({ queryKey: ["export-preview"] });
+      void qc.invalidateQueries({ queryKey: ["export-selection-rows"] });
       void qc.invalidateQueries({ queryKey: ["export-filter-options"] });
     }, 150);
   }
@@ -133,6 +176,9 @@ export default function ExportPage() {
   const [step, setStep] = useState(1);
   const [selectedTplId, setSelectedTplId] = useState<number | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  const [selectionPage, setSelectionPage] = useState(1);
+  const [selectionSort, setSelectionSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+  const [excludedIds, setExcludedIds] = useState<number[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTpl, setEditingTpl] = useState<Template | null>(null);
   useEffect(() => {
@@ -185,7 +231,11 @@ export default function ExportPage() {
 
   const templatesQ = useQuery<Template[]>({
     queryKey: ["export-templates", format],
-    queryFn: () => apiGet<Template[]>("/api/export/templates", { kind: format }),
+    queryFn: ({ signal }) => apiGet<Template[]>("/api/export/templates", { kind: format }, signal),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 4_000 : 30_000,
   });
 
   /* เลือกตัว default ให้อัตโนมัติ + กัน "เทมเพลตค้างข้ามรูปแบบ"
@@ -222,15 +272,16 @@ export default function ExportPage() {
    * เทมเพลตของรูปแบบนั้น */
   useEffect(() => { setStep(1); }, [format]);
 
-  // ตัวเลือกของ multi-select — ดึงจาก lookup table จริงใน DB
-  // ถ้าดึงตัวไหนไม่ได้ ก็แค่ช่องนั้นว่าง ช่องอื่นยังใช้ได้ปกติ (เหมือนต้นฉบับ)
-  const optionsQ = useQuery({
+  // ตัวเลือกของ multi-select — ถ้าตารางใดโหลดไม่ได้ ให้ Query รายงาน error
+  // ไม่แปลงเป็น [] เพราะจะดูเหมือน DB ไม่มีข้อมูลทั้งที่โหลดไม่สำเร็จ
+  const optionsQ = useQuery<FilterOptionsData>({
     queryKey: ["export-filter-options"],
     refetchOnMount: "always",
-    queryFn: async () => {
-      const get = async (path: string) => {
-        try { return await apiGet<any[]>(path); } catch { return []; }
-      };
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 4_000 : 30_000,
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const get = (path: string) => apiGet<any[]>(path, undefined, signal);
       const [ops, vendors, owners, handlers, pkgs, parts, tolerances] = await Promise.all([
         get("/api/operators"), get("/api/vendors"), get("/api/owners"),
         get("/api/handlers"), get("/api/package-sizes"), get("/api/part-numbers/all"),
@@ -270,6 +321,44 @@ export default function ExportPage() {
 
   const qs = useMemo(() => toParams(filters, selectedTplId), [filters, selectedTplId]);
   const alplError = validateAlpl(filters.alpl);
+  const selectionScope = `${format}:${qs.toString()}`;
+  const previousSelectionScope = useRef(selectionScope);
+  useEffect(() => {
+    if (previousSelectionScope.current === selectionScope) return;
+    previousSelectionScope.current = selectionScope;
+    setExcludedIds([]);
+    setSelectionPage(1);
+    setSelectionSort(null);
+    setStep((current) => current === 3 ? 2 : current);
+  }, [selectionScope, format]);
+
+  const selectionQ = useQuery<CsvSelectionPage>({
+    queryKey: ["export-selection-rows", selectionScope, selectionPage, selectionSort],
+    queryFn: ({ signal }) => {
+      const p = new URLSearchParams(qs);
+      p.set("limit", String(CSV_SELECTION_PAGE_SIZE));
+      p.set("offset", String((selectionPage - 1) * CSV_SELECTION_PAGE_SIZE));
+      if (selectionSort) {
+        p.set("sort_by", selectionSort.key);
+        p.set("sort_dir", selectionSort.direction);
+      }
+      return apiGet<CsvSelectionPage>(`/api/export/selection-rows?${p}`, undefined, signal);
+    },
+    enabled: step === 2 && selectedTplId != null && !alplError
+      && !!templatesQ.data?.some((template) => template.export_template_id === selectedTplId),
+    // Keep the previous page visible while changing sort/page within the same filters.
+    // Never show rows from a different template or filter as placeholder data.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === selectionScope ? previousData : undefined,
+    retry: false,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 4_000 : false,
+  });
+  const selectedCount = Math.max(0, (selectionQ.data?.total ?? 0) - excludedIds.length);
+  const selectionColumnWidths = useMemo(
+    () => measureSelectionColumns(selectionQ.data?.columns ?? [], selectionQ.data?.max_texts ?? []),
+    [selectionQ.data],
+  );
 
   /* สั่งพิมพ์หลังผังฉบับเต็มถูกวาดลง #print-root แล้วเท่านั้น
    * ⚠ ต้องรอ React commit DOM ก่อน — ถ้าเรียก window.print() ต่อท้าย fetch เลย
@@ -297,22 +386,27 @@ export default function ExportPage() {
   }, [printData]);
 
   // ── preview ─────────────────────────────────────────────────────────────
-  // ยิงเฉพาะตอนอยู่ขั้นที่ 2-3 และมีเทมเพลตแล้ว · ALPL ผิดรูปแบบก็ไม่ต้องยิง
-  const canPreview = step >= 2 && selectedTplId != null && !alplError;
+  // โหลดตัวอย่างเฉพาะขั้นที่ 3 หลังเลือกแถวแล้ว
+  const canPreview = step === 3 && selectedTplId != null && !alplError
+    && !!templatesQ.data?.some((template) => template.export_template_id === selectedTplId);
   const previewQ = useQuery({
-    queryKey: ["export-preview", format, qs.toString()],
+    queryKey: ["export-preview", format, qs.toString(), excludedIds, selectionSort],
     refetchOnMount: "always",
     queryFn: () => {
       const p = new URLSearchParams(qs);
+      if (selectionSort) {
+        p.set("sort_by", selectionSort.key);
+        p.set("sort_dir", selectionSort.direction);
+      }
       if (format === "csv") {
-        // ไม่ตั้ง limit เอง — backend ตัดให้ตามค่าของมัน แล้วบอกกลับมาว่าตัดกี่แถว
-        // (ถ้าตั้งเองเลขในข้อความ "แสดงตัวอย่าง N แถวแรก" จะไม่ตรงกับที่ backend ทำ)
-        return apiGet<{ columns: string[]; rows: any[][]; total: number; template_name: string }>(
-          `/api/export/preview?${p}`,
-        );
+        return apiPost<CsvPreview>(`/api/export/preview-selected?${p}`, {
+          excluded_measurement_ids: excludedIds,
+        });
       }
       p.set("full", "0");
-      return apiGet<any>(`/api/export/report-preview?${p}`);
+      return apiPost<any>(`/api/export/report-preview-selected?${p}`, {
+        excluded_measurement_ids: excludedIds,
+      });
     },
     enabled: canPreview,
     // ⚠ ห้าม retry: ค่าเริ่มต้นของ TanStack คือลองใหม่ 3 ครั้งแบบ backoff ทำให้
@@ -390,7 +484,15 @@ export default function ExportPage() {
   async function downloadXlsx(p: URLSearchParams) {
     setBusyNote("กำลังสร้างไฟล์ Excel…");
     try {
-      const r = await fetch(`/api/export/xlsx?${p}`);
+      if (selectionSort) {
+        p.set("sort_by", selectionSort.key);
+        p.set("sort_dir", selectionSort.direction);
+      }
+      const r = await fetch(`/api/export/xlsx-selected?${p}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+      });
       if (!r.ok) { toast.show(await errText(r, "สร้างไฟล์ไม่สำเร็จ")); return; }
       const blob = await r.blob();
       // ชื่อจากผู้ใช้มาก่อนเสมอ — Content-Disposition ของ backend เป็นแค่ตัวสำรอง
@@ -400,6 +502,32 @@ export default function ExportPage() {
       a.download = `${cleanName}${FILE_EXT.excel}`;
       a.click();
       URL.revokeObjectURL(url);
+    } catch {
+      toast.show("ต่อ Backend ไม่ได้");
+    } finally {
+      setBusyNote(null);
+    }
+  }
+
+  async function downloadSelectedCsv(p: URLSearchParams) {
+    setBusyNote("กำลังสร้างไฟล์ CSV…");
+    try {
+      if (selectionSort) {
+        p.set("sort_by", selectionSort.key);
+        p.set("sort_dir", selectionSort.direction);
+      }
+      const r = await fetch(`/api/export/csv-selected?${p}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+      });
+      if (!r.ok) { toast.show(await errText(r, "สร้างไฟล์ไม่สำเร็จ")); return; }
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${cleanName}.csv`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
       toast.show("ต่อ Backend ไม่ได้");
     } finally {
@@ -420,7 +548,15 @@ export default function ExportPage() {
     setBusyNote("กำลังเตรียมไฟล์สำหรับพิมพ์…");
     try {
       p.set("full", "1");
-      const r = await fetch(`/api/export/report-preview?${p}`);
+      if (selectionSort) {
+        p.set("sort_by", selectionSort.key);
+        p.set("sort_dir", selectionSort.direction);
+      }
+      const r = await fetch(`/api/export/report-preview-selected?${p}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ excluded_measurement_ids: excludedIds }),
+      });
       if (!r.ok) { toast.show(await errText(r, "เตรียมไฟล์ไม่สำเร็จ")); return; }
       setPrintData(await r.json());
     } catch {
@@ -438,8 +574,7 @@ export default function ExportPage() {
 
     if (format === "excel") { void downloadXlsx(p); return; }
     if (format === "pdf") { void printReport(p); return; }
-    // CSV: ให้เบราว์เซอร์โหลดไฟล์ตรงๆ จาก endpoint
-    window.location.href = `/api/export/csv?${p}`;
+    void downloadSelectedCsv(p);
   }
 
   async function onClickDownload() {
@@ -447,7 +582,7 @@ export default function ExportPage() {
     if (!cleanName || total === 0) return;
     // ไม่ได้กรองอะไรเลย = กำลังจะดึงข้อมูลทั้งระบบ — ถามยืนยันก่อน กันเผลอกด
     // แล้วได้ไฟล์ใหญ่เกินคาด (โดยเฉพาะตอนติ๊ก "เฉพาะล่าสุด" ออกด้วย)
-    if (!hasAnyFilter(filters)) {
+    if (!hasAnyFilter(filters) && excludedIds.length === 0) {
       const scope = filters.latestOnly ? "การวัดล่าสุดของทุก ALPL" : "ประวัติการวัดทั้งหมดทุกครั้ง";
       const ok = await dialog.confirm(
         <>
@@ -526,8 +661,10 @@ export default function ExportPage() {
         {/* ── ขั้นที่ 1 — เลือก Template ─────────────────────────────────── */}
         {step === 1 && (
           <section>
-            {templatesQ.isLoading ? (
+            {templatesQ.isPending ? (
               <div className="filter-result-note">กำลังโหลด Template…</div>
+            ) : templatesQ.isError ? (
+              <div className="empty">โหลดข้อมูล Template ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</div>
             ) : templates.length === 0 ? (
               <div className="empty">ยังไม่มี Template — กดปุ่มด้านล่างเพื่อสร้าง</div>
             ) : (
@@ -596,7 +733,7 @@ export default function ExportPage() {
               })
             )}
 
-            <button type="button" className="btn-add-tpl" disabled={sessionRunning} onClick={() => openTemplateEditor(null)}>
+            <button type="button" className="btn-add-tpl" disabled={sessionRunning || templatesQ.isError || templatesQ.isPending} onClick={() => openTemplateEditor(null)}>
               + Create New Template
             </button>
 
@@ -605,7 +742,7 @@ export default function ExportPage() {
               <button
                 type="button"
                 className="btn-primary"
-                disabled={selectedTplId == null}
+                disabled={selectedTplId == null || templatesQ.isError || templatesQ.isPending}
                 title={selectedTplId == null ? "เลือก Template ก่อน" : ""}
                 onClick={() => setStep(2)}
               >
@@ -618,15 +755,121 @@ export default function ExportPage() {
         {/* ── ขั้นที่ 2–3 — กรอง + ตรวจสอบ ──────────────────────────────── */}
         {step >= 2 && (
           <section>
-            <ExportFilters
-              value={filters}
-              onChange={setFilters}
-              options={optionsQ.data?.options ?? ({} as Record<MultiKey, string[]>)}
-              partNumberCatalog={optionsQ.data?.partNumberCatalog ?? []}
-              toleranceCatalog={optionsQ.data?.toleranceCatalog ?? []}
-              onClear={() => setFilters(EMPTY_FILTERS)}
-              serverAlplError={serverAlplError}
-            />
+            {step === 2 && <>
+            {optionsQ.isError && (
+              <div className="filter-result-note">
+                {optionsQ.data
+                  ? "ข้อมูลในตัวเลือกเป็นข้อมูลเก่า กำลังลองโหลดใหม่อีกครั้ง"
+                  : "โหลดตัวเลือก Filter ไม่สำเร็จ กำลังลองใหม่อีกครั้ง"}
+              </div>
+            )}
+            {optionsQ.data ? (
+              <ExportFilters
+                value={filters}
+                onChange={setFilters}
+                options={optionsQ.data.options}
+                partNumberCatalog={optionsQ.data.partNumberCatalog}
+                toleranceCatalog={optionsQ.data.toleranceCatalog}
+                onClear={() => { setFilters(EMPTY_FILTERS); setExcludedIds([]); setSelectionPage(1); }}
+                serverAlplError={serverAlplError}
+                collapsibleAdvanced primaryMultiKeys={["result", "package_size"]}
+              />
+            ) : !optionsQ.isError && (
+              <div className="filter-result-note">กำลังโหลดตัวเลือก Filter…</div>
+            )}
+            </>}
+
+            {step === 2 ? <>
+              <div className="count">
+                {alplError ? "แก้ช่อง ALPL ให้ถูกรูปแบบก่อน"
+                  : selectionQ.isPending ? "กำลังโหลดรายการ…"
+                  : selectionQ.isError ? "โหลดรายการไม่สำเร็จ — ลองใหม่อีกครั้ง"
+                  : <>
+                    พบ <strong>{selectionQ.data.total}</strong> รายการ · เลือกไว้ <strong>{selectedCount}</strong> รายการ
+                    {selectionQ.isPlaceholderData && <span className="csv-selection-loading" role="status">กำลังเรียงข้อมูล…</span>}
+                    {excludedIds.length > 0 && <button type="button" className="btn-mini csv-select-all"
+                      disabled={selectionQ.isPlaceholderData} onClick={() => setExcludedIds([])}>Select All</button>}
+                  </>}
+              </div>
+              <div className="pv-wrap csv-selection-wrap">
+                <table style={{ width: selectionColumnWidths.length
+                  ? `${48 + selectionColumnWidths.reduce((sum, width) => sum + width, 0)}px` : "100%" }}>
+                  <colgroup>
+                    <col style={{ width: "48px" }} />
+                    {selectionColumnWidths.map((width, index) => <col key={index} style={{ width: `${width}px` }} />)}
+                  </colgroup>
+                  <thead><tr>
+                    <th><input type="checkbox" aria-label="เลือกหรือยกเลิกแถวในหน้านี้"
+                      disabled={!selectionQ.data?.items.length || selectionQ.isPlaceholderData}
+                      checked={!!selectionQ.data?.items.length && selectionQ.data.items.every((r) => !excludedIds.includes(r.measurement_id))}
+                      ref={(el) => {
+                        if (!el || !selectionQ.data?.items.length) return;
+                        const selected = selectionQ.data.items.filter((r) => !excludedIds.includes(r.measurement_id)).length;
+                        el.indeterminate = selected > 0 && selected < selectionQ.data.items.length;
+                      }}
+                      onChange={(e) => {
+                        const ids = selectionQ.data?.items.map((r) => r.measurement_id) ?? [];
+                        setExcludedIds((current) => e.target.checked
+                          ? current.filter((id) => !ids.includes(id))
+                          : Array.from(new Set([...current, ...ids])));
+                      }}
+                    /></th>
+                    {(selectionQ.data?.columns ?? []).map((column, index) => {
+                      const key = selectionQ.data?.column_keys?.[index] ?? String(index);
+                      const direction = selectionSort?.key === key ? selectionSort.direction : null;
+                      return <th key={key} aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}>
+                        {selectionQ.data?.sortable_keys?.includes(key) ? <button type="button" className="csv-sort-button"
+                          disabled={selectionQ.isPlaceholderData}
+                          aria-label={`Sort ${column}${direction === "asc" ? " descending" : direction === "desc" ? " clear" : " ascending"}`}
+                          onClick={() => {
+                            setSelectionSort(direction === "asc" ? { key, direction: "desc" }
+                              : direction === "desc" ? null : { key, direction: "asc" });
+                            setSelectionPage(1);
+                          }}>
+                          {column}{direction && <span aria-hidden="true">{direction === "asc" ? "↑" : "↓"}</span>}
+                        </button> : <span className="csv-static-header">{column}</span>}
+                      </th>;
+                    })}
+                  </tr></thead>
+                  <tbody>
+                    {alplError || selectionQ.isPending || selectionQ.isError || !selectionQ.data?.items.length ? (
+                      <tr><td className="empty" colSpan={(selectionQ.data?.columns.length ?? 0) + 1}>
+                        {alplError ? "กรุณาแก้รูปแบบ ALPL" : selectionQ.isPending ? "กำลังโหลด…"
+                          : selectionQ.isError ? "โหลดรายการไม่สำเร็จ กำลังลองใหม่อีกครั้ง" : "ไม่พบข้อมูลที่ตรงกับตัวกรอง"}
+                      </td></tr>
+                    ) : selectionQ.data.items.map((row) => (
+                      <tr key={row.measurement_id}>
+                        <td><input type="checkbox" aria-label={`เลือก ALPL ${row.number_alpl} รายการ ${row.measurement_id}`}
+                          disabled={selectionQ.isPlaceholderData}
+                          checked={!excludedIds.includes(row.measurement_id)}
+                          onChange={(e) => setExcludedIds((current) => e.target.checked
+                            ? current.filter((id) => id !== row.measurement_id)
+                            : [...current, row.measurement_id])}
+                        /></td>
+                        {row.values.map((value, index) => <td key={index} title={String(value ?? "")}>{value ?? ""}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination-bar">
+                <button type="button" className="btn-icon" disabled={selectionPage <= 1 || selectionQ.isPending || selectionQ.isError || selectionQ.isPlaceholderData}
+                  onClick={() => setSelectionPage((page) => page - 1)}>‹ Previous</button>
+                <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                  {selectionQ.isPending || selectionQ.isPlaceholderData ? "กำลังโหลด…" : !selectionQ.data?.total ? "ไม่มีรายการ"
+                    : `แสดง ${(selectionPage - 1) * CSV_SELECTION_PAGE_SIZE + 1}–${(selectionPage - 1) * CSV_SELECTION_PAGE_SIZE + selectionQ.data.items.length} จาก ${selectionQ.data.total} รายการ`}
+                </span>
+                <button type="button" className="btn-icon"
+                  disabled={selectionQ.isPending || selectionQ.isError || selectionQ.isPlaceholderData || selectionPage * CSV_SELECTION_PAGE_SIZE >= (selectionQ.data?.total ?? 0)}
+                  onClick={() => setSelectionPage((page) => page + 1)}>Next ›</button>
+              </div>
+              <div className="actions">
+                <button type="button" className="btn-ghost" onClick={() => setStep(1)}>← Change Template</button>
+                <button type="button" className="btn-primary"
+                  disabled={!!alplError || selectionQ.isPending || selectionQ.isError || selectionQ.isPlaceholderData || selectedCount === 0}
+                  onClick={() => setStep(3)}>Next · Preview ({selectedCount} rows)</button>
+              </div>
+            </> : <>
 
             {/* บรรทัดสรุป — ต้องบอกว่าใช้ Template ไหน เจอกี่แถว และตัวอย่างที่เห็น
                 ถูกตัดไหม ไม่งั้นผู้ใช้เห็นตาราง 300 แถวแล้วนึกว่าไฟล์จะได้แค่นั้น */}
@@ -702,9 +945,7 @@ export default function ExportPage() {
             )}
 
             <div className="actions">
-              <button type="button" className="btn-ghost" onClick={() => setStep(1)}>
-                ← Change Template
-              </button>
+              <button type="button" className="btn-ghost" onClick={() => setStep(2)}>← Back to Select Rows</button>
 
               {/* ช่องชื่อไฟล์วางติดกับปุ่มโดยตั้งใจ — ถ้าไปวางบนสุดจะมีตัวกรองกับ
                   ตัวอย่างข้อมูลยาวๆ คั่น พอเลื่อนลงมาถึงปุ่มก็ลืมไปแล้ว */}
@@ -727,7 +968,7 @@ export default function ExportPage() {
               <button
                 type="button"
                 className="btn-primary"
-                disabled={sessionRunning || !cleanName || !!alplError || total === 0 || busyNote != null}
+                disabled={sessionRunning || !optionsQ.data || !cleanName || !!alplError || previewQ.isPending || previewQ.isError || total === 0 || busyNote != null}
                 onClick={onClickDownload}
               >
                 {downloadLabel}
@@ -740,6 +981,7 @@ export default function ExportPage() {
                   ? `จะได้ไฟล์ชื่อ ${cleanName}${FILE_EXT[format]}`
                   : "กรอกชื่อไฟล์ก่อนถึงจะกดดาวน์โหลดได้"}
             </div>
+            </>}
           </section>
         )}
       </div>

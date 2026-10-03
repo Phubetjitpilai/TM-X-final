@@ -477,36 +477,42 @@ class ReceiverFTPHandler(FTPHandler):
     def ftp_STOR(self, file, mode="w"):
         # Bind at upload START, not after the worker waits for TXT/image processing.
         # An in-flight transfer must retain its old identity even if the UI changes.
-        if (FORWARD_TO_BACKEND and os.path.splitext(file)[1].lower() in _IMAGE_EXTS
-                and os.path.basename(os.path.dirname(file)).lower() == _IMAGE_DIR_NAME):
+        ext = os.path.splitext(file)[1].lower()
+        is_head_image = (ext in _IMAGE_EXTS and
+                         os.path.basename(os.path.dirname(file)).lower() == _IMAGE_DIR_NAME)
+        if FORWARD_TO_BACKEND and (ext == ".txt" or is_head_image):
             try:
                 session_id = get_current_session()
                 if session_id is None:
                     raise RuntimeError("ไม่มี Session ที่กำลังวัด")
-                response = httpx.get(f"{BACKEND_URL}/api/review/capture",
-                                     params={"session_id": session_id}, timeout=5)
-                response.raise_for_status()
-                context = (session_id, response.json().get("capture_id"))
+                if is_head_image:
+                    response = httpx.get(f"{BACKEND_URL}/api/review/capture",
+                                         params={"session_id": session_id}, timeout=5)
+                    response.raise_for_status()
+                    context = (session_id, response.json().get("capture_id"))
             except Exception as exc:
-                log.error("[รูป] รับ %s ไม่ได้: อ่าน session/capture ไม่สำเร็จ (%s)",
-                          os.path.basename(file), exc)
+                log.warning("[%s] รับ %s ไม่ได้: อ่าน session/capture ไม่สำเร็จ (%s)",
+                            "รูป" if is_head_image else ".txt", os.path.basename(file), exc)
                 self.respond("451 Measurement context unavailable; retry later.")
                 return
-            if not hasattr(self, "_capture_contexts"):
-                self._capture_contexts = {}
-            self._capture_contexts[file] = context
+            if is_head_image:
+                if not hasattr(self, "_capture_contexts"):
+                    self._capture_contexts = {}
+                self._capture_contexts[file] = context
         return super().ftp_STOR(file, mode)
 
     def on_file_received(self, file):
         ext = os.path.splitext(file)[1].lower()
 
         # ── ไฟล์ข้อความ (.txt ผลวัด) → จำ path ไว้ ────────────────────────
-        if ext not in _IMAGE_EXTS:
+        if ext == ".txt":
             with _txt_lock:
                 if file not in _txt_paths:
                     _txt_paths.append(file)
             if FORWARD_TO_BACKEND :
                 _log_received_file(file)
+            return
+        if ext not in _IMAGE_EXTS:
             return
 
         # ── รูปที่ไม่ได้อยู่ในโฟลเดอร์ HEAD-A → ข้าม (เป็นรูปใบที่สองของการวัด

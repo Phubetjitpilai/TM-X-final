@@ -672,6 +672,76 @@ async def _reload_session_queues() -> None:
         # แต่ยังใช้งานต่อได้ปกติถ้าไม่ใช่ queue-based หรือกด Stop แล้วเริ่มใหม่)
         log.warning("Reload session_queues failed: %s", exc)
 
+async def _stop_timed_out_pi(session_id: int) -> None:
+    """Stop a timed-out run and verify that its worker has actually exited."""
+    failure = None
+    try:
+        async with httpx.AsyncClient() as client:
+            before = await client.get(
+                f"{AGENT_BASE_URL}/queue-review",
+                timeout=httpx.Timeout(connect=3, read=3, write=3, pool=3),
+            )
+            before.raise_for_status()
+            current = before.json()
+            if current.get("session_id") != session_id:
+                log.info("Session %s: Pi อยู่ใน Session อื่นแล้ว ไม่ส่ง Stop ไปหยุดงานใหม่", session_id)
+                return
+            if current.get("phase") == "stopped" and current.get("worker_alive") is False:
+                return
+            try:
+                response = await client.post(
+                    f"{AGENT_BASE_URL}/command",
+                    json={"action": "stop", "session_id": session_id},
+                    timeout=httpx.Timeout(connect=3, read=5, write=5, pool=3),
+                )
+                if response.status_code != 200:
+                    failure = f"Pi ปฏิเสธ Stop (HTTP {response.status_code}): {response.text[:160]}"
+            except httpx.HTTPError as exc:
+                # The command may have arrived even when its HTTP reply did not.
+                failure = f"ส่ง Stop ไป Pi ไม่สำเร็จ: {exc}"
+            for _ in range(20):
+                try:
+                    status = await client.get(
+                        f"{AGENT_BASE_URL}/queue-review",
+                        timeout=httpx.Timeout(connect=3, read=3, write=3, pool=3),
+                    )
+                    status.raise_for_status()
+                    state = status.json()
+                    if state.get("session_id") != session_id:
+                        log.info("Session %s: Pi เปลี่ยน Session ระหว่างตรวจ Stop", session_id)
+                        return
+                    if (state.get("phase") == "stopped"
+                            and state.get("worker_alive") is False):
+                        log.info("Session %s: Pi หยุดและ worker จบแล้วหลัง timeout", session_id)
+                        return
+                except (httpx.HTTPError, ValueError, AttributeError) as exc:
+                    failure = f"ตรวจสถานะ Pi ไม่สำเร็จ: {exc}"
+                await asyncio.sleep(0.5)
+            if failure is None:
+                failure = "Pi รับคำสั่ง Stop แล้ว แต่ยังยืนยันว่า worker หยุดไม่ได้"
+    except Exception as exc:
+        failure = f"ติดต่อหรือตรวจสถานะ Pi ไม่สำเร็จ: {exc}"
+
+    detail = (f"Session {session_id}: {failure} — "
+              "กรุณาปิด Raspberry Pi แล้วเปิดใหม่ก่อนใช้งานต่อ")
+    log.error(detail)
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "UPDATE sessions SET last_event='TIMEOUT_STOP_FAILED', "
+                    "last_event_detail=%s, last_event_at=NOW() "
+                    "WHERE session_id=%s AND state='timeout'",
+                    (detail, session_id),
+                )
+        finally:
+            db.close()
+    except Exception as exc:
+        log.error("Session %s: บันทึกคำเตือน Stop ไม่สำเร็จ: %s", session_id, exc)
+    await push_event("session_timeout_stop_failed", {"session_id": session_id, "detail": detail})
+
+
 async def heartbeat_checker() -> None:
     """ตรวจเป็นระยะว่า session ที่ 'running' ยังได้ heartbeat จาก Agent ต่อเนื่องไหม
 
@@ -698,13 +768,16 @@ async def heartbeat_checker() -> None:
                     "WHERE state = 'running' AND last_seen < NOW() - INTERVAL %s SECOND",
                     (HEARTBEAT_TIMEOUT,),
                 )
-                timed_out = [row["session_id"] for row in cur.fetchall()]
-                for sid in timed_out:
+                stale_ids = [row["session_id"] for row in cur.fetchall()]
+                for sid in stale_ids:
                     cur.execute(
                         "UPDATE sessions SET state = 'timeout', ended_at = NOW() "
-                        "WHERE session_id = %s",
-                        (sid,),
+                        "WHERE session_id = %s AND state = 'running' "
+                        "AND last_seen < NOW() - INTERVAL %s SECOND",
+                        (sid, HEARTBEAT_TIMEOUT),
                     )
+                    if cur.rowcount:
+                        timed_out.append(sid)
         except Exception as exc:
             log.warning("heartbeat_checker: check failed: %s", exc)
             timed_out = []
@@ -718,6 +791,7 @@ async def heartbeat_checker() -> None:
             mcu_disconnected_pending.pop(sid, None)
             log.warning("Session %s: ไม่ได้ heartbeat เกิน %ss — mark เป็น 'timeout'", sid, HEARTBEAT_TIMEOUT)
             await push_event("session_timeout", {"session_id": sid})
+            asyncio.create_task(_stop_timed_out_pi(sid))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

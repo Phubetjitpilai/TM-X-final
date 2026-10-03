@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { apiGet } from "../api/client";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiGet, ApiError } from "../api/client";
 import SingleSelect from "./SingleSelect";
 
 /**
@@ -66,18 +67,7 @@ function fmtTime(v: string | null): string {
 
 const show = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 
-interface Props {
-  /** เพิ่มค่านี้ทีละ 1 เพื่อสั่งให้โหลดใหม่ — หน้าแม่เพิ่งแก้/ลบอะไรไป
-   *  (EditPage ถือ state เองด้วย useState ไม่ได้ใช้ TanStack Query จึงต่อสายตรงแบบนี้
-   *   เหมือนที่ TrashCard ทำ) */
-  reloadKey?: number;
-}
-
-export default function HistoryCard({ reloadKey = 0 }: Props) {
-  const [items, setItems] = useState<HistoryItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [ready, setReady] = useState(true);
-  const [loading, setLoading] = useState(true);
+export default function HistoryCard() {
   const [page, setPage] = useState(1);
   const [table, setTable] = useState("");
   const [action, setAction] = useState("");
@@ -85,24 +75,21 @@ export default function HistoryCard({ reloadKey = 0 }: Props) {
   /** แถวที่กางดู diff อยู่ — เก็บเป็น id ไม่ใช่ index เพราะลิสต์เปลี่ยนได้ */
   const [openId, setOpenId] = useState<number | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    const params: Record<string, string | number> = { limit: PAGE, offset: (page - 1) * PAGE };
-    if (table) params.table_name = table;
-    if (action) params.action = action;
-    if (date) { params.date_from = date; params.date_to = date; }
-    apiGet<{ items: HistoryItem[]; total: number; ready: boolean }>("/api/history", params)
-      .then((d) => {
-        if (!alive) return;
-        setItems(d.items ?? []);
-        setTotal(d.total ?? 0);
-        setReady(d.ready !== false);
-      })
-      .catch(() => { if (alive) { setItems([]); setTotal(0); } })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [page, table, action, date, reloadKey]);
+  const params: Record<string, string | number> = { limit: PAGE, offset: (page - 1) * PAGE };
+  if (table) params.table_name = table;
+  if (action) params.action = action;
+  if (date) { params.date_from = date; params.date_to = date; }
+  const historyQuery = useQuery<{ items: HistoryItem[]; total: number; ready: boolean }, ApiError>({
+    queryKey: ["edit-history", page, table, action, date],
+    queryFn: ({ signal }) => apiGet("/api/history", params, signal),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.status === "error" ? 5_000 : 30_000,
+  });
+  const items = historyQuery.isError ? [] : historyQuery.data?.items ?? [];
+  const total = historyQuery.isError ? 0 : historyQuery.data?.total ?? 0;
+  const ready = historyQuery.data?.ready !== false;
 
   // เปลี่ยนตัวกรองแล้วต้องกลับหน้า 1 — ไม่งั้นค้างอยู่หน้า 5 ของผลลัพธ์ที่มี 2 แถว
   const setFilter = (fn: () => void) => { fn(); setPage(1); setOpenId(null); };
@@ -155,8 +142,10 @@ export default function HistoryCard({ reloadKey = 0 }: Props) {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr className="empty-row"><td colSpan={5}>กำลังโหลด…</td></tr>
+            {historyQuery.isPending ? (
+              <tr className="empty-row"><td colSpan={5}>กำลังโหลด History...</td></tr>
+            ) : historyQuery.isError ? (
+              <tr className="empty-row"><td colSpan={5}>โหลด History ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
             ) : items.length === 0 ? (
               <tr className="empty-row">
                 <td colSpan={5}>{table || action || date ? "ไม่พบประวัติที่ตรงกับตัวกรอง" : "ยังไม่มีประวัติการแก้ไข"}</td>
@@ -182,13 +171,13 @@ export default function HistoryCard({ reloadKey = 0 }: Props) {
       </div>
 
       <div className="pagination-bar">
-        <button type="button" className="btn-icon" disabled={page <= 1} onClick={() => { setPage(page - 1); setOpenId(null); }}>
+        <button type="button" className="btn-icon" disabled={page <= 1 || historyQuery.isPending || historyQuery.isError} onClick={() => { setPage(page - 1); setOpenId(null); }}>
           ‹ Previous
         </button>
         <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>
           {total === 0 ? "ไม่มีรายการ" : `แสดง ${from}–${to} จาก ${total} รายการ`}
         </span>
-        <button type="button" className="btn-icon" disabled={to >= total} onClick={() => { setPage(page + 1); setOpenId(null); }}>
+        <button type="button" className="btn-icon" disabled={to >= total || historyQuery.isPending || historyQuery.isError} onClick={() => { setPage(page + 1); setOpenId(null); }}>
           Next ›
         </button>
       </div>

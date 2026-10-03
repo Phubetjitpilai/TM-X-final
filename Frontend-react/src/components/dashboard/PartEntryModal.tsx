@@ -59,12 +59,10 @@ export function parseAlplList(raw: string): { list: number[]; error: string | nu
 }
 
 interface Props {
-  /** ตัวเลือกบางชุดยังโหลดไม่สำเร็จ — ขึ้นแถบเตือนใต้คำอธิบายด้านบนของฟอร์ม
-   *
-   *  ระบบยังลองใหม่อยู่เบื้องหลังไม่จำกัดจำนวนครั้ง (ดู `apiGetRetry`) พอโหลด
-   *  ครบเมื่อไหร่ค่านี้จะกลับเป็น false เองแล้วแถบหายไป ผู้ใช้ไม่ต้องกดรีเฟรช
-   */
+  /** Lookup กำลัง retry หลังดึงข้อมูลไม่สำเร็จ */
   lookupFailed?: boolean;
+  /** ทุกชุดเคยโหลดสำเร็จแล้ว จึงยังมีตัวเลือกเดิมใน cache */
+  lookupCached?: boolean;
   operators: string[];
   vendors: string[];
   owners: string[];
@@ -126,6 +124,7 @@ function toFormGroups(q: EntryQueue): GroupValues[] {
 
 export default function PartEntryModal({
   lookupFailed,
+  lookupCached,
   operators, vendors, owners, packageSizes, partNumbersFor, handlersFor, tolerancesFor, handlerOfPartNumber,
   onSave, onClose, confirmRegister, confirmExisting, confirmSwitch, onGroupConflict, onNotify, initial, triggerOnly = false,
 }: Props) {
@@ -363,9 +362,9 @@ export default function PartEntryModal({
             ปุ่มจะทำให้เข้าใจผิดว่าต้องกดถึงจะทำงาน */}
         {lookupFailed && !triggerOnly && (
           <div className="entry-session-hint warn">
-            ⚠️ โหลดตัวเลือกบางชุดไม่สำเร็จ (Operator / Package Size / Handler / Part Number)
-            — <strong>ระบบกำลังลองใหม่ให้อัตโนมัติ</strong> ข้อความนี้จะหายไปเองเมื่อโหลดครบ
-            {" "}· ถ้าค้างนาน ให้ดูว่าชิป <strong>Database</strong> บนแถบบนเป็นสีเขียวหรือยัง
+            {lookupCached
+              ? <>⚠️ ข้อมูลในตัวเลือกเป็นข้อมูลเก่า กำลังลองโหลดใหม่อีกครั้ง</>
+              : <>⚠️ โหลดตัวเลือกบางชุดไม่สำเร็จ กำลังลองโหลดใหม่อีกครั้ง</>}
           </div>
         )}
 

@@ -924,6 +924,17 @@ async def restart_existing_session(session_id: int, mode: str, trigger_mode: str
                     raise HTTPException(409, "Session นี้ยังไม่พร้อมวัดต่อหรือวัดซ้ำ")
                 if row["state"] == "timeout" and read_pi_status() is not True:
                     raise HTTPException(503, "Pi ยัง Offline — รอให้กลับมา Online ก่อนวัดต่อหรือวัดซ้ำ")
+                if row["state"] == "timeout":
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            agent_state = await client.get(f"{AGENT_BASE_URL}/queue-review",
+                                                           timeout=httpx.Timeout(connect=3, read=3, write=3, pool=3))
+                        agent_state.raise_for_status()
+                        agent_status = agent_state.json()
+                    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+                        raise HTTPException(503, f"ตรวจสถานะ Pi ไม่สำเร็จ: {exc}") from exc
+                    if agent_status.get("phase") != "stopped" or agent_status.get("worker_alive") is not False:
+                        raise HTTPException(409, "Pi ยังไม่หยุดสนิท — รอให้หยุดก่อนกด Continue")
                 q = row["queue_state"]
                 q = json.loads(q) if isinstance(q, str) else q
                 queue = q["queue"]
@@ -1041,11 +1052,11 @@ async def end_work(req: StopSessionRequest):
                             agent_state = await client.get(f"{AGENT_BASE_URL}/queue-review",
                                                            timeout=httpx.Timeout(connect=3, read=3, write=3, pool=3))
                         agent_state.raise_for_status()
-                        phase = agent_state.json().get("phase")
+                        agent_status = agent_state.json()
                     except (httpx.HTTPError, ValueError, AttributeError) as exc:
                         raise HTTPException(503, f"ตรวจสถานะ Pi ไม่สำเร็จ: {exc}") from exc
-                    if phase != "stopped":
-                        raise HTTPException(409, "Pi ยังวัดอยู่ — รอให้หยุดก่อนจบงาน")
+                    if agent_status.get("phase") != "stopped" or agent_status.get("worker_alive") is not False:
+                        raise HTTPException(409, "Pi ยังไม่หยุดสนิท — รอให้หยุดก่อนจบงาน")
                 q = row["queue_state"]
                 q = json.loads(q) if isinstance(q, str) else q
                 if q.get("work_closed"):
