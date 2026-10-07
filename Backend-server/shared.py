@@ -1451,9 +1451,9 @@ def _fmt_timestamp(r, fmt: str = "datetime") -> str:
     return ts.strftime("%d/%m/%Y %H:%M:%S")
 
 _TIME_FORMATS = [
-    {"key": "date",     "label": "Date"},
-    {"key": "time",     "label": "Time"},
-    {"key": "datetime", "label": "Date & Time"},
+    {"key": "date",     "label": "Performed date"},
+    {"key": "time",     "label": "Performed time"},
+    {"key": "datetime", "label": "Performed date & time"},
 ]
 
 def _axis_state(r, axis: str) -> str:
@@ -1514,26 +1514,26 @@ EXPORT_COLUMNS: Dict[str, Dict[str, Any]] = {
     # scope=report เพราะ CSV ไม่ต้องมีเลขลำดับ (Excel/โปรแกรมอื่นใส่เองได้)
     "item":          {"label": "Item",          "group": "ข้อมูลการวัด", "scope": "report",
                       "row_number": True, "get": lambda r: ""},
-    "number_alpl":   {"label": "ALPL",          "group": "ข้อมูลการวัด",
-                      "header": "Number ALPL", "get": lambda r: r["number_alpl"]},
+    "number_alpl":   {"label": "Part Number",   "csv_label": "Part Number", "group": "ข้อมูลการวัด",
+                      "header": "Part Number", "get": lambda r: r["number_alpl"]},
     # Value X/Y เป็น scope=csv เพราะในรายงานมันไม่ยืนเดี่ยว — เป็นส่วนหนึ่งของ
     # บล็อก Tolerance เสมอ (ดู tolerance_spec ด้านล่าง)
     # values/state = ใช้ตั้ง "หน้าตาแยกตามค่า" ในรายงาน (เช่น เกินสเปกให้พื้นแดง)
     # state ของแกนต้องคำนวณเอง ไม่ใช้ Result เพราะ Result เป็นผลรวมของทั้ง X และ Y
-    "value_x":       {"label": "Value X",       "group": "ข้อมูลการวัด", "scope": "csv",
+    "value_x":       {"label": "Measuring_X",   "csv_label": "Measuring_X", "group": "ข้อมูลการวัด", "scope": "csv",
                       "values": ["OK", "NG"], "state": lambda r: _axis_state(r, "x"),
                       "get": lambda r: _fmt_num(r["value_x"])},
-    "value_y":       {"label": "Value Y",       "group": "ข้อมูลการวัด", "scope": "csv",
+    "value_y":       {"label": "Measuring_Y",   "csv_label": "Measuring_Y", "group": "ข้อมูลการวัด", "scope": "csv",
                       "values": ["OK", "NG"], "state": lambda r: _axis_state(r, "y"),
                       "get": lambda r: _fmt_num(r["value_y"])},
     # แกนแยก — ข้อมูลมีอยู่ในตารางอยู่แล้วแต่เดิม export ออกไม่ได้เลย
-    "offset_opx":    {"label": "Offset X",      "group": "ข้อมูลการวัด",
+    "offset_opx":    {"label": "Offset_X",      "csv_label": "Offset_X", "group": "ข้อมูลการวัด",
                       "values": ["OK", "NG"], "state": lambda r: _offset_axis_state(r, "x"),
                       "get": lambda r: _fmt_num(r.get("offset_opx"))},
-    "offset_opy":    {"label": "Offset Y",      "group": "ข้อมูลการวัด",
+    "offset_opy":    {"label": "Offset_Y",      "csv_label": "Offset_Y", "group": "ข้อมูลการวัด",
                       "values": ["OK", "NG"], "state": lambda r: _offset_axis_state(r, "y"),
                       "get": lambda r: _fmt_num(r.get("offset_opy"))},
-    "offset_pos_op": {"label": "Offset Position", "group": "ข้อมูลการวัด",
+    "offset_pos_op": {"label": "Opening shift", "csv_label": "Opening shift", "group": "ข้อมูลการวัด",
                       "get": lambda r: r.get("offset_pos_op") or ""},
     # ── บล็อก Tolerance (รายงานเท่านั้น) ────────────────────────────────
     # ลากครั้งเดียวได้ผังกว้าง 2 คอลัมน์ สูง 3 แถว:
@@ -1546,45 +1546,45 @@ EXPORT_COLUMNS: Dict[str, Dict[str, Any]] = {
     # header = ข้อความที่พิมพ์เป็นหัวตารางจริงในรายงาน — คนละอันกับ label
     #          เพราะหัวตารางบนกระดาษต้องสั้นว่า "Tolerance" เฉยๆ
     "tolerance_spec": {
-        "label": "Tolerance + Value X/Y", "group": "ข้อมูลการวัด", "scope": "report",
+        "label": "Tolerance + Measuring_X/Y", "group": "ข้อมูลการวัด", "scope": "report",
         "get": _tolerance_spec,
         "block": {
             "cols": 2,
             "header": "Tolerance",
-            "data": [{"key": "value_x", "label": "Value X"},
-                     {"key": "value_y", "label": "Value Y"}],
+            "data": [{"key": "value_x", "label": "Measuring_X"},
+                     {"key": "value_y", "label": "Measuring_Y"}],
         },
     },
     "result":        {"label": "Result",        "group": "ข้อมูลการวัด", "values": ["OK", "NG"],
                       "state": lambda r: r["result"] or "",
                       "get": lambda r: r["result"]},
     "note":          {"label": "Note",          "group": "ข้อมูลการวัด", "get": lambda r: r["note"] or ""},
-    "operator":      {"label": "Operator",      "group": "ข้อมูลการวัด", "get": lambda r: r["operator_name"] or ""},
+    "operator":      {"label": "Performed by",  "csv_label": "Performed by", "group": "ข้อมูลการวัด", "get": lambda r: r["operator_name"] or ""},
     "measure_type":  {"label": "Measure Type",  "group": "ข้อมูลการวัด", "get": lambda r: r["measure_type"] or ""},
     # header = ข้อความหัวตารางเริ่มต้นในรายงาน (ต่างจาก label ที่เป็นชื่อชิป/หัว CSV)
     # formats = รูปแบบที่ติ๊กเลือกได้บนเซลล์ — ค่าเริ่มต้นคือตัวแรกในลิสต์ (date)
-    "timestamp":     {"label": "Date",          "csv_label": "Timestamp",
+    "timestamp":     {"label": "Performed date", "csv_label": "Performed date",
                       "group": "ข้อมูลการวัด",
-                      "header": "Date", "formats": _TIME_FORMATS,
+                      "header": "Performed date", "formats": _TIME_FORMATS,
                       "get": lambda r: _fmt_timestamp(r, "datetime"),
                       "get_fmt": _fmt_timestamp},
     "session_id":    {"label": "Session",       "group": "ข้อมูลการวัด", "get": lambda r: r["session_id"]},
 
-    "part_number":   {"label": "Part Number",   "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["part_number_name"] or ""},
-    "handler":       {"label": "Handler",       "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["handler_name"] or ""},
-    "package_size":  {"label": "Package Size",  "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["package_size"] or ""},
+    "part_number":   {"label": "ALPL#",         "csv_label": "ALPL#", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["part_number_name"] or ""},
+    "handler":       {"label": "H/L",           "csv_label": "H/L", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["handler_name"] or ""},
+    "package_size":  {"label": "Opening",       "csv_label": "Opening", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["package_size"] or ""},
     "template_name": {"label": "Template",      "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["template_name"] or ""},
     # ── สเปกขนาด: CSV ใช้ 4 ช่องแยก / รายงาน PDF-Excel ใช้ช่องรวมช่องเดียว ──
     # scope บอกว่าคอลัมน์นี้โผล่ในหน้าไหน (ไม่ใส่ = โผล่ทั้งสองหน้า)
-    "nominal_x":     {"label": "Nominal X",     "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["nominal_x"])},
-    "nominal_y":     {"label": "Nominal Y",     "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["nominal_y"])},
-    "upper_tol":     {"label": "Upper Tol",     "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["upper_tol"])},
-    "lower_tol":     {"label": "Lower Tol",     "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["lower_tol"])},
-    "offset":        {"label": "Offset Tolerance", "group": "ข้อมูลชิ้นงาน","get": lambda r: _fmt_num(r.get("offset_tol"))},
+    "nominal_x":     {"label": "Nominal_X",     "csv_label": "Nominal_X", "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["nominal_x"])},
+    "nominal_y":     {"label": "Nominal_Y",     "csv_label": "Nominal_Y", "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["nominal_y"])},
+    "upper_tol":     {"label": "USL",           "csv_label": "USL", "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["upper_tol"])},
+    "lower_tol":     {"label": "LSL",           "csv_label": "LSL", "group": "ข้อมูลชิ้นงาน", "scope": "csv", "get": lambda r: _fmt_num(r["lower_tol"])},
+    "offset":        {"label": "Centering Offset", "csv_label": "Centering Offset", "group": "ข้อมูลชิ้นงาน","get": lambda r: _fmt_num(r.get("offset_tol"))},
     "vendor":        {"label": "Vendor",        "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["vendor_name"] or ""},
-    "owner":         {"label": "Owner",         "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["owner_name"] or ""},
-    "po_number":     {"label": "PO Number",     "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["po_number"] if r["po_number"] is not None else ""},
-    "description":   {"label": "Description",   "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["description"] or ""},
+    "owner":         {"label": "Order by",      "csv_label": "Order by", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["owner_name"] or ""},
+    "po_number":     {"label": "PO#",           "csv_label": "PO#", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["po_number"] if r["po_number"] is not None else ""},
+    "description":   {"label": "Desc.",         "csv_label": "Desc.", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["description"] or ""},
     "recieve_date":  {"label": "Receive Date",  "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["recieve_date"].strftime("%d/%m/%Y") if r["recieve_date"] else ""},
 }
 

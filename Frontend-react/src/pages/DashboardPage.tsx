@@ -7,7 +7,7 @@ import { useLookups } from "../hooks/useLookups";
 import { useToast } from "../components/Toast";
 import { useDialog } from "../components/Dialog";
 import AlplIcon from "../components/AlplIcon";
-// DP_OFF ถูกถอดออกตอนย้ายคอลัมน์ Offset Tol ไปตาราง Parts — ที่เหลือในไฟล์นี้
+// DP_OFF ถูกถอดออกตอนย้ายคอลัมน์ Centering Offset ไปตาราง Parts — ที่เหลือในไฟล์นี้
 // ใช้แค่ DP_MM · ตัวจัดรูปของ offset อยู่ใน offsetValue() ซึ่งเรียก DP_OFF เองข้างใน
 import { axisValue, offsetValue, xyPair, DP_MM } from "../components/measurementCells";
 import { ReportAxis } from "../components/dashboard/ReportAxis";
@@ -16,6 +16,7 @@ import IpmSummaryModal, { type IpmSummaryRow } from "../components/dashboard/Ipm
 import PartEntryModal, { type EntryQueue, type TriggerMode } from "../components/dashboard/PartEntryModal";
 import RemeasureStartOptions from "../components/dashboard/RemeasureStartOptions";
 import { formatAlplRanges } from "../utils/formatAlplRanges";
+import { toUiTerms } from "../utils/displayTerms";
 import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, type FilterState, type MultiKey } from "../components/export/ExportFilters";
 
 // DashboardPage — พอร์ตจาก Frontend/index.html (TM-X Dashboard) แบบยึด
@@ -27,6 +28,9 @@ import ExportFilters, { EMPTY_FILTERS, hasAnyFilter, toParams, validateAlpl, typ
 const PART_ENTRY_STORAGE_KEY = "tmx_part_entry_state_v1";
 const MEAS_PAGE_SIZE = 10;
 const SESSION_STOP_ERROR_EVENTS = new Set(["PI_ERROR", "START_FAILED", "STOP_NOT_DELIVERED", "TIMEOUT_STOP_FAILED"]);
+
+const apiErrorText = (error: unknown, fallback: string) =>
+  toUiTerms(error instanceof ApiError ? error.message : fallback);
 
 interface SessionState {
   state: "idle" | "running" | "stopped" | "timeout";
@@ -97,7 +101,7 @@ interface Measurement {
    *  ต่างจาก `false` ที่แปลว่าตรวจแล้วไม่ผ่าน — null ต้องไม่ระบายสี */
   ok_x?: boolean | null;
   ok_y?: boolean | null;
-  /** แยกรายแกน — ใช้ระบายสีช่องตัวเลข Offset X / Y */
+  /** แยกรายแกน — ใช้ระบายสีช่องตัวเลข Offset_X / Y */
   ok_opx?: boolean | null;
   ok_opy?: boolean | null;
   /** ⚠ **ผลรวมของทั้ง opx และ opy** — ใช้กับผัง OffsetMap / ป้าย OK-NG ของทั้ง
@@ -242,7 +246,7 @@ export default function DashboardPage() {
       setReviewPhase("running");
       followLatestTelemetry();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "สั่งวัดต่อไม่สำเร็จ");
+      showToast(apiErrorText(err, "สั่งวัดต่อไม่สำเร็จ"));
     } finally {
       reviewBusyRef.current = false;
       setReviewBusy(false);
@@ -261,7 +265,7 @@ export default function DashboardPage() {
       let triggerMode: TriggerMode = parsedQueue?.trigger_mode === "manual" ? "manual" : "auto";
       if (!await dialog.confirm(
         running
-          ? `วางชิ้นงาน ALPL ${selected.number_alpl} ให้พร้อม แล้วเริ่มวัดใหม่ ผลและรูปใหม่จะแทนที่รายการเดิม`
+          ? `วางชิ้นงาน Part Number ${selected.number_alpl} ให้พร้อม แล้วเริ่มวัดใหม่ ผลและรูปใหม่จะแทนที่รายการเดิม`
           : <RemeasureStartOptions alpl={selected.number_alpl} initialMode={triggerMode}
               onModeChange={mode => { triggerMode = mode; }} />,
         { title: "วัดชิ้นงานใหม่", okLabel: "Remeasure" },
@@ -286,7 +290,7 @@ export default function DashboardPage() {
       // Failed Start must leave the previous queue and its session associations intact.
       if (reviewDisplayRef.current?.pendingStart) reviewDisplayRef.current = previousReview;
       savePartEntryState();
-      showToast(err instanceof ApiError ? err.message : "เริ่มวัดใหม่ไม่สำเร็จ");
+      showToast(apiErrorText(err, "เริ่มวัดใหม่ไม่สำเร็จ"));
     } finally {
       reviewBusyRef.current = false;
       setReviewBusy(false);
@@ -342,7 +346,7 @@ export default function DashboardPage() {
       applyTelemetry(data.items[0]);
     } catch (err) {
       if (request !== telemetryRequestRef.current) return;
-      showToast(err instanceof ApiError ? err.message : "โหลดผลวัดไม่สำเร็จ");
+      showToast(apiErrorText(err, "โหลดผลวัดไม่สำเร็จ"));
       followLatestTelemetry();
     } finally {
       if (request === telemetryRequestRef.current) setTelemetryLoading(false);
@@ -464,7 +468,7 @@ export default function DashboardPage() {
    *  และค่าที่อ่านได้ใน closure ของ catch อาจเป็นค่าเก่า
    */
   const mtFailRef = useRef(0);
-  /** แถบคิว ALPL — ok/ng = วัดแล้วรู้ผล · done = วัดแล้วแต่หน้านี้ไม่รู้ผล ·
+  /** แถบคิว Part Number — ok/ng = วัดแล้วรู้ผล · done = วัดแล้วแต่หน้านี้ไม่รู้ผล ·
    *  now = กำลังวัด · wait = ยังไม่ถึงคิว
    *  ซ่อนทั้งแถบเมื่อคิวมีตัวเดียว (เช่น IPM ชิ้นเดียว) เพราะไม่มีอะไรให้ดู
    *
@@ -511,7 +515,7 @@ export default function DashboardPage() {
     });
   }, [queueFollowIndex, queueFollowAlpl, selectedQueueIndex]);
 
-  // ── Parts cache (ใช้ validate ALPL + report modal — ไม่มีตารางแสดงในหน้านี้) ──
+  // ── Parts cache (ใช้ validate Part Number + report modal — ไม่มีตารางแสดงในหน้านี้) ──
   const partsRef = useRef<Part[]>([]);
 
   // Lookup แต่ละชุดใช้ cache และ retry ของ TanStack Query; ข้อมูลจาก endpoint
@@ -550,7 +554,7 @@ export default function DashboardPage() {
 
 
 
-  // ── Confirm modal (Promise-based, ใช้ตอน IPM เจอ ALPL ที่ยังไม่เคยลงทะเบียน) ──
+  // ── Confirm modal (Promise-based, ใช้ตอน IPM เจอ Part Number ที่ยังไม่เคยลงทะเบียน) ──
   const [confirmModal, setConfirmModal] = useState<{ message: string } | null>(null);
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null);
   function resolveConfirmModal(result: boolean) {
@@ -687,7 +691,7 @@ export default function DashboardPage() {
       await apiPost("/api/session/trigger", { session_id: session?.session_id });
       showToast("⚡ ส่งสัญญาณแล้ว", undefined, "success");
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "ส่งสัญญาณไม่สำเร็จ");
+      showToast(apiErrorText(err, "ส่งสัญญาณไม่สำเร็จ"));
     }
   }
 
@@ -768,7 +772,7 @@ export default function DashboardPage() {
           items: (await apiGet<{ items: Telemetry[] }>("/api/measurements", { session_id: sessionId, limit: 1000 })).items,
         })));
         if (request !== statsRequestRef.current || reviewDisplayRef.current !== review || isTelemetryCleared()) return;
-        // Every chip is scoped to its own session; never use a global ALPL search.
+        // Every chip is scoped to its own session; never use a global Part Number search.
         setQueueStrip(queue.map((q, index) => {
           const replacement = index !== review.queueIndex ? undefined : review.updateExisting
             ? (review.completed || sessionRef.current.measured_count >= 1
@@ -898,7 +902,7 @@ export default function DashboardPage() {
       const result = await apiPost<{ queue_state: any; target_count: number }>("/api/session/end-work", { session_id: session.session_id });
       onWorkEnded({ session_id: session.session_id, queue_state: result.queue_state, target_count: result.target_count });
     } catch (e) {
-      dialog.alert(e instanceof ApiError ? e.message : "จบการทำงานไม่สำเร็จ", { title: "จบการทำงานไม่สำเร็จ", danger: true });
+      dialog.alert(apiErrorText(e, "จบการทำงานไม่สำเร็จ"), { title: "จบการทำงานไม่สำเร็จ", danger: true });
     }
   }
 
@@ -1050,7 +1054,7 @@ export default function DashboardPage() {
     // ⚠ ค่ามาถึงระหว่างที่ modal เปิดรอคำตอบอยู่ (FTP ส่งช้ากว่า MEASURE_TIMEOUT
     //   แต่มาถึงจริง) → ปิด modal ทิ้งเงียบ ๆ เพราะคำถามหมดความหมายแล้ว
     //   ถ้าไม่ปิด ผู้ใช้อาจกด "รับค่าจาก Pi" ทั้งที่ค่าลง DB ไปแล้ว → 2 แถวต่อ
-    //   ชิ้นเดียว → position ขยับ 2 → ALPL เลื่อนทั้งคิว
+    //   ชิ้นเดียว → position ขยับ 2 → Part Number เลื่อนทั้งคิว
     //   (Pi เช็ค measured_count ซ้ำก่อน POST อยู่แล้ว — ตัวนี้เป็นชั้นกันที่สอง
     //    และทำให้ผู้ใช้ไม่ต้องมานั่งงงว่าจะกดอะไรดี)
     // ⚠ ห้ามเรียก showToast() ข้างใน updater ของ setMtModal — updater ต้องเป็น
@@ -1658,7 +1662,7 @@ export default function DashboardPage() {
         resumeTriggerRef.current = null;
         savePartEntryState();
       } catch (e) {
-        dialog.alert(e instanceof ApiError ? e.message : "เริ่มวัดต่อไม่สำเร็จ", { title: "เริ่มวัดต่อไม่สำเร็จ", danger: true });
+        dialog.alert(apiErrorText(e, "เริ่มวัดต่อไม่สำเร็จ"), { title: "เริ่มวัดต่อไม่สำเร็จ", danger: true });
       }
       return;
     }
@@ -1669,7 +1673,7 @@ export default function DashboardPage() {
     // แค่เลขรวมกันพรืดเดียว (กลุ่มคือสิ่งที่กำหนดว่า Part แต่ละตัวจะได้ config อะไร)
     const ok = await dialog.confirm(
       <>
-        เริ่ม session ด้วยคิว <strong>{q.mode}</strong> จำนวน <strong>{q.list.length} ALPL</strong>
+        เริ่ม session ด้วยคิว <strong>{q.mode}</strong> จำนวน <strong>{q.list.length} Part Number</strong>
         <br />
         <br />
         {q.groups.map((g, gi) => {
@@ -1695,7 +1699,7 @@ export default function DashboardPage() {
     //   ตรงกันโดยบังเอิญไม่ใช่สิ่งที่ควรพึ่ง เขียนให้ชัดตรงนี้เลยดีกว่า
     const body = {
       Measure_Type: q.mode,
-      Operator: q.operator,
+      "Performed by": q.operator,
       Trigger_Mode: q.triggerMode ?? "auto",
       Tray_Capacity: q.triggerMode === "manual" ? null : q.trayCapacity ?? null,
       groups: q.groups,
@@ -1715,7 +1719,7 @@ export default function DashboardPage() {
       refreshParts();
       void queryClient.invalidateQueries({ queryKey: ["part-numbers-all"] });
     } catch (e) {
-      dialog.alert(e instanceof ApiError ? e.message : "เริ่ม session ไม่สำเร็จ", { title: "เริ่มการวัดไม่สำเร็จ", danger: true });
+      dialog.alert(apiErrorText(e, "เริ่ม session ไม่สำเร็จ"), { title: "เริ่มการวัดไม่สำเร็จ", danger: true });
     }
   }
 
@@ -1750,7 +1754,7 @@ export default function DashboardPage() {
         );
       }
     } catch (e) {
-      dialog.alert(e instanceof ApiError ? e.message : "หยุด session ไม่สำเร็จ", { title: "หยุดการวัดไม่สำเร็จ", danger: true });
+      dialog.alert(apiErrorText(e, "หยุด session ไม่สำเร็จ"), { title: "หยุดการวัดไม่สำเร็จ", danger: true });
     }
   }
 
@@ -1842,7 +1846,7 @@ export default function DashboardPage() {
                 {/* คลาสยังใช้ค่าดิบ (`timeout`) — เปลี่ยนเฉพาะข้อความ ดู sessionStateLabel */}
                 <span className={`session-state-badge ${session.state}`}>{sessionStateLabel(session.state)}</span>
               </div>
-              {/* ชิป Operator · Measure Type · Session (เลข id) ถอดออกแล้ว
+              {/* ชิป Performed by · Measure Type · Session (เลข id) ถอดออกแล้ว
                   ทั้งสามตัวซ้ำกับที่อื่นบนหน้าเดียวกัน: Operator กับ Measure Type
                   อยู่ในดรอปดาวน์สรุปของ Part Entry ข้าง ๆ อยู่แล้ว ส่วนเลข session
                   เป็นเลขรันนิ่งของฐานข้อมูลที่คนหน้าเครื่องเอาไปทำอะไรต่อไม่ได้
@@ -1903,7 +1907,7 @@ export default function DashboardPage() {
               <div className="session-entry-filled">
                 {/* หัวข้อ + โหมด + Clear อยู่บรรทัดบน ให้แถวล่างเหลือแค่
                     dropdown กับปุ่ม — ถ้ายัด badge เข้าไปในตัว toggle ด้วย
-                    ชื่อ ALPL ที่ยาวจะถูกบีบจนอ่านไม่ออกก่อนใครเพื่อน */}
+                    ชื่อ Part Number ที่ยาวจะถูกบีบจนอ่านไม่ออกก่อนใครเพื่อน */}
                 <div className="session-entry-head" style={{ flexWrap: "wrap" }}>
                   <span className="session-entry-title">Part Entry</span>
                   <span className={`pe-mode-badge-lg ${partEntryQueue.mode.toLowerCase()}`}>
@@ -1932,16 +1936,16 @@ export default function DashboardPage() {
                   <div className="pe-summary-dropdown session-entry-summary">
                     <button type="button" className="pe-summary-toggle" onClick={() => setPeSummaryOpen((v) => !v)}>
                       <span className="pe-summary-toggle-left">
-                        <span>ALPL: {formatAlplRanges(partEntryQueue.list)}</span>
+                        <span>Part Number: {formatAlplRanges(partEntryQueue.list)}</span>
                       </span>
                       <span className={`pe-summary-arrow${peSummaryOpen ? " open" : ""}`}>▼</span>
                     </button>
                     {/* แสดงทีละกลุ่ม — ของเดิมโชว์ field ชุดเดียวเพราะมีได้กลุ่มเดียว
-                        ตอนนี้ต้องบอกให้ได้ว่า ALPL ไหนใช้ config ชุดไหน ไม่งั้น
+                        ตอนนี้ต้องบอกให้ได้ว่า Part Number ไหนใช้ config ชุดไหน ไม่งั้น
                         ผู้ใช้ตรวจก่อนกด Start ไม่ได้ว่ากรอกถูกกลุ่มหรือเปล่า */}
                     <div className={`pe-summary-body${peSummaryOpen ? " open" : ""}`}>
                       <div className="pe-summary-grid">
-                        <span className="pg-label">Operator</span>
+                        <span className="pg-label">Performed by</span>
                         <span className="pg-value">{partEntryQueue.operator}</span>
                       </div>
                       {partEntryQueue.groups.map((g, gi) => (
@@ -2015,7 +2019,7 @@ export default function DashboardPage() {
                   Live Telemetry
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span className="telemetry-alpl-badge">ALPL {telemetry?.number_alpl ?? "—"}</span>
+                  <span className="telemetry-alpl-badge">Part Number {telemetry?.number_alpl ?? "—"}</span>
                   {(selectedQueueIndex !== null || (isRunning && reviewPhase !== "running"))
                     && (!isRunning || (reviewPhase !== "remeasuring" && reviewPhase !== "unknown")) && (
                     <button type="button" className="btn-clear" onClick={resumeLatestTelemetry}
@@ -2055,14 +2059,14 @@ export default function DashboardPage() {
               )}
               {selectedQueueIndex !== null && (
                 <div role="status" style={{ marginBottom: "0.5rem", color: "var(--muted)" }}>
-                  {telemetryLoading ? "กำลังโหลดผลวัด…" : `กำลังดูผล ALPL ${telemetry?.number_alpl ?? "—"}`}
+                  {telemetryLoading ? "กำลังโหลดผลวัด…" : `กำลังดูผล Part Number ${telemetry?.number_alpl ?? "—"}`}
                 </div>
               )}
               <div className="telemetry-grid" aria-busy={telemetryLoading}>
                 <div className="telemetry-xy-col">
                   <div className="telemetry-cell x">
                     <div className="tc-head">
-                      <span className="tc-label">Value X</span>
+                      <span className="tc-label">Measuring_X</span>
                       {axX.ok != null && <span className={`tc-axis ${axX.ok ? "ok" : "ng"}`}>{axX.ok ? "OK" : "NG"}</span>}
                     </div>
                     <div className="tc-value">
@@ -2073,7 +2077,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="telemetry-cell y">
                     <div className="tc-head">
-                      <span className="tc-label">Value Y</span>
+                      <span className="tc-label">Measuring_Y</span>
                       {axY.ok != null && <span className={`tc-axis ${axY.ok ? "ok" : "ng"}`}>{axY.ok ? "OK" : "NG"}</span>}
                     </div>
                     <div className="tc-value">
@@ -2118,7 +2122,7 @@ export default function DashboardPage() {
                     : true)) && (
                   <div className="telemetry-cell offset telemetry-offset-cell">
                     <OffsetMap
-                      title="Offset Opening"
+                      title="Opening shift"
                       offsetX={telemetry?.offset_opx}
                       offsetY={telemetry?.offset_opy}
                       posCode={telemetry?.offset_pos_op}
@@ -2129,10 +2133,10 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-              {/* แถบคิว ALPL — **ซ่อนเฉพาะตอนไม่มีคิวเลย** เท่านั้น
+              {/* แถบคิว Part Number — **ซ่อนเฉพาะตอนไม่มีคิวเลย** เท่านั้น
                   ⚠ เดิม vanilla ซ่อนเมื่อคิว ≤ 1 ด้วยเหตุผลว่า "ตัวเดียวไม่มีอะไร
                     ให้ดู" แล้วเลิกทำ เพราะไม่จริงในการใช้งาน — ชิปตัวเดียวยังบอกได้
-                    ว่า ALPL ไหนกำลังวัด/วัดไปแล้วผลเป็นอะไร และกดเปิดรายงานได้
+                    ว่า Part Number ไหนกำลังวัด/วัดไปแล้วผลเป็นอะไร และกดเปิดรายงานได้
                     ที่สำคัญคือมันหาย ๆ โผล่ ๆ ตามจำนวนชิ้นในรอบ ทำให้เลย์เอาต์ของ
                     การ์ดนี้ไม่นิ่ง คนใช้จำไม่ได้ว่าแถบนี้อยู่ตรงไหน */}
               {queueStrip.length > 0 && (
@@ -2144,7 +2148,7 @@ export default function DashboardPage() {
                         className={`tq-chip ${q.state}${selectedQueueIndex === i ? " selected" : ""}${queueReviewLocked && selectedQueueIndex !== i ? " review-locked" : ""}`}
                         disabled={q.state === "wait" || q.state === "now" || queueReviewLocked}
                         aria-pressed={selectedQueueIndex === i}
-                        aria-label={`ALPL ${q.alpl} — ${queueReviewLocked ? "กำลังวัดซ้ำ รอผลก่อนเลือก Queue อื่น" : q.state === "wait" || q.state === "now" ? "ยังไม่มีผลวัด" : "ดูผลวัด"}`}
+                        aria-label={`Part Number ${q.alpl} — ${queueReviewLocked ? "กำลังวัดซ้ำ รอผลก่อนเลือก Queue อื่น" : q.state === "wait" || q.state === "now" ? "ยังไม่มีผลวัด" : "ดูผลวัด"}`}
                         onClick={() => selectQueueTelemetry(i, q.alpl)}>
                         {q.state === "now" && <span className="tq-dot" />}
                         {(q.state === "ok" || q.state === "ng" || q.state === "done") && (
@@ -2253,35 +2257,35 @@ export default function DashboardPage() {
                   <tr>
                     <th>ID</th>
                     <th>Session</th>
-                    <th>ALPL</th>
-                    {/* เกณฑ์ตัดสิน (Nominal / Tol / Offset Tol) ย้ายไปอยู่ตาราง Parts
+                    <th>Part Number</th>
+                    {/* เกณฑ์ตัดสิน (Nominal / Tol / Centering Offset) ย้ายไปอยู่ตาราง Parts
                         หน้า Edit แล้ว — เป็นสเปกของ "ชิ้นงาน" ไม่ใช่ของ "การวัด
                         ครั้งนั้น" · ค่ายังถูกดึงมาใน MEASUREMENTS_SELECT อยู่ เพราะ
-                        Value X/Y กับ Offset X/Y ใช้มันระบายสีว่าเกินสเปกไหม
+                        Measuring_X / Measuring_Y กับ Offset_X / Offset_Y ใช้มันระบายสีว่าเกินสเปกไหม
                         (ดู axisValue / offsetValue) **ห้ามถอดออกจาก SELECT หรือ type**
                         อยากดูเกณฑ์ที่ใช้ตอนวัดจริงย้อนหลัง → Export CSV หรือกดที่แถว
                         เพื่อเปิด Report modal */}
                     {/* รวม X กับ Y ไว้ช่องเดียว — ระบายสีแยกทีละแกน จะได้เห็น
                         ทันทีว่าแกนไหนเป็นตัวที่ทำให้ทั้งแถวเป็น NG
                         (ตาราง Edit ใช้ชุดเดียวกัน ดู measurementCells.tsx) */}
-                    <th>Value X/Y</th>
-                    <th>Offset X/Y</th>
+                    <th>Measuring_X / Measuring_Y</th>
+                    <th>Offset_X / Offset_Y</th>
                     {/* ทิศที่เยื้อง — `offset_pos_op` เป็นรหัส 9 ค่าที่ backend
                         คำนวณให้ (TOP / BOTTOM / LEFT / … / CENTER) ไม่ได้เดาจาก
-                        เครื่องหมายของตัวเลข · เงื่อนไขเดียวกับ Offset X/Y คือ
+                        เครื่องหมายของตัวเลข · เงื่อนไขเดียวกับ Offset_X / Offset_Y คือ
                         IPM ไม่เอา offset มาตัดสิน จึงขึ้น "—" ทั้งคอลัมน์ */}
-                    <th>Offset Position</th>
+                    <th>Opening shift</th>
                     <th>Result</th>
                     <th>Note</th>
-                    <th>Operator</th>
+                    <th>Performed by</th>
                     <th>Measure Type</th>
                     <th>Image</th>
-                    <th>Timestamp</th>
+                    <th>Performed date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {validateAlpl(measFilters.alpl) ? (
-                    <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+                    <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ Part Number ในตัวกรอง</td></tr>
                   ) : measFilterPending || measurementsQuery.isPending ? (
                     <tr className="empty-row"><td colSpan={12}>กำลังโหลด Measurement History...</td></tr>
                   ) : measurementsQuery.isError ? (
@@ -2464,7 +2468,7 @@ export default function DashboardPage() {
               <div className="card-title">{v.title}</div>
             </div>
             <div style={{ fontSize: "0.9rem", lineHeight: 1.7, marginBottom: "0.75rem" }}>
-              {mtModal.number_alpl != null && <>ALPL <strong>{mtModal.number_alpl}</strong> </>}
+              {mtModal.number_alpl != null && <>Part Number <strong>{mtModal.number_alpl}</strong> </>}
               (ชิ้นที่ <strong>{mtModal.piece ?? "—"}/{mtModal.target ?? "—"}</strong>)
               {" "}{v.body}
               {mtModal.detail && (
@@ -2516,11 +2520,11 @@ export default function DashboardPage() {
             const loTol = m.lower_tol;
             const specRows: [string, string][] = [
               ["Vendor", part?.vendor || "—"],
-              ["Owner", part?.owner || "—"],
-              ["PO number", part?.po_number != null ? String(part.po_number) : "—"],
+              ["Order by", part?.owner || "—"],
+              ["PO#", part?.po_number != null ? String(part.po_number) : "—"],
               ["Template", part?.template_name || "—"],
               ["Receive date", part?.recieve_date ? new Date(part.recieve_date).toLocaleDateString() : "—"],
-              ["Operator", m.operator_name || "—"],
+              ["Performed by", m.operator_name || "—"],
               ["Measure type", m.measure_type || "—"],
               ["Note", m.note || "—"],
             ];
@@ -2528,7 +2532,7 @@ export default function DashboardPage() {
               <>
                 <div className="report-header">
                   <div>
-                    <div className="report-header-title">Measurement report — ALPL {m.number_alpl}</div>
+                    <div className="report-header-title">Measurement report — Part Number {m.number_alpl}</div>
                     <div className="report-header-sub">
                       {m.timestamp ? new Date(m.timestamp).toLocaleString() : "—"} ·{" "}
                       {m.session_id != null ? `Session #${m.session_id}` : "Session —"} · {m.operator_name || "—"}
@@ -2581,7 +2585,7 @@ export default function DashboardPage() {
                     </div>
                   ))}
                   <div className="rs-full">
-                    <div className="rs-label">Description</div>
+                    <div className="rs-label">Desc.</div>
                     <div className="rs-value">{part?.description || "—"}</div>
                   </div>
                 </div>
@@ -2591,7 +2595,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Confirm modal (Promise-based — IPM เจอ ALPL ที่ยังไม่เคยลงทะเบียน) ── */}
+      {/* ── Confirm modal (Promise-based — IPM เจอ Part Number ที่ยังไม่เคยลงทะเบียน) ── */}
       <div className={`modal-overlay${confirmModal ? " open" : ""}`}>
         <div className="pe-modal-box" style={{ maxWidth: 480 }}>
           <div className="pe-modal-header">
@@ -2665,27 +2669,27 @@ export default function DashboardPage() {
           confirmRegister={async (items) =>
             dialog.confirm(
               <>
-                <strong>ALPL ต่อไปนี้ยังไม่เคยบันทึกมาก่อน</strong>
-                <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ALPL ที่ยังไม่ลงทะเบียน — เลื่อนเพื่อดูรายการเพิ่มเติม">
+                <strong>Part Number ต่อไปนี้ยังไม่เคยบันทึกมาก่อน</strong>
+                <div className="register-alpl-list" tabIndex={0} role="region" aria-label="Part Number ที่ยังไม่ลงทะเบียน — เลื่อนเพื่อดูรายการเพิ่มเติม">
                   {items.map((it) => (
-                    <div key={it.alpl}>• ALPL {it.alpl} → Package Size "{it.package_size || "—"}"</div>
+                    <div key={it.alpl}>• Part Number {it.alpl} → Opening "{it.package_size || "—"}"</div>
                   ))}
                 </div>
                 จะลงทะเบียนให้ตอนวัดชิ้นนั้นสำเร็จ แล้ววัดต่อเลยไหม
               </>,
-              { title: "มี ALPL ที่ยังไม่ลงทะเบียน", okLabel: "Register & Continue" },
+              { title: "มี Part Number ที่ยังไม่ลงทะเบียน", okLabel: "Register & Continue" },
             )
           }
           confirmExisting={items => dialog.confirm(
             <>
               <strong>Part เหล่านี้มีอยู่ในระบบแล้ว</strong>
-              <div className="register-alpl-list">{items.map((item, i) => <div key={i}>ALPL {item.alpl} · {item.package_size}</div>)}</div>
+              <div className="register-alpl-list">{items.map((item, i) => <div key={i}>Part Number {item.alpl} · {item.package_size}</div>)}</div>
               <p>ใช้ข้อมูล Part ที่ลงทะเบียนไว้และบันทึกผลการวัดใหม่ ต้องการวัดต่อหรือไม่?</p>
             </>,
-            { title: "มี ALPL ที่ลงทะเบียนแล้ว", okLabel: "Continue" },
+            { title: "มี Part Number ที่ลงทะเบียนแล้ว", okLabel: "Continue" },
           )}
           onGroupConflict={(messages) => dialog.alert(
-            <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ข้อมูล ALPL ในกลุ่มที่ไม่ตรงกัน">
+            <div className="register-alpl-list" tabIndex={0} role="region" aria-label="ข้อมูล Part Number ในกลุ่มที่ไม่ตรงกัน">
               {messages.map((message, i) => <div key={i}>• {message}</div>)}
             </div>,
             { title: "ข้อมูลชิ้นงานในกลุ่มไม่ตรงกัน", okLabel: "OK" },

@@ -9,19 +9,19 @@ export type ToleranceOption = ToleranceSpec & { package_size: string };
 
 /** ช่องที่ติ๊กเลือกได้หลายค่า — ลำดับตรงกับ export.html เป๊ะ
  *
- *  ⚠ Package Size ต้องอยู่ "ก่อน" Part Number เพราะต้องเลือกขนาดก่อน แล้วรายการ
- *    Part Number จะถูกกรองตามขนาดที่เลือก (cascade) สลับที่กันแล้วผู้ใช้จะเจอ
- *    ช่อง Part Number ว่างเปล่าโดยไม่รู้ว่าต้องทำอะไรก่อน
+ *  ⚠ Opening ต้องอยู่ "ก่อน" ALPL# เพราะต้องเลือกขนาดก่อน แล้วรายการ
+ *    ALPL# จะถูกกรองตามขนาดที่เลือก (cascade) สลับที่กันแล้วผู้ใช้จะเจอ
+ *    ช่อง ALPL# ว่างเปล่าโดยไม่รู้ว่าต้องทำอะไรก่อน
  */
 export const MULTI_KEYS = [
   { key: "result", label: "Result" },
-  { key: "package_size", label: "Package Size" },
-  { key: "part_number", label: "Part Number" },
-  { key: "handler", label: "Handler" },
-  { key: "operator", label: "Operator" },
+  { key: "package_size", label: "Opening" },
+  { key: "part_number", label: "ALPL#" },
+  { key: "handler", label: "H/L" },
+  { key: "operator", label: "Performed by" },
   { key: "measure_type", label: "Measure Type" },
   { key: "vendor", label: "Vendor" },
-  { key: "owner", label: "Owner" },
+  { key: "owner", label: "Order by" },
 ] as const;
 
 export type MultiKey = (typeof MULTI_KEYS)[number]["key"];
@@ -45,7 +45,7 @@ export const EMPTY_MULTI = Object.fromEntries(
 ) as Record<MultiKey, string[]>;
 
 export const EMPTY_FILTERS: FilterState = {
-  // ค่าเริ่มต้นคือ "เอาเฉพาะการวัดล่าสุดของแต่ละ ALPL" = สถานะปัจจุบัน
+  // ค่าเริ่มต้นคือ "เอาเฉพาะการวัดล่าสุดของแต่ละ Part Number" = สถานะปัจจุบัน
   // ซึ่งเป็นสิ่งที่คนอยากได้บ่อยที่สุด ติ๊กออกถ้าอยากได้ประวัติทุกครั้ง
   latestOnly: true,
   dateFrom: "", dateTo: "", recvFrom: "", recvTo: "",
@@ -53,7 +53,7 @@ export const EMPTY_FILTERS: FilterState = {
   multi: EMPTY_MULTI,
 };
 
-/** ตรวจรูปแบบช่อง ALPL — รับได้ทั้ง 400 / 400,500 / 400-407 / 400-407,500-507
+/** ตรวจรูปแบบช่อง Part Number — รับได้ทั้ง 400 / 400,500 / 400-407 / 400-407,500-507
  *
  *  ต้องเป็น type=text ไม่ใช่ number เพราะต้องพิมพ์ "-" กับ "," ได้
  *  (ตรงกับ _parse_int_ranges ฝั่ง backend)
@@ -107,12 +107,12 @@ interface Props {
   value: FilterState;
   onChange: (next: FilterState) => void;
   options: Record<MultiKey, string[]>;
-  /** catalog part number พร้อม package size — ใช้ cascade กรอง Part Number */
+  /** catalog part number พร้อม package size — ใช้ cascade กรอง ALPL# */
   partNumberCatalog: { part_number_name: string; package_size: string }[];
   toleranceCatalog: ToleranceOption[];
   onClear: () => void;
-  /** error เรื่อง ALPL ที่ backend เป็นคนตรวจเจอ (รูปแบบช่วงบางแบบซับซ้อนกว่าที่
-   *  ฝั่งนี้รู้) — ต้องชี้ที่ช่อง ALPL เหมือนกัน ไม่ใช่ลอยอยู่บรรทัดอื่นให้ผู้ใช้
+  /** error เรื่อง Part Number ที่ backend เป็นคนตรวจเจอ (รูปแบบช่วงบางแบบซับซ้อนกว่าที่
+   *  ฝั่งนี้รู้) — ต้องชี้ที่ช่อง Part Number เหมือนกัน ไม่ใช่ลอยอยู่บรรทัดอื่นให้ผู้ใช้
    *  ไล่หาเองว่าพิมพ์อะไรผิด */
   serverAlplError?: string | null;
   showLatestOnly?: boolean;
@@ -147,7 +147,7 @@ export default function ExportFilters({
   // ของเราตรวจก่อน (ตอบทันทีขณะพิมพ์) ถ้าผ่านค่อยโชว์ของ backend
   const alplError = validateAlpl(value.alpl) ?? serverAlplError ?? null;
 
-  // Part Number ถูกกรองตาม Package Size ที่เลือก — ยังไม่เลือกขนาด = ยังไม่ให้เลือก
+  // ALPL# ถูกกรองตาม Opening ที่เลือก — ยังไม่เลือกขนาด = ยังไม่ให้เลือก
   const pkgSelected = value.multi.package_size;
   const partOptions =
     pkgSelected.length === 0
@@ -176,14 +176,14 @@ export default function ExportFilters({
           onChange={(e) => set("latestOnly", e.target.checked)}
         />
         <span>
-          <strong>เฉพาะการวัดล่าสุดของแต่ละ ALPL</strong>
+          <strong>เฉพาะการวัดล่าสุดของแต่ละ Part Number</strong>
           <small>ติ๊กออกเพื่อเอาประวัติการวัดทุกครั้ง</small>
         </span>
       </label>}
 
       <div className="filters">
         {showMeasureDate && <DateRangeFilter
-          label="Measure Date"
+          label="Performed date"
           from={value.dateFrom}
           to={value.dateTo}
           onChange={(dateFrom, dateTo) => onChange({ ...value, dateFrom, dateTo })}
@@ -197,7 +197,7 @@ export default function ExportFilters({
 
         <div className="fg">
           <label>
-            ALPL <span className="hint">ระบุช่วงได้</span>
+            Part Number <span className="hint">ระบุช่วงได้</span>
           </label>
           <input
             type="text"
@@ -221,10 +221,10 @@ export default function ExportFilters({
             onChange={(next) => setMulti(m.key, next)}
             normalizeQuery={m.key === "package_size" ? normalizePackageSize : undefined}
             entryStyle
-            hint={m.key === "part_number" ? "เลือก Package Size ก่อน" : undefined}
+            hint={m.key === "part_number" ? "เลือก Opening ก่อน" : undefined}
             emptyText={
               m.key === "part_number" && pkgSelected.length === 0
-                ? "เลือก Package Size ก่อน"
+                ? "เลือก Opening ก่อน"
                 : "ไม่มีตัวเลือก"
             }
           />
@@ -232,7 +232,7 @@ export default function ExportFilters({
 
         {advancedVisible && <>
         <div className="fg">
-          <label>PO Number</label>
+          <label>PO#</label>
           {/* ⚠ `type="text"` ไม่ใช่ `type="number"` — number มีลูกศรขึ้น/ลงติดมา
               ซึ่งไม่มีความหมายเลยกับ PO (เลขที่เอกสาร ไม่ใช่ปริมาณที่จะบวกลบ)
               แถมเลื่อนล้อเมาส์ผ่านช่องแล้วค่าเปลี่ยนเองโดยไม่ตั้งใจ
@@ -246,7 +246,7 @@ export default function ExportFilters({
           />
         </div>
         <div className="fg description-filter">
-          <label>Description</label>
+          <label>Desc.</label>
           <input
             type="text"
             placeholder="พิมพ์บางส่วนได้"
@@ -261,8 +261,8 @@ export default function ExportFilters({
             options={[{ value: "__all__", label: "All" }, ...toleranceOptions]}
             value={pkgSelected.length && toleranceOptions.length ? (value.toleranceId || "__all__") : ""}
             onChange={(id) => set("toleranceId", id === "__all__" ? "" : id)}
-            placeholder={pkgSelected.length === 0 ? "เลือก Package Size ก่อน"
-              : toleranceOptions.length === 0 ? "Package Size นี้ยังไม่มี Tolerance" : "All"}
+            placeholder={pkgSelected.length === 0 ? "เลือก Opening ก่อน"
+              : toleranceOptions.length === 0 ? "Opening นี้ยังไม่มี Tolerance" : "All"}
             disabled={pkgSelected.length === 0 || toleranceOptions.length === 0}
             searchable={false}
             showRadio={false}

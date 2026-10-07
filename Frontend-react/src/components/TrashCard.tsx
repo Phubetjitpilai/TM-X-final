@@ -3,6 +3,7 @@ import { useState } from "react";
 import { apiGet, apiPost } from "../api/client";
 import { useToast } from "./Toast";
 import ConfirmDialog from "./ConfirmDialog";
+import { toUiTerms } from "../utils/displayTerms";
 
 export interface TrashItem {
   id: string;
@@ -96,7 +97,7 @@ export default function TrashCard({ readOnly = false, reloadKey = 0, onRestored,
       qc.invalidateQueries({ queryKey: ["session-state"] });
       onRestored?.();   // ให้หน้าแม่โหลดตารางของตัวเองใหม่
     },
-    onError: (e: Error) => toast.show(`กู้คืนไม่สำเร็จ — ${e.message}`),
+    onError: (e: Error) => toast.show(toUiTerms(`กู้คืนไม่สำเร็จ — ${e.message}`)),
   });
 
   const purge = useMutation({
@@ -104,7 +105,7 @@ export default function TrashCard({ readOnly = false, reloadKey = 0, onRestored,
     // ลบถาวรไม่ได้แตะฐานข้อมูลเลย (แถวถูกลบไปตั้งแต่ตอนกดลบครั้งแรกแล้ว
     // ตรงนี้แค่ทิ้งตัวสำรอง) จึงไม่ต้องบอกให้หน้าแม่โหลดตารางใหม่
     onSuccess: () => { toast.show("ลบถาวรแล้ว", undefined, "success"); refetch(); onPurged?.(); },
-    onError: (e: Error) => toast.show(`ลบไม่สำเร็จ — ${e.message}`),
+    onError: (e: Error) => toast.show(toUiTerms(`ลบไม่สำเร็จ — ${e.message}`)),
   });
 
   return (

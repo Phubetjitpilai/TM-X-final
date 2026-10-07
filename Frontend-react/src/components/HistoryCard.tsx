@@ -36,12 +36,12 @@ interface HistoryItem {
 
 const TABLES = [
   ["", "Every Table"], ["parts", "Parts"], ["measurements", "Measurements"],
-  ["package_size", "Package Size"],
-  ["package_size_handler_template", "Package Handler Template"],
-  ["package_size_tolerance", "Package Tolerance"],
-  ["part_number", "Part Number"],
-  ["operator", "Operator"], ["owner", "Owner"], ["vendor", "Vendor"],
-  ["handler", "Handler"], ["template", "Template"],
+  ["package_size", "Opening"],
+  ["package_size_handler_template", "Opening H/L Template"],
+  ["package_size_tolerance", "Opening Tolerance"],
+  ["part_number", "ALPL#"],
+  ["operator", "Performed by"], ["owner", "Order by"], ["vendor", "Vendor"],
+  ["handler", "H/L"], ["template", "Template"],
 ] as const;
 
 // History เก็บ table_name เป็นรหัสฐานข้อมูล แต่ชื่อที่แสดงต้องตรงกับเมนูในเว็บ

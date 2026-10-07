@@ -11,6 +11,16 @@ from shared import *  # noqa: F401,F403
 router = APIRouter()
 
 
+_EXPORT_EMPTY_VALUE = "NA"
+
+
+def _export_display_value(value: Any) -> Any:
+    """Use one visible marker for missing exported data without changing real zeroes."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return _EXPORT_EMPTY_VALUE
+    return value
+
+
 def _csv_header(key: str) -> str:
     """หัวคอลัมน์ในไฟล์ CSV — ใช้ csv_label ถ้ามี ไม่มีก็ใช้ label ตามปกติ
 
@@ -41,7 +51,7 @@ def list_export_columns(kind: str = "csv"):
     for k, c in EXPORT_COLUMNS.items():
         if c.get("scope") not in (None, _columns_scope(kind)):
             continue
-        item = {"key": k, "label": c["label"], "group": c["group"]}
+        item = {"key": k, "label": _csv_header(k) if _columns_scope(kind) == "csv" else c["label"], "group": c["group"]}
         if c.get("block"):
             # แนบ values ของ "ลูก" ในบล็อกไปด้วย (value_x/value_y ก็ตั้งหน้าตา
             # แยกตามค่าได้เหมือน Result) — ลูกไม่ได้อยู่ใน catalog เป็นตัวของตัวเอง
@@ -92,16 +102,54 @@ def _get_template(cur, export_template_id: int) -> Dict[str, Any]:
         raise HTTPException(404, "ไม่พบเทมเพลตนี้")
     return row
 
+_REPORT_HEADER_RENAMES = {
+    "number_alpl": {"ALPL": "Part Number", "Number ALPL": "Part Number"},
+    "part_number": {"Part Number": "ALPL#"},
+    "value_x": {"Value X": "Measuring_X"},
+    "value_y": {"Value Y": "Measuring_Y"},
+    "nominal_x": {"Nominal X": "Nominal_X"},
+    "nominal_y": {"Nominal Y": "Nominal_Y"},
+    "upper_tol": {"Upper Tol": "USL", "Upper Tolerance": "USL"},
+    "lower_tol": {"Lower Tol": "LSL", "Lower Tolerance": "LSL"},
+    "operator": {"Operator": "Performed by"},
+    "timestamp": {"Date": "Performed date", "Time": "Performed time", "Date & Time": "Performed date & time", "Timestamp": "Performed date", "Measure Date": "Performed date"},
+    "handler": {"Handler": "H/L"},
+    "package_size": {"Package Size": "Opening"},
+    "offset_opx": {"Offset X": "Offset_X"},
+    "offset_opy": {"Offset Y": "Offset_Y"},
+    "offset_pos_op": {"Offset Position": "Opening shift"},
+    "offset": {"Offset Tolerance": "Centering Offset"},
+    "owner": {"Owner": "Order by"},
+    "po_number": {"PO Number": "PO#"},
+    "description": {"Description": "Desc."},
+}
+
+
+def _upgrade_report_layout_labels(layout: Dict[str, Any]) -> Dict[str, Any]:
+    """Rename only legacy automatic headers; preserve user-entered custom text."""
+    for row in layout.get("grid") or []:
+        for cell in row or []:
+            if not isinstance(cell, dict):
+                continue
+            key = cell.get("hdr")
+            renames = _REPORT_HEADER_RENAMES.get(key)
+            if renames and cell.get("v") in renames:
+                cell["v"] = renames[cell["v"]]
+    return layout
+
+
 def _parse_layout(raw):
     """แปลง layout_json จาก DB (str หรือ dict) เป็น dict — None ถ้าไม่มี/พัง"""
     if raw is None:
         return None
     if isinstance(raw, str):
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except Exception:
             return None
-    return raw if isinstance(raw, dict) else None
+    else:
+        parsed = raw
+    return _upgrade_report_layout_labels(parsed) if isinstance(parsed, dict) else None
 
 @router.get("/api/export/templates")
 def list_export_templates(kind: str = "csv"):
@@ -495,7 +543,7 @@ def _fetch_export_rows(cols: List[str], where: str, params: list, limit: Optiona
             rows = cur.fetchall()
     finally:
         db.close()
-    data = [[EXPORT_COLUMNS[c]["get"](r) for c in cols] for r in rows]
+    data = [[_export_display_value(EXPORT_COLUMNS[c]["get"](r)) for c in cols] for r in rows]
     return data, total
 
 
@@ -620,7 +668,7 @@ def _render_report(layout: Dict[str, Any], rows: List[Dict[str, Any]], *, excel:
         out = []
         for cell in tpl_row(r):
             if cell.get("spec"):
-                out.append(_cell_out(cell, spec_text))
+                out.append(_cell_out(cell, str(_export_display_value(spec_text))))
             elif cell.get("f"):
                 out.append(_cell_out(cell, ""))
             else:
@@ -647,6 +695,8 @@ def _render_report(layout: Dict[str, Any], rows: List[Dict[str, Any]], *, excel:
             else:
                 text = cell.get("v") or ""
 
+            if col:
+                text = _export_display_value(text)
             c = _cell_out(cell, str(text))
             if excel and col and col.get("row_number"):
                 c["xlsx_value"] = item_no
@@ -858,7 +908,7 @@ def export_selection_rows(
         "max_texts": max_texts,
         "items": [
             {"measurement_id": r["measurement_id"], "number_alpl": r["number_alpl"],
-             "values": [offset + index + 1 if c == "item" else EXPORT_COLUMNS[c]["get"](r)
+             "values": [offset + index + 1 if c == "item" else _export_display_value(EXPORT_COLUMNS[c]["get"](r))
                         for c in cols]}
             for index, r in enumerate(rows)
         ],

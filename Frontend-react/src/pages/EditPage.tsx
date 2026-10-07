@@ -8,6 +8,7 @@ import HistoryCard from "../components/HistoryCard";
 import SingleSelect from "../components/SingleSelect";
 import { normalizePackageSize } from "../utils/packageSize";
 import { toleranceLabel } from "../utils/toleranceLabel";
+import { toUiTerms } from "../utils/displayTerms";
 import { axisValue, offsetValue, xyPair, DP_MM, DP_OFF } from "../components/measurementCells";
 import { useSessionState } from "../hooks/useSessionState";
 import { useSSE } from "../hooks/useSSE";
@@ -86,7 +87,7 @@ interface Measurement {
    *  สีแดงทั้งที่คอลัมน์ Result บอก OK · `null` = ตัดสินไม่ได้ ไม่ใช่ไม่ผ่าน */
   ok_x?: boolean | null;
   ok_y?: boolean | null;
-  /** แยกรายแกน — ใช้ระบายสีช่องตัวเลข Offset X / Y */
+  /** แยกรายแกน — ใช้ระบายสีช่องตัวเลข Offset_X / Y */
   ok_opx?: boolean | null;
   ok_opy?: boolean | null;
   /** ⚠ ผลรวมของทั้ง 2 แกน — ห้ามเอาไประบายสีช่องรายแกน (ใช้ ok_opx/ok_opy แทน) */
@@ -118,11 +119,11 @@ function pageInfoText(page: number, total: number, count: number): string {
 }
 
 function errMsg(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
+  return toUiTerms(err instanceof ApiError ? err.message : fallback);
 }
 
 /** 1 ช่องในกล่องค่า read-only (label เล็กจางอยู่บน ค่าอยู่ล่าง) — ใช้ทั้งกล่อง
- *  "ค่าที่ผูกมากับ Part Number" ของฟอร์ม Part และ "ข้อมูลของรายการนี้" ของฟอร์ม
+ *  "ค่าที่ผูกมากับ ALPL#" ของฟอร์ม Part และ "ข้อมูลของรายการนี้" ของฟอร์ม
  *  Measurement เพราะต้นฉบับใช้หน้าตาเดียวกันทั้งคู่ */
 function DerivedCell({ label, value }: { label: string; value: string }) {
   return (
@@ -239,7 +240,7 @@ export default function EditPage() {
   const [alertText, setAlertText] = useState<string | null>(null);
 
   // ── ฟอร์ม Part: ช่องที่ต้อง cascade กันจึงคุมด้วย state (ที่เหลืออ่านจาก FormData)
-  //    Package Size → กำหนดตัวเลือก Part Number และ Tolerance
+  //    Opening → กำหนดตัวเลือก ALPL# และ Tolerance
   const [pkgValue, setPkgValue] = useState("");
   const [toleranceValue, setToleranceValue] = useState("");
   const [pnValue, setPnValue] = useState("");
@@ -428,7 +429,7 @@ export default function EditPage() {
     setEditContext({ table: "parts", mode, key: partId, original: part });
     setFieldErrors({});
     setAlplNoteConsumed(false);
-    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — Part Number กรองจาก catalog ใน Query
+    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — ALPL# กรองจาก catalog ใน Query
     setPkgValue(String(part?.package_size ?? ""));
     setToleranceValue(String(part?.tolerance_id ?? ""));
     setPnValue(String(part?.part_number ?? ""));
@@ -437,7 +438,7 @@ export default function EditPage() {
     setOwnerValue(String(part?.owner ?? ""));
   }
 
-  // Package Size → Part Number: กรองจาก catalog ที่โหลดไว้แล้ว ไม่ยิง request
+  // Opening → ALPL#: กรองจาก catalog ที่โหลดไว้แล้ว ไม่ยิง request
   // ทุกครั้งที่เปลี่ยนขนาด และยังคงค่าเดิมไว้ระหว่างที่ catalog โหลดครั้งแรก
   useEffect(() => {
     if (editContext.table !== "parts" || !lookups.partNumbersLoaded) return;
@@ -473,27 +474,27 @@ export default function EditPage() {
     if (numberAlplRaw === "" || !Number.isInteger(nAlpl) || nAlpl <= 0) {
       errors.number_alpl = "ต้องเป็นเลขจำนวนเต็มบวก";
     } else if (partsData.some((p) => p.number_alpl === nAlpl && p.package_size === pkgValue.trim() && p.part_id !== editContext.key)) {
-      errors.number_alpl = `ALPL ${nAlpl} กับ Package Size นี้มีอยู่ในตารางแล้ว`;
+      errors.number_alpl = `Part Number ${nAlpl} กับ Opening นี้มีอยู่ในตารางแล้ว`;
     }
 
-    /* บังคับกรอกแค่ **ALPL กับ Package Size** เท่านั้น (ตอน Add) — ที่เหลือ
+    /* บังคับกรอกแค่ **Part Number กับ Opening** เท่านั้น (ตอน Add) — ที่เหลือ
        เว้นว่างได้หมด และตอน Edit ไม่บังคับอะไรเลย
 
-       ทำไม Package Size ยังบังคับ: มันเป็น **แหล่งเกณฑ์ตัดสิน OK/NG เดียว
-       ของทั้งระบบ** ทุกโหมด (ดู `_load_criteria` ใน shared.py) — ALPL ที่ไม่มี
+       ทำไม Opening ยังบังคับ: มันเป็น **แหล่งเกณฑ์ตัดสิน OK/NG เดียว
+       ของทั้งระบบ** ทุกโหมด (ดู `_load_criteria` ใน shared.py) — Part Number ที่ไม่มี
        package_size จะวัดไม่ได้เลย กด Start แล้วเด้ง 404 "หาเกณฑ์ตัดสินไม่เจอ"
-       และมันยังเป็นตัวกรอง catalog ของ Part Number ที่เลือกได้ด้วย
+       และมันยังเป็นตัวกรอง catalog ของ ALPL# ที่เลือกได้ด้วย
 
        ทำไมตัวอื่นไม่บังคับ: ทุกคอลัมน์ใน `parts_specifications` ยอมให้เป็น NULL
-       (ดู init.sql) และการลงทะเบียนแบบ IPM ก็มีแค่ ALPL + Package Size อยู่แล้ว
+       (ดู init.sql) และการลงทะเบียนแบบ IPM ก็มีแค่ Part Number + Opening อยู่แล้ว
        — ฟอร์มนี้จึงไม่ควรเข้มกว่าเส้นทางที่ระบบใช้จริง
 
-       ⚠ Part Number ว่าง = ไม่มี Handler/Template มาให้อัตโนมัติ ต้องเลือกเอง
+       ⚠ ALPL# ว่าง = ไม่มี Handler/Template มาให้อัตโนมัติ ต้องเลือกเอง
          (ถ้าเว้นทั้งคู่ Part นั้นจะไม่มีเครื่องผูกอยู่ ซึ่งจะหลุดจากรายงานที่
           จัดกลุ่มตาม Handler) */
-    if (!pkgValue.trim()) errors.package_size = "เลือก Package Size";
+    if (!pkgValue.trim()) errors.package_size = "เลือก Opening";
     if (!toleranceCatalog.some((t) => t.package_size === pkgValue.trim() && String(t.tolerance_id) === toleranceValue)) {
-      errors.tolerance_id = "เลือก Tolerance ที่ตรงกับ Package Size";
+      errors.tolerance_id = "เลือก Tolerance ที่ตรงกับ Opening";
     }
 
     if (Object.keys(errors).length > 0) {
@@ -504,9 +505,9 @@ export default function EditPage() {
 
     /* ⚠ คอมเมนต์เดิมตรงนี้บอกว่า "ไม่มี handler ใน record เพราะ backend derive
        จาก part_number ให้เอง" — **ตกรุ่นแล้ว** ตอนนี้ parts_specifications เก็บ
-       handler_id ของตัวเอง เพราะ "ALPL ตัวนี้อยู่บนเครื่องไหน" เป็นข้อเท็จจริง
-       ของ ALPL ไม่ใช่ของ catalog (part เดียวกันอาจมี ALPL อยู่คนละเครื่อง)
-       ฝั่ง backend อ่านด้วย COALESCE(ของ ALPL, ของ part_number) เสมอ */
+       handler_id ของตัวเอง เพราะ "Part Number ตัวนี้อยู่บนเครื่องไหน" เป็นข้อเท็จจริง
+       ของ Part Number ไม่ใช่ของ catalog (part เดียวกันอาจมี Part Number อยู่คนละเครื่อง)
+       ฝั่ง backend อ่านด้วย COALESCE(ของ Part Number, ของ part_number) เสมอ */
     const record: Record<string, unknown> = {
       number_alpl: nAlpl,
       part_number: pnValue,
@@ -532,7 +533,7 @@ export default function EditPage() {
     try {
       if (isAdd) await apiPost("/api/parts", record);
       else await apiPatch(`/api/parts/${editContext.key}`, record);
-      toast.show(isAdd ? `เพิ่ม ALPL ${nAlpl} สำเร็จ` : `บันทึก ALPL ${nAlpl} สำเร็จ`, undefined, "success");
+      toast.show(isAdd ? `เพิ่ม Part Number ${nAlpl} สำเร็จ` : `บันทึก Part Number ${nAlpl} สำเร็จ`, undefined, "success");
       bumpHistory();
       await reloadPartsAfterMutation(nAlpl);
       closeEditModal();
@@ -542,14 +543,14 @@ export default function EditPage() {
   }
 
   function confirmDeletePart(partId: number, numberAlpl: number) {
-    // ลบ Part ได้ต่อเมื่อ ALPL นี้ไม่มี Session/Measurement เหลืออยู่เลยเท่านั้น —
+    // ลบ Part ได้ต่อเมื่อ Part Number นี้ไม่มี Session/Measurement เหลืออยู่เลยเท่านั้น —
     // FK เป็น RESTRICT (ไม่มีโหมด cascade ตามที่ตกลงกันว่า "เก็บประวัติไว้เหมือนเดิม")
     // ถ้ายังมีประวัติอยู่ backend ปฏิเสธด้วย 409 พร้อมบอกจำนวนที่ติดอยู่ → เอาข้อความ
     // นั้นมาเด้งเป็น alert ให้เห็นชัด ไม่ใช่ toast ที่หายไปเองก่อนอ่านทัน
     setConfirmState({
       message: (
         <>
-          ลบ Part <strong>ALPL {numberAlpl}</strong> ออกจากตารางใช่ไหม?
+          ลบ Part <strong>Part Number {numberAlpl}</strong> ออกจากตารางใช่ไหม?
         </>
       ),
       onConfirm: async () => {
@@ -559,7 +560,7 @@ export default function EditPage() {
           await reloadPartsAfterMutation();
           bumpTrash();
           closeEditModal();
-          toast.show(`ลบ ALPL ${numberAlpl} สำเร็จ`, undefined, "success");
+          toast.show(`ลบ Part Number ${numberAlpl} สำเร็จ`, undefined, "success");
         } catch (err) {
           setAlertText(errMsg(err, "ลบ Part ไม่สำเร็จ"));
         }
@@ -582,7 +583,7 @@ export default function EditPage() {
     if (numberAlplRaw === "" || !Number.isInteger(nAlpl) || nAlpl <= 0) {
       errors.number_alpl = "ต้องเป็นเลขจำนวนเต็มบวก";
     } else if (!partsData.some((p) => p.number_alpl === nAlpl)) {
-      errors.number_alpl = `ALPL ${nAlpl} ยังไม่ได้ลงทะเบียนในตาราง Parts`;
+      errors.number_alpl = `Part Number ${nAlpl} ยังไม่ได้ลงทะเบียนในตาราง Parts`;
     }
 
     const originalMeasurement = editContext.original as Measurement | null;
@@ -591,7 +592,7 @@ export default function EditPage() {
     const candidates = partsData.filter((p) => p.number_alpl === nAlpl);
     const selectedPartId = samePart ?? (candidates.length === 1 ? candidates[0].part_id : null);
     if (!errors.number_alpl && selectedPartId == null) {
-      errors.number_alpl = `ALPL ${nAlpl} มีหลาย Package Size — ต้องเลือก Part ให้ชัดเจนก่อนแก้ผลวัด`;
+      errors.number_alpl = `Part Number ${nAlpl} มีหลาย Opening — ต้องเลือก Part ให้ชัดเจนก่อนแก้ผลวัด`;
     }
 
     let sessionId: number | null = null;
@@ -600,7 +601,7 @@ export default function EditPage() {
       sessionId = existing?.session_id ?? null;
     }
 
-    // ตอน Edit แก้ได้เฉพาะ ALPL กับ Operator เท่านั้น — ช่อง Value X/Y และ Note
+    // ตอน Edit แก้ได้เฉพาะ Part Number กับ Performed by เท่านั้น — ช่อง Measuring_X / Measuring_Y และ Note
     // ถูกย้ายไปอยู่ในกล่อง 🔒 read-only แล้ว (ผลการวัดจริงจากเครื่อง แก้ย้อนหลังไม่ได้)
     let valueX: number | undefined;
     let valueY: number | undefined;
@@ -608,14 +609,14 @@ export default function EditPage() {
     if (!isEdit) {
       const vx = get("value_x");
       const vy = get("value_y");
-      if (vx === "" || isNaN(Number(vx))) errors.value_x = "กรอก Value X เป็นตัวเลข";
-      if (vy === "" || isNaN(Number(vy))) errors.value_y = "กรอก Value Y เป็นตัวเลข";
+      if (vx === "" || isNaN(Number(vx))) errors.value_x = "กรอก Measuring_X เป็นตัวเลข";
+      if (vy === "" || isNaN(Number(vy))) errors.value_y = "กรอก Measuring_Y เป็นตัวเลข";
       valueX = Number(vx);
       valueY = Number(vy);
     } else {
       // operator_id ใน DB เป็น NOT NULL — เว้นว่างไม่ได้
       operator = get("operator");
-      if (!operator) errors.operator = "เลือก Operator";
+      if (!operator) errors.operator = "เลือก Performed by";
     }
 
     if (Object.keys(errors).length > 0) {
@@ -624,7 +625,7 @@ export default function EditPage() {
       return;
     }
 
-    // ไม่ส่ง result — backend คำนวณ OK/NG ใหม่เองเสมอจาก value + tolerance ของ ALPL ที่เลือก
+    // ไม่ส่ง result — backend คำนวณ OK/NG ใหม่เองเสมอจาก value + tolerance ของ Part Number ที่เลือก
     const payload: Record<string, unknown> = isEdit
       ? { session_id: sessionId, number_alpl: nAlpl, part_id: selectedPartId, operator }
       : { session_id: sessionId, number_alpl: nAlpl, part_id: selectedPartId, value_x: valueX, value_y: valueY, note: get("note") || null };
@@ -699,7 +700,7 @@ export default function EditPage() {
       <section className="card">
         <div className="card-header">
           <div className="card-title">
-            ALPL Profile <span className="count">({partsTotal})</span>
+            Part Number Profile <span className="count">({partsTotal})</span>
           </div>
           <button type="button" className="btn-add" disabled={sessionRunning} onClick={() => openPartModal("add")}>
             + Add Part
@@ -721,40 +722,40 @@ export default function EditPage() {
               <tr>
                 {/* ⚠ `th-derived` (มีกุญแจ 🔒 ต่อท้าย + สีจาง) = คอลัมน์ read-only ที่
                     ระบบ derive มาให้ แก้ที่ตารางนี้ไม่ได้
-                    มี 4 ตัว: Template · Nominal X/Y · Tol (+/-) · Offset Tol
-                    ทั้งหมดมาจาก `package_size` ที่ ALPL ตัวนี้ผูกอยู่ (ดู PARTS_SELECT)
-                    จะแก้ค่าพวกนี้ต้องไปที่การ์ด Lookup Tables › Package Size
+                    มี 4 ตัว: Template · Nominal_X / Nominal_Y · USL / LSL · Centering Offset
+                    ทั้งหมดมาจาก `package_size` ที่ Part Number ตัวนี้ผูกอยู่ (ดู PARTS_SELECT)
+                    จะแก้ค่าพวกนี้ต้องไปที่การ์ด Lookup Tables › Opening
                     ย้ายมาจากตาราง Measurements เพราะเป็นสเปกของ "ชิ้นงาน"
                     ไม่ใช่ของ "การวัดครั้งนั้น"
 
                     ⚠ **Handler ไม่ใช่ derived แล้ว** — `parts_specifications` เก็บ
                       `handler_id` ของตัวเอง และฟอร์มมี dropdown ให้แก้ได้จริง
-                      (ค่าที่โชว์คือ COALESCE ของ ALPL ก่อน ถ้าไม่มีค่อยของ part_number) */}
+                      (ค่าที่โชว์คือ COALESCE ของ Part Number ก่อน ถ้าไม่มีค่อยของ part_number) */}
                 <th>Part ID</th>
-                <th>ALPL</th>
                 <th>Part Number</th>
-                <th>Handler</th>
-                <th>Package Size</th>
+                <th>ALPL#</th>
+                <th>H/L</th>
+                <th>Opening</th>
                 <th>Tolerance ID</th>
                 <th className="th-derived">Template</th>
-                <th className="th-derived">Nominal X / Y</th>
-                <th className="th-derived">Tol (+/-)</th>
-                <th className="th-derived">Offset Tol</th>
+                <th className="th-derived">Nominal_X / Nominal_Y</th>
+                <th className="th-derived">USL / LSL</th>
+                <th className="th-derived">Centering Offset</th>
                 <th>Vendor</th>
-                <th>Owner</th>
-                <th>PO Number</th>
-                <th>Description</th>
+                <th>Order by</th>
+                <th>PO#</th>
+                <th>Desc.</th>
                 <th>Receive Date</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {validateAlpl(partsFilters.alpl) ? (
-                <tr className="empty-row"><td colSpan={16}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+                <tr className="empty-row"><td colSpan={16}>กรุณาแก้รูปแบบ Part Number ในตัวกรอง</td></tr>
               ) : partsFilterPending || partsQuery.isPending ? (
-                <tr className="empty-row"><td colSpan={16}>กำลังโหลด ALPL Profile...</td></tr>
+                <tr className="empty-row"><td colSpan={16}>กำลังโหลด Part Number Profile...</td></tr>
               ) : partsQuery.isError ? (
-                <tr className="empty-row"><td colSpan={16}>โหลด ALPL Profile ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
+                <tr className="empty-row"><td colSpan={16}>โหลด Part Number Profile ไม่สำเร็จ กำลังลองใหม่อีกครั้ง</td></tr>
               ) : partsData.length === 0 ? (
                 <tr className="empty-row">
                   <td colSpan={16}>{hasAnyFilter(partsFilters) ? "ไม่พบ Part ที่ตรงกับตัวกรอง" : "ยังไม่มีข้อมูล Parts"}</td>
@@ -860,32 +861,32 @@ export default function EditPage() {
                     เปิดจากหน้า Home ซึ่งกดแถวแล้วมีรายงานเต็มให้อยู่แล้ว
                     ถ้าแก้ที่นี่ต้องไปแก้อีกฝั่งด้วย ไม่งั้นสองหน้าจะเล่าคนละเรื่อง
 
-                    🔒 = แก้ไม่ได้ · แก้ได้เฉพาะ ALPL กับ Operator เท่านั้น
+                    🔒 = แก้ไม่ได้ · แก้ได้เฉพาะ Part Number กับ Performed by เท่านั้น
                     (ค่าที่วัดมาจริงกับข้อมูลของ session แก้ย้อนหลังไม่ได้) */}
                 <th className="th-derived">ID</th>
                 <th className="th-derived">Session</th>
-                <th>ALPL</th>
-                {/* เกณฑ์ตัดสิน (Nominal / Tol / Offset Tol) ย้ายไปอยู่ตาราง Parts
+                <th>Part Number</th>
+                {/* เกณฑ์ตัดสิน (Nominal / Tol / Centering Offset) ย้ายไปอยู่ตาราง Parts
                     ด้านบนแล้ว — เป็นสเปกของ "ชิ้นงาน" ไม่ใช่ของ "การวัดครั้งนั้น"
-                    ค่ายังถูกดึงมาใน MEASUREMENTS_SELECT อยู่ เพราะ Value X/Y กับ
-                    Offset X/Y ใช้มันระบายสีว่าเกินสเปกไหม (ดู axisValue/offsetValue)
+                    ค่ายังถูกดึงมาใน MEASUREMENTS_SELECT อยู่ เพราะ Measuring_X / Measuring_Y กับ
+                    Offset_X / Offset_Y ใช้มันระบายสีว่าเกินสเปกไหม (ดู axisValue/offsetValue)
                     ถ้าอยากดูเกณฑ์ที่ใช้ตอนวัดจริงย้อนหลัง ดูได้จาก Export CSV */}
-                <th className="th-derived">Value X/Y</th>
-                <th className="th-derived">Offset X/Y</th>
+                <th className="th-derived">Measuring_X / Measuring_Y</th>
+                <th className="th-derived">Offset_X / Offset_Y</th>
                 {/* ทิศที่เยื้อง — รหัส 9 ค่าที่ backend คำนวณให้ (ดู `_get_min_position_label`)
-                    เงื่อนไขเดียวกับ Offset X/Y คือ IPM ขึ้น "—" ทั้งคอลัมน์ */}
-                <th className="th-derived">Offset Position</th>
+                    เงื่อนไขเดียวกับ Offset_X / Offset_Y คือ IPM ขึ้น "—" ทั้งคอลัมน์ */}
+                <th className="th-derived">Opening shift</th>
                 <th className="th-derived">Result</th>
                 <th className="th-derived">Note</th>
-                <th>Operator</th>
+                <th>Performed by</th>
                 <th className="th-derived">Measure Type</th>
-                <th className="th-derived">Timestamp</th>
+                <th className="th-derived">Performed date</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {validateAlpl(measFilters.alpl) ? (
-                <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ ALPL ในตัวกรอง</td></tr>
+                <tr className="empty-row"><td colSpan={12}>กรุณาแก้รูปแบบ Part Number ในตัวกรอง</td></tr>
               ) : measFilterPending || measurementsQuery.isPending ? (
                 <tr className="empty-row"><td colSpan={12}>กำลังโหลด Measurement History...</td></tr>
               ) : measurementsQuery.isError ? (
@@ -1025,7 +1026,7 @@ export default function EditPage() {
             <div className="card-title">
               {editContext.table === "parts"
                 ? isEdit
-                  ? `Edit Part — ALPL ${editContext.key}`
+                  ? `Edit Part — Part Number ${editContext.key}`
                   : "Add New Part"
                 : editContext.table === "measurements"
                   ? isEdit
@@ -1043,7 +1044,7 @@ export default function EditPage() {
                 <>
                   <div className="form-group">
                     <label htmlFor="f-number_alpl">
-                      ALPL <span className="req">*</span>
+                      Part Number <span className="req">*</span>
                     </label>
                     <input type="number" id="f-number_alpl" name="number_alpl" defaultValue={pv("number_alpl") || editContext.key || ""} />
                     <div className="field-error">
@@ -1051,49 +1052,49 @@ export default function EditPage() {
                         fieldErrors.number_alpl
                       ) : isEdit && !alplNoteConsumed ? (
                         <span className="field-locked-note">
-                          แก้ ALPL ได้ — ระวัง: ถ้า ALPL นี้มีประวัติ session/measurement ผูกอยู่แล้ว การเปลี่ยนจะถูก DB ปฏิเสธ (FK constraint)
+                          แก้ Part Number ได้ — ระวัง: ถ้า Part Number นี้มีประวัติ session/measurement ผูกอยู่แล้ว การเปลี่ยนจะถูก DB ปฏิเสธ (FK constraint)
                         </span>
                       ) : null}
                     </div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="f-package_size">Package Size {reqMark}</label>
+                    <label htmlFor="f-package_size">Opening {reqMark}</label>
                     <SingleSelect
                       id="f-package_size"
-                      label="Package Size"
+                      label="Opening"
                       options={packageSizeOptions}
                       value={pkgValue}
                       onChange={(value) => { setPkgValue(value); setToleranceValue(""); setPnValue(""); }}
-                      placeholder="เลือก Package Size"
+                      placeholder="เลือก Opening"
                       normalizeQuery={normalizePackageSize}
                       invalid={!!fieldErrors.package_size}
                     />
                     <div className="field-error">{fieldErrors.package_size}</div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="f-part_number">Part Number</label>
-                    {/* disabled จนกว่าจะมี Package Size ที่หา Part Number เจอ —
-                        เลือกก่อนไม่ได้เพราะ catalog ของ Part Number ผูกกับ
-                        Package Size อยู่ (ดู schema part_number) */}
+                    <label htmlFor="f-part_number">ALPL#</label>
+                    {/* disabled จนกว่าจะมี Opening ที่หา ALPL# เจอ —
+                        เลือกก่อนไม่ได้เพราะ catalog ของ ALPL# ผูกกับ
+                        Opening อยู่ (ดู schema part_number) */}
                     <SingleSelect
                       id="f-part_number"
-                      label="Part Number"
+                      label="ALPL#"
                       options={pnOptions}
                       value={pnValue}
                       disabled={pnOptions.length === 0}
                       onChange={setPnValue}
-                      placeholder={!pkgValue.trim() ? "เลือก Package Size ก่อน" : "เลือก Part Number"}
-                      emptyText="Package Size นี้ยังไม่มี Part Number"
+                      placeholder={!pkgValue.trim() ? "เลือก Opening ก่อน" : "เลือก ALPL#"}
+                      emptyText="Opening นี้ยังไม่มี ALPL#"
                       invalid={!!fieldErrors.part_number}
                     />
                     <div className="field-error">{fieldErrors.part_number}</div>
                   </div>
-                  {/* Handler — เลือกได้เอง ไม่ผูกกับ Part Number แล้ว
-                      (ALPL ตัวเดียวกันย้ายเครื่องได้ ส่วน part_number เป็นแค่แคตตาล็อก)
+                  {/* Handler — เลือกได้เอง ไม่ผูกกับ ALPL# แล้ว
+                      (Part Number ตัวเดียวกันย้ายเครื่องได้ ส่วน part_number เป็นแค่แคตตาล็อก)
                       เว้นว่างได้ = ยังไม่ระบุ */}
                   <div className="form-group">
-                    <label htmlFor="f-handler">Handler</label>
-                    <SingleSelect id="f-handler" label="Handler"
+                    <label htmlFor="f-handler">H/L</label>
+                    <SingleSelect id="f-handler" label="H/L"
                       options={[{ value: "", label: "ยังไม่ระบุ" }, ...handlerOptions]}
                       value={handlerValue} onChange={setHandlerValue}
                       placeholder="ยังไม่ระบุ" invalid={!!fieldErrors.handler}
@@ -1109,7 +1110,7 @@ export default function EditPage() {
                       }))}
                       value={toleranceValue} onChange={setToleranceValue}
                       disabled={!pkgValue.trim()}
-                      placeholder={pkgValue.trim() ? "เลือก Tolerance" : "เลือก Package Size ก่อนถึงจะเลือก Tolerance ได้"}
+                      placeholder={pkgValue.trim() ? "เลือก Tolerance" : "เลือก Opening ก่อนถึงจะเลือก Tolerance ได้"}
                       invalid={!!fieldErrors.tolerance_id}
                       searchable={false} showRadio={false} />
                     <div className="field-error">{fieldErrors.tolerance_id}</div>
@@ -1124,22 +1125,22 @@ export default function EditPage() {
                     <div className="field-error">{fieldErrors.vendor}</div>
                   </div>
                   <div className="form-group span-2">
-                    <label htmlFor="f-description">Description</label>
+                    <label htmlFor="f-description">Desc.</label>
                     <input type="text" id="f-description" name="description" defaultValue={pv("description")} />
                     <div className="field-error">{fieldErrors.description}</div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="f-po_number">PO Number</label>
+                    <label htmlFor="f-po_number">PO#</label>
                     <input type="number" id="f-po_number" name="po_number" defaultValue={pv("po_number")}
                       onWheel={(e) => e.currentTarget.blur()} />
                     <div className="field-error">{fieldErrors.po_number}</div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="f-owner">Owner</label>
-                    <SingleSelect id="f-owner" label="Owner"
+                    <label htmlFor="f-owner">Order by</label>
+                    <SingleSelect id="f-owner" label="Order by"
                       options={[{ value: "", label: "ยังไม่ระบุ" }, ...ownerOptions]}
                       value={ownerValue} onChange={setOwnerValue}
-                      placeholder="เลือก Owner" searchable={false} showRadio={false} />
+                      placeholder="เลือก Order by" searchable={false} showRadio={false} />
                     <input type="hidden" name="owner" value={ownerValue} />
                     <div className="field-error">{fieldErrors.owner}</div>
                   </div>
@@ -1166,7 +1167,7 @@ export default function EditPage() {
                 <>
                   <div className="form-group">
                     <label htmlFor="f-number_alpl">
-                      ALPL <span className="req">*</span>
+                      Part Number <span className="req">*</span>
                     </label>
                     <input type="number" id="f-number_alpl" name="number_alpl" defaultValue={mv("number_alpl")} />
                     <div className="field-error">
@@ -1174,7 +1175,7 @@ export default function EditPage() {
                         fieldErrors.number_alpl
                       ) : isEdit && !alplNoteConsumed ? (
                         <span className="field-locked-note">
-                          แก้ ALPL ได้ — ใช้กรณี IPM เลือกชิ้นที่มีอยู่จริงผิดตัว (ต้องเป็น ALPL ที่ลงทะเบียนใน Parts แล้ว)
+                          แก้ Part Number ได้ — ใช้กรณี IPM เลือกชิ้นที่มีอยู่จริงผิดตัว (ต้องเป็น Part Number ที่ลงทะเบียนใน Parts แล้ว)
                         </span>
                       ) : null}
                     </div>
@@ -1183,14 +1184,14 @@ export default function EditPage() {
                     <>
                       <div className="form-group">
                         <label htmlFor="f-value_x">
-                          Value X (mm) <span className="req">*</span>
+                          Measuring_X (mm) <span className="req">*</span>
                         </label>
                         <input type="number" step="0.001" id="f-value_x" name="value_x" defaultValue={mv("value_x")} />
                         <div className="field-error">{fieldErrors.value_x}</div>
                       </div>
                       <div className="form-group">
                         <label htmlFor="f-value_y">
-                          Value Y (mm) <span className="req">*</span>
+                          Measuring_Y (mm) <span className="req">*</span>
                         </label>
                         <input type="number" step="0.001" id="f-value_y" name="value_y" defaultValue={mv("value_y")} />
                         <div className="field-error">{fieldErrors.value_y}</div>
@@ -1201,12 +1202,12 @@ export default function EditPage() {
                     <>
                       <div className="form-group">
                         <label htmlFor="f-operator">
-                          Operator <span className="req">*</span>
+                          Performed by <span className="req">*</span>
                         </label>
-                        <SingleSelect id="f-operator" label="Operator"
+                        <SingleSelect id="f-operator" label="Performed by"
                           options={operatorOptions}
                           value={measOperatorValue} onChange={setMeasOperatorValue}
-                          placeholder="เลือก Operator" searchable={false} showRadio={false}
+                          placeholder="เลือก Performed by" searchable={false} showRadio={false}
                           invalid={!!fieldErrors.operator} />
                         <input type="hidden" name="operator" value={measOperatorValue} />
                         <div className="field-error">{fieldErrors.operator}</div>
@@ -1217,14 +1218,14 @@ export default function EditPage() {
                       <div className="form-group span-2">
                         <label>🔒 ข้อมูลของรายการนี้ (แก้ไม่ได้)</label>
                         <div className="derived-preview">
-                          <DerivedCell label="Value X" value={String(mv("value_x") || "—")} />
-                          <DerivedCell label="Value Y" value={String(mv("value_y") || "—")} />
+                          <DerivedCell label="Measuring_X" value={String(mv("value_x") || "—")} />
+                          <DerivedCell label="Measuring_Y" value={String(mv("value_y") || "—")} />
                           <DerivedCell label="Note" value={String(mv("note") || "—")} />
                           <DerivedCell label="Measure Type" value={String(mv("measure_type") || "—")} />
                         </div>
                         <div className="field-locked-note">
                           ผลการวัดจริงจากเครื่องกับข้อมูลของ session แก้ย้อนหลังไม่ได้ — Result (OK/NG)
-                          จะถูกคำนวณใหม่อัตโนมัติจาก tolerance ของ ALPL ที่เลือก
+                          จะถูกคำนวณใหม่อัตโนมัติจาก tolerance ของ Part Number ที่เลือก
                         </div>
                       </div>
                     </>
@@ -1237,7 +1238,7 @@ export default function EditPage() {
                       </div>
                       <div className="form-group span-2">
                         <div className="field-locked-note">
-                          Result (OK/NG) คำนวณอัตโนมัติจาก Value X/Y เทียบกับ tolerance ของ ALPL — ไม่ต้องเลือกเอง
+                          Result (OK/NG) คำนวณอัตโนมัติจาก Measuring_X / Measuring_Y เทียบกับ tolerance ของ Part Number — ไม่ต้องเลือกเอง
                         </div>
                       </div>
                     </>

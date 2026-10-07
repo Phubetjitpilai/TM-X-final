@@ -5,6 +5,7 @@ import { useToast } from "./Toast";
 import MultiSelectCell from "./MultiSelectCell";
 import SingleSelect from "./SingleSelect";
 import { normalizePackageSize } from "../utils/packageSize";
+import { toUiTerms } from "../utils/displayTerms";
 
 /** ชนิดของช่องกรอกในตาราง lookup
  *  select-* = FK ไปตารางอื่น ต้องเลือกจากรายการที่มีจริงเท่านั้น ห้ามพิมพ์เอง
@@ -39,46 +40,46 @@ interface LookupConfig {
 
 // ยกจาก LOOKUP_CONFIG ใน edit.html ตรงๆ — field/label/width/type ตรงกันทุกตัว
 const LOOKUP_CONFIG: Record<string, LookupConfig> = {
-  operator: { label: "Operator", listUrl: "/api/operators", basePath: "/api/operators", idField: "operator_id",
+  operator: { label: "Performed by", listUrl: "/api/operators", basePath: "/api/operators", idField: "operator_id",
     fields: [{ key: "operator_name", label: "Name", width: "260px" }] },
-  owner: { label: "Owner", listUrl: "/api/owners", basePath: "/api/owners", idField: "owner_id",
+  owner: { label: "Order by", listUrl: "/api/owners", basePath: "/api/owners", idField: "owner_id",
     fields: [{ key: "owner_name", label: "Name", width: "260px" }] },
   vendor: { label: "Vendor", listUrl: "/api/vendors", basePath: "/api/vendors", idField: "vendor_id",
     fields: [{ key: "vendor_name", label: "Name", width: "260px" }] },
-  handler: { label: "Handler", listUrl: "/api/handlers", basePath: "/api/handlers", idField: "handler_id",
+  handler: { label: "H/L", listUrl: "/api/handlers", basePath: "/api/handlers", idField: "handler_id",
     fields: [{ key: "handler_name", label: "Name", width: "260px" }] },
   template: { label: "Template", listUrl: "/api/templates", basePath: "/api/templates", idField: "template_id",
     fields: [{ key: "template_name", label: "Name", width: "260px" }] },
-  package_size: { label: "Package Size", listUrl: "/api/package-sizes", basePath: "/api/package-sizes",
-    idField: "package_size_id", fields: [{ key: "package_size", label: "Package Size", width: "210px" }] },
-  package_size_handler_template: { label: "Package Handler Template",
+  package_size: { label: "Opening", listUrl: "/api/package-sizes", basePath: "/api/package-sizes",
+    idField: "package_size_id", fields: [{ key: "package_size", label: "Opening", width: "210px" }] },
+  package_size_handler_template: { label: "Opening H/L Template",
     listUrl: "/api/package-size-handler-templates", basePath: "/api/package-size-handler-templates",
     idField: "mapping_key", minWidth: "820px",
     fields: [
-      { key: "package_size", label: "Package Size", type: "select-package-size", width: "200px" },
-      { key: "handler", label: "Handler", type: "select-handler", width: "200px" },
+      { key: "package_size", label: "Opening", type: "select-package-size", width: "200px" },
+      { key: "handler", label: "H/L", type: "select-handler", width: "200px" },
       { key: "template_name", label: "Template", type: "select-template", width: "200px" },
     ] },
-  package_size_tolerance: { label: "Package Tolerance", listUrl: "/api/package-size-tolerances", basePath: "/api/package-size-tolerances",
+  package_size_tolerance: { label: "Opening Tolerance", listUrl: "/api/package-size-tolerances", basePath: "/api/package-size-tolerances",
     idField: "tolerance_id", minWidth: "1160px",
     fields: [
-      { key: "package_size", label: "Package Size", type: "select-package-size", width: "170px" },
-      { key: "nominal_x", label: "Nominal X", type: "number", width: "140px" },
-      { key: "nominal_y", label: "Nominal Y", type: "number", width: "140px" },
-      { key: "upper_tol", label: "Upper Tol", type: "number", width: "140px" },
-      { key: "lower_tol", label: "Lower Tol", type: "number", width: "140px" },
-      { key: "offset_tol", label: "Offset Tol", type: "number", width: "140px" },
+      { key: "package_size", label: "Opening", type: "select-package-size", width: "170px" },
+      { key: "nominal_x", label: "Nominal_X", type: "number", width: "140px" },
+      { key: "nominal_y", label: "Nominal_Y", type: "number", width: "140px" },
+      { key: "upper_tol", label: "USL", type: "number", width: "140px" },
+      { key: "lower_tol", label: "LSL", type: "number", width: "140px" },
+      { key: "offset_tol", label: "Centering Offset", type: "number", width: "140px" },
     ] },
   /* ⚠ ตารางนี้ **ไม่มีช่อง nominal/tolerance แล้ว** — part_number ไม่ได้ถือเกณฑ์
-     ตัดสินอีกต่อไป ทุกโหมดใช้ของ Package Size (ดู `_load_criteria` ฝั่ง backend)
-     ถ้าจะแก้เกณฑ์ ให้ไปแก้ที่ตาราง Package Size ด้านบนแทน
+     ตัดสินอีกต่อไป ทุกโหมดใช้ของ Opening (ดู `_load_criteria` ฝั่ง backend)
+     ถ้าจะแก้เกณฑ์ ให้ไปแก้ที่ตาราง Opening ด้านบนแทน
      minWidth ลดจาก 1420px เพราะเหลือ 3 คอลัมน์ ไม่ต้องเลื่อนแนวนอนอีก */
-  part_number: { label: "Part Number", listUrl: "/api/part-numbers/all", basePath: "/api/part-numbers",
+  part_number: { label: "ALPL#", listUrl: "/api/part-numbers/all", basePath: "/api/part-numbers",
     idField: "part_number_id", minWidth: "700px",
     fields: [
-      { key: "part_number_name", label: "Part Number", width: "230px" },
-      { key: "package_size", label: "Package Size", type: "select-package-size", width: "170px" },
-      { key: "handler", label: "Handler", type: "select-handler", width: "170px" },
+      { key: "part_number_name", label: "ALPL#", width: "230px" },
+      { key: "package_size", label: "Opening", type: "select-package-size", width: "170px" },
+      { key: "handler", label: "H/L", type: "select-handler", width: "170px" },
     ] },
 };
 
@@ -267,7 +268,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
   async function addRow() {
     if (readOnly) return;
     const values = Object.fromEntries(cfg.fields.map((f) => [f.key, (draft[f.key] ?? "").trim()]));
-    // ข้ามช่องที่ตั้ง optional ไว้ (เช่น Handlers) — ดูคอมเมนต์ที่ LOOKUP_CONFIG
+    // ข้ามช่องที่ตั้ง optional ไว้ (เช่น H/L) — ดูคอมเมนต์ที่ LOOKUP_CONFIG
     if (cfg.fields.some((f) => !f.optional && values[f.key] === "")) {
       toast.show("กรอก/เลือกข้อมูลให้ครบทุกช่องก่อน Add");
       return;
@@ -292,7 +293,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
       ]);
       onChanged?.();
     } catch (e: any) {
-      toast.show(e?.message ?? `เพิ่ม ${cfg.label} ไม่สำเร็จ`);
+      toast.show(toUiTerms(e?.message ?? `เพิ่ม ${cfg.label} ไม่สำเร็จ`));
     }
     setBusy(false);
   }
@@ -339,7 +340,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
       ]);
       onChanged?.();
     } catch (e: any) {
-      toast.show(e?.message ?? `บันทึก ${cfg.label} ไม่สำเร็จ`);
+      toast.show(toUiTerms(e?.message ?? `บันทึก ${cfg.label} ไม่สำเร็จ`));
     }
     setBusy(false);
   }
@@ -367,7 +368,7 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
         // 409 = ยังมี Part/Measurement/ตารางอื่นอ้างอิง id นี้อยู่จริง
         // (ดู _delete_lookup ใน main.py) — โชว์เป็น popup เด่นๆ ไม่ใช่ toast เล็กๆ
         // มุมจอ เพราะเป็นเหตุผลเชิงตรรกะที่ผู้ใช้ควรอ่านจริง
-        const msg = e?.message ?? `ลบ ${cfg.label} ไม่สำเร็จ`;
+        const msg = toUiTerms(e?.message ?? `ลบ ${cfg.label} ไม่สำเร็จ`);
         if (onAlert) onAlert(msg); else toast.show(msg);
       }
       setBusy(false);
@@ -424,8 +425,8 @@ export default function LookupTables({ readOnly = false, onDeleted, onChanged, o
           <input
             type="search"
             value={filter}
-            placeholder={kind.startsWith("package_size") ? "ค้นหา Package Size" : `ค้นใน ${cfg.label}`}
-            aria-label={kind.startsWith("package_size") ? "ค้นหา Package Size" : `ค้นหาใน ${cfg.label}`}
+            placeholder={kind.startsWith("package_size") ? "ค้นหา Opening" : `ค้นใน ${cfg.label}`}
+            aria-label={kind.startsWith("package_size") ? "ค้นหา Opening" : `ค้นหาใน ${cfg.label}`}
             style={{ minWidth: 200 }}
             onChange={(e) => { setFilter(e.target.value); setPage(1); }}
           />

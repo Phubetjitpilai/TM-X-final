@@ -9,7 +9,7 @@
  * จุดกับวงกลมจะซ้อนกันสนิท มองไม่ออกเลยว่าเยื้องไปทางไหน
  *
  * จึงสเกลด้วย `offset_tol` แทน — ระยะที่เท่ากับเพดานพอดีไปอยู่ที่ขอบวงประเสมอ
- * ไม่ว่า ALPL นั้นจะตั้ง tolerance ไว้เท่าไร "ใกล้ขอบ = ใกล้หลุด" จึงอ่านได้
+ * ไม่ว่า Part Number นั้นจะตั้ง tolerance ไว้เท่าไร "ใกล้ขอบ = ใกล้หลุด" จึงอ่านได้
  * เหมือนกันทุกแถว เทียบข้ามชิ้นงานได้ตรง ๆ
  * ╚═══════════════════════════════════════════════════════════════════════╝
  *
@@ -53,7 +53,7 @@ interface Props {
   ok?: boolean | null;
   measureType?: string | null;
   /** ชื่อการ์ด — ใส่แล้วป้าย OK/NG จะย้ายขึ้นไปอยู่บรรทัดเดียวกับชื่อ
-   *  (Live Telemetry ใช้ "Offset Opening" · ReportModal ไม่ต้องใส่) */
+   *  (Live Telemetry ใช้ "Opening shift" · ReportModal ไม่ต้องใส่) */
   title?: string;
   /** true = ย่อเหลือแต่ผัง ไม่มีตัวเลข (ใช้ในคอลัมน์ตาราง) */
   compact?: boolean;
@@ -191,11 +191,11 @@ export default function OffsetMap({
   //   หน้าเว็บก่อนวัดชิ้นแรก ถ้าเขียน "ไม่มีค่าการวัด" จะอ่านเหมือนมีอะไรผิดปกติ
   //   ทั้งที่แค่ยังไม่ถึงเวลา · ช่อง OP-X/OP-Y ข้าง ๆ ก็เป็น "—" อยู่แล้ว
   const posText = !hasValue ? "—"
-    : tol == null ? "ยังไม่ได้ตั้ง Offset Tol"
+    : tol == null ? "ยังไม่ได้ตั้ง Centering Offset"
     : (posCode ?? "—");
 
   return (
-    // ⚠ ต้องมีคลาส `rax` — ในหน้ารายงานมันวางเรียงกับการ์ด Value X / Value Y
+    // ⚠ ต้องมีคลาส `rax` — ในหน้ารายงานมันวางเรียงกับการ์ด Measuring_X / Measuring_Y
     //   ซึ่งใช้คลาสนี้เอาขอบกับ padding ไม่ใส่แล้วการ์ดนี้จะลอยไม่มีกรอบใบเดียว
     //   ส่วนใน Live Telemetry มี `.telemetry-offset-cell .rax { border: none }`
     //   รีเซ็ตทิ้งอยู่แล้ว เพราะพื้นหลัง/มุมมาจาก `.telemetry-cell` ที่ครอบอีกที
@@ -221,7 +221,7 @@ export default function OffsetMap({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
             <span style={{ fontSize: "0.95rem", color: "var(--text)" }}>
-              <strong>POSITION</strong> : {posText}
+              <strong>Opening shift</strong> : {posText}
             </span>
             {/* ไม่มี title = ใช้แบบเดี่ยว (ReportModal) ป้ายจึงมาอยู่แถวนี้แทน */}
             {!title && ok !== null && (
@@ -236,15 +236,15 @@ export default function OffsetMap({
             gap: "0.75rem", marginTop: "0.5rem",
           }}>
             <div>
-              <div style={capStyle}>OP-X</div>
+              <div style={capStyle}>Offset_X</div>
               <div style={numStyle(ax / big < 0.27, overX)}>{fmt(offsetX)}</div>
             </div>
             <div>
-              <div style={capStyle}>OP-Y</div>
+              <div style={capStyle}>Offset_Y</div>
               <div style={numStyle(ay / big < 0.27, overY)}>{fmt(offsetY)}</div>
             </div>
             <div>
-              <div style={capStyle}>Tolerance</div>
+              <div style={capStyle}>Centering Offset</div>
               <div style={{ ...numStyle(false, false), color: "var(--muted)" }}>
                 {tol != null ? tol.toFixed(DP_OFF) : "—"}
               </div>

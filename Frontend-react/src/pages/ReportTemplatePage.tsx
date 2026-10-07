@@ -166,7 +166,7 @@ export default function ReportTemplatePage() {
     ?? k;
   const blockOf = (k: string) => catalog.find((c) => c.key === k)?.block ?? null;
   /** ข้อความที่ใช้เป็นหัวตารางจริงในรายงาน — ต่างจาก labelOf ที่เป็นชื่อชิปในแผงซ้าย
-   *  (ชิปต้องบอกว่าลากแล้วได้อะไรบ้าง เช่น "Tolerance + Value X/Y" แต่หัวตาราง
+   *  (ชิปต้องบอกว่าลากแล้วได้อะไรบ้าง เช่น "Tolerance + Measuring_X/Y" แต่หัวตาราง
    *  บนกระดาษต้องสั้นว่า "Tolerance") */
   const headerOf = (k: string) => blockOf(k)?.header ?? catalog.find((c) => c.key === k)?.header ?? labelOf(k);
   const dataLabel = (k: string) => `ข้อมูล ${labelOf(k)}`;
@@ -298,7 +298,7 @@ export default function ReportTemplatePage() {
    *     ├──────────┤                   ├───────────────────────┤
    *     │ข้อมูล ALPL│ ← แถวข้อมูล        │  9.030 +0.020 -0.010  │ ผสาน 2 คอลัมน์
    *     └──────────┘                   ├───────────┬───────────┤
-   *                                    │ข้อมูล Value X│ข้อมูล Value Y│ ← แถวข้อมูล
+   *                                    │ข้อมูล Measuring_X│ข้อมูล Measuring_Y│ ← แถวข้อมูล
    *                                    └───────────┴───────────┘
    *  คืน false ถ้าปลายทางล้นตาราง หรือชนเซลล์ที่ผสานไว้อยู่แล้ว */
   function placeFieldBlock(key: string, top: number, left: number, headText: string): boolean {
@@ -1105,7 +1105,7 @@ export default function ReportTemplatePage() {
           ทำซ้ำหนึ่งแถวต่อหนึ่งการวัด · แถวอื่นเป็นหัวตารางที่พิมพ์ซ้ำทุกกลุ่ม ·
           รายงานถูกแบ่งกลุ่มด้วยสเปก <strong>Tolerance</strong> เสมอ<br />
           <strong>ลาก 1 ครั้งได้ทั้งบล็อก</strong> — ชื่อคอลัมน์ผสาน 2 แถวตรงที่วาง แล้ว "ข้อมูล …" ลงแถวถัดไปอัตโนมัติ ·{" "}
-          <strong>Tolerance</strong> กว้าง 2 คอลัมน์ (หัว / สเปก / ข้อมูล Value X + Value Y) ·
+          <strong>Tolerance</strong> กว้าง 2 คอลัมน์ (หัว / สเปก / ข้อมูล Measuring_X + Measuring_Y) ·
           รูปแบบที่ตั้งให้เซลล์ "ข้อมูล …" จะถูกใช้กับทุกแถวตอน export<br />
           คลิกหัวคอลัมน์/หมายเลขแถวเพื่อแทรกหรือลบ · Shift+คลิกเพื่อคลุมหลายช่องก่อนกด Merge ·
           ลากข้อความออกไปทิ้งที่แผงซ้ายเพื่อเอาออก

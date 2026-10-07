@@ -545,14 +545,14 @@ def process_and_save_image(image_path, pair):
     #   ทุกค่าใน `pair` ผ่าน float() มาแล้วเสมอ ไม่มีทางเป็น None
     #   (ดู `_parse_measurement_line` ใน Data-receiver.py)
     rows_data = [
-        ("1. Value X", f"{value_x:.3f}"),
-        ("2. Value Y", f"{value_y:.3f}"),
-        ("3. Horizon Left", f"{horizon_left:.3f}"),
-        ("4. Horizon Right", f"{horizon_right:.3f}"),
-        ("5. Vertical Top", f"{vertical_top:.3f}"),
-        ("6. Vertical Bottom", f"{vertical_bottom:.3f}"),
-        ("7. Offset Opening X", f"{offset_opx:.3f}"),
-        ("8. Offset Opening Y", f"{offset_opy:.3f}")
+        ("1. Measuring_X", f"{value_x:.3f}"),
+        ("2. Measuring_Y", f"{value_y:.3f}"),
+        ("3. L", f"{horizon_left:.3f}"),
+        ("4. R", f"{horizon_right:.3f}"),
+        ("5. T", f"{vertical_top:.3f}"),
+        ("6. B", f"{vertical_bottom:.3f}"),
+        ("7. Offset_X", f"{offset_opx:.3f}"),
+        ("8. Offset_Y", f"{offset_opy:.3f}")
     ]
 
     # ══════════════════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@ export default function RemeasureStartOptions({ alpl, initialMode, onModeChange 
   };
   return <>
     <p style={{ marginTop: 0 }}>
-      วางชิ้นงาน <strong>ALPL {alpl}</strong> ให้พร้อม แล้วกด Start เพื่อวัดชิ้นนี้ใหม่
+      วางชิ้นงาน <strong>Part Number {alpl}</strong> ให้พร้อม แล้วกด Start เพื่อวัดชิ้นนี้ใหม่
       ผลและรูปใหม่จะแทนที่รายการเดิม
     </p>
     <div className="form-group">

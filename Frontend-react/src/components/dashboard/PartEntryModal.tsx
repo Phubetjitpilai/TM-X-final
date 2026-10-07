@@ -6,6 +6,7 @@ import EntryGroups, {
   type EntryMode, type GroupValues,
 } from "./EntryGroups";
 import { formatAlplRanges } from "../../utils/formatAlplRanges";
+import { toUiTerms } from "../../utils/displayTerms";
 
 /** คิวที่พร้อมกด Start — โครงเดียวกันทั้ง 3 โหมด ต่างกันแค่ field ในกลุ่ม */
 /** กลุ่มที่พร้อมส่ง backend — number_alpl ถูกแปลงเป็นลิสต์ตัวเลขแล้ว
@@ -31,7 +32,7 @@ export interface EntryQueue {
   triggerMode?: TriggerMode;
   trayCapacity?: number | null;
   groups: PayloadGroup[];
-  /** ALPL ทั้งหมดคลี่เรียงตามลำดับที่จะวัด — ใช้โชว์จำนวนและวาดแถบคิว */
+  /** Part Number ทั้งหมดคลี่เรียงตามลำดับที่จะวัด — ใช้โชว์จำนวนและวาดแถบคิว */
   list: number[];
   session_id?: number | null;
 }
@@ -42,7 +43,7 @@ export interface EntryQueue {
  */
 export function parseAlplList(raw: string): { list: number[]; error: string | null } {
   const s = raw.trim();
-  if (!s) return { list: [], error: "กรอก ALPL อย่างน้อย 1 ค่า" };
+  if (!s) return { list: [], error: "กรอก Part Number อย่างน้อย 1 ค่า" };
   const out: number[] = [];
   for (const part of s.split(",")) {
     const p = part.trim();
@@ -54,7 +55,7 @@ export function parseAlplList(raw: string): { list: number[]; error: string | nu
     if (a > b) return { list: [], error: `ช่วงกลับหัว: "${p}"` };
     for (let n = a; n <= b; n++) out.push(n);
   }
-  if (!out.length) return { list: [], error: "กรอก ALPL อย่างน้อย 1 ค่า" };
+  if (!out.length) return { list: [], error: "กรอก Part Number อย่างน้อย 1 ค่า" };
   return { list: out, error: null };
 }
 
@@ -75,9 +76,9 @@ interface Props {
   handlerOfPartNumber: (partNumber: string) => string;
   onSave: (queue: EntryQueue) => void;
   onClose: () => void;
-  /** ให้หน้าแม่ถามยืนยันก่อนลงทะเบียน ALPL ใหม่ (โหมด IPM)
-   *  ส่ง package_size ของกลุ่มที่ ALPL นั้นอยู่ไปด้วย — ผู้ใช้ต้องเห็นว่ากำลังจะ
-   *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข ALPL แล้วกดตกลงไปโดยไม่รู้ */
+  /** ให้หน้าแม่ถามยืนยันก่อนลงทะเบียน Part Number ใหม่ (โหมด IPM)
+   *  ส่ง package_size ของกลุ่มที่ Part Number นั้นอยู่ไปด้วย — ผู้ใช้ต้องเห็นว่ากำลังจะ
+   *  ลงทะเบียนด้วยเกณฑ์ไหน ไม่ใช่เห็นแค่เลข Part Number แล้วกดตกลงไปโดยไม่รู้ */
   confirmRegister: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
   confirmExisting: (items: { alpl: number; package_size: string }[]) => Promise<boolean>;
   onGroupConflict: (messages: string[]) => Promise<void>;
@@ -103,10 +104,10 @@ const MODES: EntryMode[] = ["IPM", "New", "Rework"];
 
 /** แปลงคิวที่เก็บไว้ กลับเป็นค่าที่ฟอร์มใช้ได้
  *
- *  ⚠ สองชนิดนี้เก็บ ALPL คนละแบบ — `PayloadGroup.number_alpl` เป็น `number[]`
+ *  ⚠ สองชนิดนี้เก็บ Part Number คนละแบบ — `PayloadGroup.number_alpl` เป็น `number[]`
  *    (คลี่ช่วงแล้ว) ส่วนฟอร์มเป็น string ดิบที่ผู้ใช้พิมพ์
  *
- *  ALPL ถูกเก็บใน EntryQueue เป็นลิสต์ตัวเลขเพื่อส่ง Backend แต่ตอนเติมกลับเข้า
+ *  Part Number ถูกเก็บใน EntryQueue เป็นลิสต์ตัวเลขเพื่อส่ง Backend แต่ตอนเติมกลับเข้า
  *  ฟอร์มจะบีบเลขเรียงติดกันกลับเป็นช่วงอีกครั้ง เช่น [1,2,3,4,5] → "1-5"
  *  เพื่อให้กด Edit แล้วรูปแบบที่เห็นยังอ่านง่ายเหมือนเดิม
  */
@@ -156,14 +157,14 @@ export default function PartEntryModal({
   /** ฟอร์มมีข้อมูลที่จะหายไหม — ใช้ตัดสินว่าต้องถามยืนยันก่อนสลับโหมดไหม
    *
    *  ⚠ **ไม่นับ Operator** เพราะมันไม่ถูกล้างตอนสลับโหมด (ดู switchMode)
-   *    ถ้านับด้วย จะกลายเป็นถามทุกครั้งหลังเลือก Operator แล้วทั้งที่ยังไม่ได้
+   *    ถ้านับด้วย จะกลายเป็นถามทุกครั้งหลังเลือก Performed by แล้วทั้งที่ยังไม่ได้
    *    กรอกอะไรที่จะหายจริง
    */
   const formHasData = () =>
     groups.some((g) => Object.values(g).some((v) => (v ?? "").trim() !== ""));
 
   /** เปลี่ยนโหมด = ล้างกลุ่มทิ้ง เพราะ field คนละชุดกัน — เก็บของเดิมไว้แล้วโชว์
-   *  ในโหมดใหม่จะได้ค่าที่ไม่มีความหมาย (เช่น Part Number ที่ IPM ไม่ได้ใช้)
+   *  ในโหมดใหม่จะได้ค่าที่ไม่มีความหมาย (เช่น ALPL# ที่ IPM ไม่ได้ใช้)
    *
    *  ⚠ **ไม่ล้าง Operator** — คนที่ยืนวัดยังเป็นคนเดิม สลับโหมดไม่ได้แปลว่า
    *    เปลี่ยนคน (ฝั่ง vanilla เดิมล้างด้วย ซึ่งทำให้ต้องเลือกซ้ำทุกครั้ง
@@ -221,7 +222,7 @@ export default function PartEntryModal({
       ? "กรอกจำนวนเต็มตั้งแต่ 0 ขึ้นไป หรือเว้นว่างเพื่อใช้ 8" : "";
     setTrayCapacityError(capacityError);
     let opErr = "";
-    if (!operator.trim()) opErr = "เลือก Operator";
+    if (!operator.trim()) opErr = "เลือก Performed by";
 
     // ── ตรวจทีละกลุ่ม ────────────────────────────────────────────────────
     const perGroupLists: number[][] = [];
@@ -242,7 +243,7 @@ export default function PartEntryModal({
       if (Object.keys(ge).length) errs[gi] = ge;
     });
 
-    // ⚠ ALPL ห้ามซ้ำ "ข้ามกลุ่ม" ด้วย ไม่ใช่แค่ในกลุ่มเดียวกัน — ถ้าปล่อยให้ซ้ำ
+    // ⚠ Part Number ห้ามซ้ำ "ข้ามกลุ่ม" ด้วย ไม่ใช่แค่ในกลุ่มเดียวกัน — ถ้าปล่อยให้ซ้ำ
     //   ชิ้นเดียวกันจะถูกวัด 2 ครั้งด้วย config คนละชุด แล้วอันหลังเขียนทับ Part
     //   ของอันแรกโดยที่ผู้ใช้ไม่รู้ตัว (backend ก็เช็คซ้ำ แต่บอกตั้งแต่ตรงนี้ดีกว่า)
     const seen = new Map<string, number>();
@@ -250,14 +251,14 @@ export default function PartEntryModal({
       list.forEach((n) => {
         const identity = `${n}|${groups[gi]?.package_size ?? ""}`;
         if (seen.has(identity) && seen.get(identity) !== gi) {
-          errs[gi] = { ...errs[gi], number_alpl: `ALPL ${n} / Package Size นี้ซ้ำกับกลุ่มที่ ${seen.get(identity)! + 1}` };
+          errs[gi] = { ...errs[gi], number_alpl: `Part Number ${n} / Opening นี้ซ้ำกับกลุ่มที่ ${seen.get(identity)! + 1}` };
         } else seen.set(identity, gi);
       });
     });
 
     setErrors(errs);
     setOperatorError(opErr);
-    // ตรวจเลข ALPL ก่อนเรียก API แต่ปล่อยช่องที่ยังว่างไว้ชั่วคราว เพื่อให้
+    // ตรวจเลข Part Number ก่อนเรียก API แต่ปล่อยช่องที่ยังว่างไว้ชั่วคราว เพื่อให้
     // ข้อความ "ข้อมูลในกลุ่มไม่ตรงกัน" ปรากฏก่อน error กรอกไม่ครบ
     if (opErr || capacityError || Object.values(errs).some((ge) => !!ge.number_alpl)) {
       focusFirstInvalid();
@@ -266,7 +267,7 @@ export default function PartEntryModal({
 
     const all = perGroupLists.flat();
 
-    // ── เช็คกับ DB ว่า ALPL มี/ไม่มี ตามเงื่อนไขของโหมด ────────────────────
+    // ── เช็คกับ DB ว่า Part Number มี/ไม่มี ตามเงื่อนไขของโหมด ────────────────────
     // IPM    ยังไม่มี → ถามยืนยันแล้วลงทะเบียนให้ตอนวัดจริง
     // New มีอยู่แล้ว → ยืนยันใช้ Part เดิม · Rework ยังไม่มี → ยืนยันลงทะเบียน
     setBusy(true);
@@ -282,11 +283,11 @@ export default function PartEntryModal({
         const conflictErrors = { ...errs };
         for (const conflict of res.conflicts) {
           conflictErrors[conflict.group] = {
-            ...conflictErrors[conflict.group], number_alpl: "ALPL ในกลุ่มนี้มีข้อมูลไม่ตรงกัน",
+            ...conflictErrors[conflict.group], number_alpl: "Part Number ในกลุ่มนี้มีข้อมูลไม่ตรงกัน",
           };
         }
         setErrors(conflictErrors);
-        await onGroupConflict(res.conflicts.map((conflict) => conflict.message));
+        await onGroupConflict(res.conflicts.map((conflict) => toUiTerms(conflict.message)));
         setBusy(false);
         focusFirstInvalid();
         return;
@@ -306,7 +307,7 @@ export default function PartEntryModal({
         if (!ok) { setBusy(false); return; }
       }
     } catch {
-      onNotify("ตรวจสอบ ALPL ไม่สำเร็จ กรุณาลองบันทึกอีกครั้ง");
+      onNotify("ตรวจสอบ Part Number ไม่สำเร็จ กรุณาลองบันทึกอีกครั้ง");
       setBusy(false);
       return;
     }
@@ -351,7 +352,7 @@ export default function PartEntryModal({
         <div className="entry-session-hint">
           {triggerOnly
             ? "ข้อมูลชิ้นงานถูกล็อกไว้ เปลี่ยนได้เฉพาะ Trigger และจะใช้ค่าที่เลือกเมื่อกด Continue"
-            : "ℹ️ ลำดับ ALPL ที่กรอก (ไล่จากกลุ่มบนลงล่าง) คือลำดับที่ค่าที่วัดได้จะถูก map เข้าไป — 1 กลุ่มคือ ALPL ที่ใช้ข้อมูลชุดเดียวกัน"}
+            : "ℹ️ ลำดับ Part Number ที่กรอก (ไล่จากกลุ่มบนลงล่าง) คือลำดับที่ค่าที่วัดได้จะถูก map เข้าไป — 1 กลุ่มคือ Part Number ที่ใช้ข้อมูลชุดเดียวกัน"}
         </div>
 
         {/* ⚠ แถบนี้คือสิ่งที่ทำให้อาการ "ช่องเลือกว่าง" ไม่เงียบอีกต่อไป
@@ -371,15 +372,15 @@ export default function PartEntryModal({
         {/* ค่าระดับ Session อยู่แถวเดียวกัน; triggerOnly แก้ได้เฉพาะ Trigger */}
         <div className="pe-session-fields">
           <div className="form-group entry-field">
-            <label htmlFor="pe-operator">Operator<span className="req">*</span></label>
+            <label htmlFor="pe-operator">Performed by<span className="req">*</span></label>
             <SingleSelect
               id="pe-operator"
-              label="Operator"
+              label="Performed by"
               options={triggerOnly && operator && !operators.includes(operator) ? [operator, ...operators] : operators}
               value={operator}
               disabled={triggerOnly}
               onChange={setOperator}
-              placeholder="เลือก Operator"
+              placeholder="เลือก Performed by"
               invalid={!!operatorError}
               searchable={false}
               showRadio={false}
