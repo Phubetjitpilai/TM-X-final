@@ -37,7 +37,15 @@ const EXPORT_FORMATS = [
 
 export default function Layout() {
   const sse = useSSE();
-  const { dbOffline, isSuccess, isError } = useSessionState();
+  const { dbOffline, isSuccess, isError, dataUpdatedAt, errorUpdatedAt } = useSessionState();
+  const [statusNow, setStatusNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setStatusNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  // A previous successful response must not keep the badge online indefinitely.
+  const lastCheckAt = Math.max(dataUpdatedAt, errorUpdatedAt);
+  const statusExpired = lastCheckAt > 0 && statusNow - lastCheckAt > 10000;
   const location = useLocation();
   const [params] = useSearchParams();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -78,7 +86,8 @@ export default function Layout() {
 
      กติกาใหม่: **เชื่อ poll เสมอ · `sse` เป็นแค่ตัวเสริมตอนยังไม่เคย poll สำเร็จ** */
   const server: ServerState =
-    isSuccess ? "online"              // poll ผ่าน = backend ตอบได้ จบ ไม่ต้องดูอย่างอื่น
+    statusExpired ? "offline"
+    : isSuccess ? "online"              // poll ผ่าน = backend ตอบได้ จบ ไม่ต้องดูอย่างอื่น
     : dbOffline ? "online"            // 503 = backend ตอบได้ แค่ต่อ MySQL ไม่ติด
     : isError ? "offline"             // พังแบบอื่น (500 จาก proxy / เน็ตหลุด) = ไม่ตอบ
     : sse === "offline" ? "offline"   // ยังไม่เคย poll สำเร็จ แถม SSE ก็พัง
@@ -90,7 +99,8 @@ export default function Layout() {
      ⚠ `unknown` ห้ามวาดเป็นสีแดง — ถ้าทำเป็นแดง คนจะวิ่งไปรีสตาร์ต MySQL
        ทั้งที่ตัวที่ตายจริงคือ uvicorn                                    */
   const db: DbState =
-    dbOffline ? "offline"
+    statusExpired ? "unknown"
+    : dbOffline ? "offline"
     : isSuccess ? "online"
     : "unknown";
 
@@ -123,7 +133,7 @@ export default function Layout() {
   // ล็อกทั้งหน้าเฉพาะ Edit/Export — หน้า Home ไม่ล็อกเพราะโอเปอเรเตอร์ต้องดู
   // Live Telemetry ระหว่างวัดต่อไปได้ (ปุ่มที่เขียน DB อย่าง Start ถูกล็อก
   // แยกอยู่แล้วในการ์ด Session Control)
-  const lockPage = dbOffline && location.pathname !== "/";
+  const lockPage = db === "offline" && location.pathname !== "/";
 
   return (
     <>

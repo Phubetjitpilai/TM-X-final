@@ -69,7 +69,19 @@ export const sessionStateLabel = (s: string): string =>
 export function useSessionState() {
   const q = useQuery<SessionState, ApiError>({
     queryKey: ["session-state"],
-    queryFn: () => apiGet<SessionState>("/api/session/state"),
+    queryFn: async ({ signal }) => {
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      signal.addEventListener("abort", cancel, { once: true });
+      if (signal.aborted) cancel();
+      const timeout = window.setTimeout(cancel, 5000);
+      try {
+        return await apiGet<SessionState>("/api/session/state", undefined, controller.signal);
+      } finally {
+        window.clearTimeout(timeout);
+        signal.removeEventListener("abort", cancel);
+      }
+    },
     /* ── ถามถี่ขึ้นเฉพาะตอนกำลังวัด ────────────────────────────────────────
        ค่าที่ต้องการความสดที่สุดคือ `trigger_ready` — ปุ่ม ⚡ Trigger ต้องสว่าง
        ทันทีที่ Pi ยืนรอสัญญาณ ไม่งั้นคนหน้างานจะยืนรอปุ่มโดยไม่รู้ว่าต้องรออีกนาน
@@ -82,6 +94,7 @@ export function useSessionState() {
        จริงคนเดียว (ดูสไลด์ Scope — วัด 1 ชิ้นทุก ~30 นาที)                   */
     refetchInterval: (query) =>
       query.state.data?.state === "running" ? 1000 : 4000,
+    refetchIntervalInBackground: true,
     staleTime: 0,
     // ห้าม retry: เส้นนี้ถูกใช้เป็น "เครื่องวัดว่า DB ยังไหวไหม" ด้วย
     // ถ้าปล่อยให้ retry ป้ายจะขึ้น DB Offline ช้ากว่าความจริงหลายวินาที
