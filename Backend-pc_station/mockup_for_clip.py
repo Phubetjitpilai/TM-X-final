@@ -27,7 +27,7 @@ from pathlib import Path
 
 IMAGE_DIR = Path(__file__).resolve().parent / "image"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-CLIP_COUNT = 3
+CLIP_COUNT = 1
 
 
 @dataclass(frozen=True)

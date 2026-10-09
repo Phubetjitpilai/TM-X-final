@@ -1570,7 +1570,7 @@ EXPORT_COLUMNS: Dict[str, Dict[str, Any]] = {
                       "get_fmt": _fmt_timestamp},
     "session_id":    {"label": "Session",       "group": "ข้อมูลการวัด", "get": lambda r: r["session_id"]},
 
-    "part_number":   {"label": "ALPL#",         "csv_label": "ALPL#", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["part_number_name"] or ""},
+    "part_number":   {"label": "DWG#",         "csv_label": "DWG#", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["part_number_name"] or ""},
     "handler":       {"label": "H/L",           "csv_label": "H/L", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["handler_name"] or ""},
     "package_size":  {"label": "Opening",       "csv_label": "Opening", "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["package_size"] or ""},
     "template_name": {"label": "Template",      "group": "ข้อมูลชิ้นงาน", "get": lambda r: r["template_name"] or ""},

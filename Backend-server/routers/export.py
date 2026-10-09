@@ -104,7 +104,7 @@ def _get_template(cur, export_template_id: int) -> Dict[str, Any]:
 
 _REPORT_HEADER_RENAMES = {
     "number_alpl": {"ALPL": "Part Number", "Number ALPL": "Part Number"},
-    "part_number": {"Part Number": "ALPL#"},
+    "part_number": {"Part Number": "DWG#", "ALPL#": "DWG#"},
     "value_x": {"Value X": "Measuring_X"},
     "value_y": {"Value Y": "Measuring_Y"},
     "nominal_x": {"Nominal X": "Nominal_X"},

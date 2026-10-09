@@ -32,15 +32,15 @@ export function ReportAxis({
   const hasSpec = value != null && nominal != null && upperTol != null && lowerTol != null;
 
   if (!hasSpec) {
-    // ไม่มีเกณฑ์จริง ๆ = Part Number นี้ยังไม่ได้ผูกทั้ง Opening และ ALPL#
-    // ⚠ ห้ามเขียนว่า "ไปตั้ง ALPL#" — โหมด IPM ใช้เกณฑ์จาก Opening
-    //   ได้โดยไม่ต้องมี ALPL# ข้อความแบบนั้นจะชี้ผิดจุดสำหรับแถว IPM
+    // ไม่มีเกณฑ์จริง ๆ = Part Number นี้ยังไม่ได้ผูกทั้ง Opening และ DWG#
+    // ⚠ ห้ามเขียนว่า "ไปตั้ง DWG#" — โหมด IPM ใช้เกณฑ์จาก Opening
+    //   ได้โดยไม่ต้องมี DWG# ข้อความแบบนั้นจะชี้ผิดจุดสำหรับแถว IPM
     return (
       <div className="rax">
         <div className="rax-head"><span className="rax-name">Measuring_{axis}</span></div>
         <div className="rax-value">{fmt(value)} <span className="unit">mm</span></div>
         <div className="rax-dev ok">
-          ยังไม่ได้ผูกเกณฑ์ให้ Part Number นี้ (Opening / ALPL#) — เทียบสเปคไม่ได้
+          ยังไม่ได้ผูกเกณฑ์ให้ Part Number นี้ (Opening / DWG#) — เทียบสเปคไม่ได้
         </div>
       </div>
     );

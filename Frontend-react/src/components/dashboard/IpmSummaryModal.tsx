@@ -60,7 +60,7 @@ export default function IpmSummaryModal({
 
   return (
     <div className="modal-overlay open">
-      <div className="pe-modal-box" style={{ maxWidth: 560 }}>
+      <div className="pe-modal-box ipm-summary-modal">
         <div className="pe-modal-header">
           <div className="card-title">
             สรุปผลการวัด <span className="count">วัดครบ {rows.length} ชิ้น</span>
@@ -68,7 +68,7 @@ export default function IpmSummaryModal({
           <button className="pe-modal-close" title="Close" onClick={onClose}>✕</button>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap ipm-summary-scroll">
           <table className="ipm-summary-table">
             <tbody>
               {rows.map((r, i) => (
@@ -81,7 +81,7 @@ export default function IpmSummaryModal({
           </table>
         </div>
 
-        <div className="entry-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div className="entry-actions ipm-summary-actions">
           <span style={{ fontSize: "0.78rem", color: "var(--muted)" }}>
             คัดลอกแล้ววางใน Excel ได้ 2 คอลัมน์ทันที
           </span>

@@ -9,14 +9,14 @@ export type ToleranceOption = ToleranceSpec & { package_size: string };
 
 /** ช่องที่ติ๊กเลือกได้หลายค่า — ลำดับตรงกับ export.html เป๊ะ
  *
- *  ⚠ Opening ต้องอยู่ "ก่อน" ALPL# เพราะต้องเลือกขนาดก่อน แล้วรายการ
- *    ALPL# จะถูกกรองตามขนาดที่เลือก (cascade) สลับที่กันแล้วผู้ใช้จะเจอ
- *    ช่อง ALPL# ว่างเปล่าโดยไม่รู้ว่าต้องทำอะไรก่อน
+ *  ⚠ Opening ต้องอยู่ "ก่อน" DWG# เพราะต้องเลือกขนาดก่อน แล้วรายการ
+ *    DWG# จะถูกกรองตามขนาดที่เลือก (cascade) สลับที่กันแล้วผู้ใช้จะเจอ
+ *    ช่อง DWG# ว่างเปล่าโดยไม่รู้ว่าต้องทำอะไรก่อน
  */
 export const MULTI_KEYS = [
   { key: "result", label: "Result" },
   { key: "package_size", label: "Opening" },
-  { key: "part_number", label: "ALPL#" },
+  { key: "part_number", label: "DWG#" },
   { key: "handler", label: "H/L" },
   { key: "operator", label: "Performed by" },
   { key: "measure_type", label: "Measure Type" },
@@ -107,7 +107,7 @@ interface Props {
   value: FilterState;
   onChange: (next: FilterState) => void;
   options: Record<MultiKey, string[]>;
-  /** catalog part number พร้อม package size — ใช้ cascade กรอง ALPL# */
+  /** catalog part number พร้อม package size — ใช้ cascade กรอง DWG# */
   partNumberCatalog: { part_number_name: string; package_size: string }[];
   toleranceCatalog: ToleranceOption[];
   onClear: () => void;
@@ -147,7 +147,7 @@ export default function ExportFilters({
   // ของเราตรวจก่อน (ตอบทันทีขณะพิมพ์) ถ้าผ่านค่อยโชว์ของ backend
   const alplError = validateAlpl(value.alpl) ?? serverAlplError ?? null;
 
-  // ALPL# ถูกกรองตาม Opening ที่เลือก — ยังไม่เลือกขนาด = ยังไม่ให้เลือก
+  // DWG# ถูกกรองตาม Opening ที่เลือก — ยังไม่เลือกขนาด = ยังไม่ให้เลือก
   const pkgSelected = value.multi.package_size;
   const partOptions =
     pkgSelected.length === 0

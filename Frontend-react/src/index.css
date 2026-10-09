@@ -2666,3 +2666,27 @@ tr[data-clickable] { cursor: pointer; }
 .msc-item input { cursor: pointer; }
 
 .msc-empty { padding: 0.6rem; font-size: 0.8rem; color: var(--muted); text-align: center; }
+
+/* Keep IPM summary controls visible while only the measurement table scrolls. */
+.pe-modal-box.ipm-summary-modal {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.ipm-summary-modal .pe-modal-header { flex-shrink: 0; }
+.ipm-summary-modal .ipm-summary-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.ipm-summary-modal .ipm-summary-actions {
+  flex-shrink: 0;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 1rem;
+}
+.ipm-summary-actions .btn-submit-entry { white-space: nowrap; }

@@ -39,7 +39,7 @@ const TABLES = [
   ["package_size", "Opening"],
   ["package_size_handler_template", "Opening H/L Template"],
   ["package_size_tolerance", "Opening Tolerance"],
-  ["part_number", "ALPL#"],
+  ["part_number", "DWG#"],
   ["operator", "Performed by"], ["owner", "Order by"], ["vendor", "Vendor"],
   ["handler", "H/L"], ["template", "Template"],
 ] as const;

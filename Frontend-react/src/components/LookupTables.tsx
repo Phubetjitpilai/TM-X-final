@@ -74,10 +74,10 @@ const LOOKUP_CONFIG: Record<string, LookupConfig> = {
      ตัดสินอีกต่อไป ทุกโหมดใช้ของ Opening (ดู `_load_criteria` ฝั่ง backend)
      ถ้าจะแก้เกณฑ์ ให้ไปแก้ที่ตาราง Opening ด้านบนแทน
      minWidth ลดจาก 1420px เพราะเหลือ 3 คอลัมน์ ไม่ต้องเลื่อนแนวนอนอีก */
-  part_number: { label: "ALPL#", listUrl: "/api/part-numbers/all", basePath: "/api/part-numbers",
+  part_number: { label: "DWG#", listUrl: "/api/part-numbers/all", basePath: "/api/part-numbers",
     idField: "part_number_id", minWidth: "700px",
     fields: [
-      { key: "part_number_name", label: "ALPL#", width: "230px" },
+      { key: "part_number_name", label: "DWG#", width: "230px" },
       { key: "package_size", label: "Opening", type: "select-package-size", width: "170px" },
       { key: "handler", label: "H/L", type: "select-handler", width: "170px" },
     ] },

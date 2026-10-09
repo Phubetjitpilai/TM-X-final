@@ -848,7 +848,7 @@ async def start_session(request: Request):
             # ต่อได้เลยโดยไม่ต้องรื้อโครงสร้างนี้ใหม่
             "group_templates": templates,
             "position": 0,
-            "operator": data.get("Operator"),
+            "operator": data.get("Performed by"),
             "note": entry_note,
         }
         session_queues[session_id] = queue_state
@@ -1063,6 +1063,10 @@ async def end_work(req: StopSessionRequest):
                     return {"ok": True, "target_count": row["target_count"], "queue_state": q}
                 if row["measured_count"] >= row["target_count"]:
                     raise HTTPException(409, "ไม่มีคิวที่หยุดกลางทางให้จบงาน")
+                # Deliver the same Stop command used by the measurement popup.
+                agent_err = await _notify_agent_action("stop", req.session_id)
+                if agent_err:
+                    raise HTTPException(502, f"ยังไม่ปิดคิวงาน — ส่ง Stop ไป Pi ไม่สำเร็จ: {agent_err}")
                 measured = row["measured_count"]
                 q["original_plan"] = {
                     "queue": deepcopy(q["queue"]),

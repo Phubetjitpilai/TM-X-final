@@ -17,14 +17,14 @@ const FIELD_DEFS: Record<
   number_alpl:  { label: "Part Number", type: "text", help: "เช่น 201, 202, 203 หรือ 201-205" },
   package_size: { label: "Opening", type: "package_size" },
   tolerance_id: { label: "Tolerance", type: "tolerance" },
-  part_number:  { label: "ALPL#", type: "part_number" },
+  part_number:  { label: "DWG#", type: "part_number" },
   description:  { label: "Desc.", type: "text" },
   po_number:    { label: "PO#", type: "text", help: "ตัวเลขเท่านั้น" },
   vendor:       { label: "Vendor", type: "select" },
   owner:        { label: "Order by", type: "select" },
   receive_date: { label: "Receive Date", type: "date" },
   /** เครื่องทดสอบที่ Part Number ตัวนี้ติดตั้งอยู่ — cascade จาก Opening เหมือน
-   *  ALPL# แต่คนละแหล่ง (package_size_handler ไม่ใช่ part_number) */
+   *  DWG# แต่คนละแหล่ง (package_size_handler ไม่ใช่ part_number) */
   handler:      { label: "H/L", type: "handler" },
 };
 
@@ -36,7 +36,7 @@ const FIELD_DEFS: Record<
  *                          [ Tolerance (เต็มแถว) ]
  *
  *     New/Rework (3 คอลัมน์)
- *       แถว 1  [ Part Number      | Opening | ALPL# ]
+ *       แถว 1  [ Part Number      | Opening | DWG# ]
  *       แถว 2  [ PO# | Vendor       | Owner       ]
  *       แถว 3  [ Desc. (กว้าง 2 ช่อง)| Receive Date ]
  *       แถว 4  [ Tolerance (เต็มแถว) ]
@@ -45,7 +45,7 @@ const FIELD_DEFS: Record<
  * โหมด IPM มาจาก package_size ตรง ๆ ไม่ได้อ้อมผ่าน part_number
  *
  * ⚠ **Handler มีช่องให้กรอกเฉพาะ IPM** เพราะโหมดนั้นไม่มี part_number ให้ derive
- *   ส่วน New/Rework `setField` เติมค่าให้เองตอนเลือก ALPL# แล้วส่งไป
+ *   ส่วน New/Rework `setField` เติมค่าให้เองตอนเลือก DWG# แล้วส่งไป
  *   backend ด้วย — **แค่ไม่วาดช่องให้เห็น** เพราะเป็นช่องที่แก้ไม่ได้อยู่ดี
  *   มีไว้ก็กินที่แล้วทำให้ผู้ใช้สงสัยว่าทำไมกดไม่ได้
  *
@@ -74,7 +74,7 @@ const GROUP_LAYOUT: Record<EntryMode, { cols: number; span: Record<string, numbe
 /** ช่องที่ถูก "ล็อก" หลังระบบเติมค่าจากข้อมูลที่ลงทะเบียนไว้
  *
  *  IPM    ล็อกเกือบหมด — Part Number ที่ลงทะเบียนแล้วมี config ครบอยู่แล้ว ไม่ควรแก้ที่นี่
- *  Rework ล็อกแค่ Opening + ALPL# — 2 ตัวนี้กำหนดเกณฑ์ OK/NG กับ
+ *  Rework ล็อกแค่ Opening + DWG# — 2 ตัวนี้กำหนดเกณฑ์ OK/NG กับ
  *         template ของ TM-X ห้ามพิมพ์ผิด ส่วน Vendor/Owner/PO/Desc. ยังต้อง
  *         แก้ได้ เพราะนั่นคือสิ่งที่ฟอร์ม Rework มีไว้ทำ
  *  New    ใช้ข้อมูล Part เดิมสำหรับ Part Number ที่ลงทะเบียนไว้แล้ว
@@ -294,11 +294,11 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
 
   /** เปลี่ยนค่าช่องหนึ่ง — พร้อม cascade ที่ต้องเกิดตามทันที
    *
-   *  New/Rework: เลือก ALPL# แล้ว **Handler ต้องตามมาเอง** เพราะ
+   *  New/Rework: เลือก DWG# แล้ว **Handler ต้องตามมาเอง** เพราะ
    *  `part_number` ผูก `handler_id` ของตัวเองไว้ตั้งแต่ในตาราง catalog แล้ว
    *  (ดู init.sql) การให้ผู้ใช้เลือกเองจะเปิดช่องให้ 2 แหล่งขัดกัน
    *
-   *  ⚠ ต้องล้าง Handler ด้วยเมื่อ ALPL# ถูกล้าง ไม่งั้นช่องจะค้างค่าของ
+   *  ⚠ ต้องล้าง Handler ด้วยเมื่อ DWG# ถูกล้าง ไม่งั้นช่องจะค้างค่าของ
    *    part ตัวเก่าไว้ทั้งที่ผู้ใช้เปลี่ยนไปแล้ว — เป็นค่าที่ผิดแบบเงียบสนิท
    */
   const setField = (gi: number, key: string, v: string) => {
@@ -455,9 +455,9 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                         />
                       ) : def.type === "handler" ? (
                         /* Handler — ตัวเลือกมาจาก package_size_handler ของขนาดที่เลือกไว้
-                           ในกลุ่มนี้ (คนละแหล่งกับ ALPL# ที่มาจากตาราง part_number)
+                           ในกลุ่มนี้ (คนละแหล่งกับ DWG# ที่มาจากตาราง part_number)
                            โหมด New/Rework ช่องนี้จะถูกล็อกเสมอเพราะ setField เติมให้เอง
-                           ตอนเลือก ALPL# — ดู LOCKED_FIELDS */
+                           ตอนเลือก DWG# — ดู LOCKED_FIELDS */
                         <SingleSelect
                           label={def.label}
                           options={options.handlersFor(g.package_size ?? "")}
@@ -480,8 +480,8 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
                           options={options.partNumbersFor(g.package_size ?? "")}
                           value={val}
                           onChange={(value) => setField(gi, f, value)}
-                          placeholder={g.package_size ? "เลือก ALPL#" : "เลือก Opening ก่อน"}
-                          emptyText="Opening นี้ยังไม่มี ALPL#"
+                          placeholder={g.package_size ? "เลือก DWG#" : "เลือก Opening ก่อน"}
+                          emptyText="Opening นี้ยังไม่มี DWG#"
                           disabled={disabled || !g.package_size}
                           invalid={!!err}
                           locked={locked}
@@ -542,7 +542,7 @@ export default function EntryGroups({ mode, groups, onChange, disabled, errors, 
             + Add Group
           </button>
           <span className="entry-group-hint">
-            1 กลุ่ม = Part Number ที่ใช้ข้อมูลชุดเดียวกัน (Opening / ALPL# / PO …)
+            1 กลุ่ม = Part Number ที่ใช้ข้อมูลชุดเดียวกัน (Opening / DWG# / PO …)
           </span>
         </div>
       )}

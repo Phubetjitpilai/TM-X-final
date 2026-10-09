@@ -123,7 +123,7 @@ function errMsg(err: unknown, fallback: string): string {
 }
 
 /** 1 ช่องในกล่องค่า read-only (label เล็กจางอยู่บน ค่าอยู่ล่าง) — ใช้ทั้งกล่อง
- *  "ค่าที่ผูกมากับ ALPL#" ของฟอร์ม Part และ "ข้อมูลของรายการนี้" ของฟอร์ม
+ *  "ค่าที่ผูกมากับ DWG#" ของฟอร์ม Part และ "ข้อมูลของรายการนี้" ของฟอร์ม
  *  Measurement เพราะต้นฉบับใช้หน้าตาเดียวกันทั้งคู่ */
 function DerivedCell({ label, value }: { label: string; value: string }) {
   return (
@@ -240,7 +240,7 @@ export default function EditPage() {
   const [alertText, setAlertText] = useState<string | null>(null);
 
   // ── ฟอร์ม Part: ช่องที่ต้อง cascade กันจึงคุมด้วย state (ที่เหลืออ่านจาก FormData)
-  //    Opening → กำหนดตัวเลือก ALPL# และ Tolerance
+  //    Opening → กำหนดตัวเลือก DWG# และ Tolerance
   const [pkgValue, setPkgValue] = useState("");
   const [toleranceValue, setToleranceValue] = useState("");
   const [pnValue, setPnValue] = useState("");
@@ -429,7 +429,7 @@ export default function EditPage() {
     setEditContext({ table: "parts", mode, key: partId, original: part });
     setFieldErrors({});
     setAlplNoteConsumed(false);
-    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — ALPL# กรองจาก catalog ใน Query
+    // ตั้งค่าตั้งต้นของคู่ที่ cascade กัน — DWG# กรองจาก catalog ใน Query
     setPkgValue(String(part?.package_size ?? ""));
     setToleranceValue(String(part?.tolerance_id ?? ""));
     setPnValue(String(part?.part_number ?? ""));
@@ -438,7 +438,7 @@ export default function EditPage() {
     setOwnerValue(String(part?.owner ?? ""));
   }
 
-  // Opening → ALPL#: กรองจาก catalog ที่โหลดไว้แล้ว ไม่ยิง request
+  // Opening → DWG#: กรองจาก catalog ที่โหลดไว้แล้ว ไม่ยิง request
   // ทุกครั้งที่เปลี่ยนขนาด และยังคงค่าเดิมไว้ระหว่างที่ catalog โหลดครั้งแรก
   useEffect(() => {
     if (editContext.table !== "parts" || !lookups.partNumbersLoaded) return;
@@ -483,13 +483,13 @@ export default function EditPage() {
        ทำไม Opening ยังบังคับ: มันเป็น **แหล่งเกณฑ์ตัดสิน OK/NG เดียว
        ของทั้งระบบ** ทุกโหมด (ดู `_load_criteria` ใน shared.py) — Part Number ที่ไม่มี
        package_size จะวัดไม่ได้เลย กด Start แล้วเด้ง 404 "หาเกณฑ์ตัดสินไม่เจอ"
-       และมันยังเป็นตัวกรอง catalog ของ ALPL# ที่เลือกได้ด้วย
+       และมันยังเป็นตัวกรอง catalog ของ DWG# ที่เลือกได้ด้วย
 
        ทำไมตัวอื่นไม่บังคับ: ทุกคอลัมน์ใน `parts_specifications` ยอมให้เป็น NULL
        (ดู init.sql) และการลงทะเบียนแบบ IPM ก็มีแค่ Part Number + Opening อยู่แล้ว
        — ฟอร์มนี้จึงไม่ควรเข้มกว่าเส้นทางที่ระบบใช้จริง
 
-       ⚠ ALPL# ว่าง = ไม่มี Handler/Template มาให้อัตโนมัติ ต้องเลือกเอง
+       ⚠ DWG# ว่าง = ไม่มี Handler/Template มาให้อัตโนมัติ ต้องเลือกเอง
          (ถ้าเว้นทั้งคู่ Part นั้นจะไม่มีเครื่องผูกอยู่ ซึ่งจะหลุดจากรายงานที่
           จัดกลุ่มตาม Handler) */
     if (!pkgValue.trim()) errors.package_size = "เลือก Opening";
@@ -733,7 +733,7 @@ export default function EditPage() {
                       (ค่าที่โชว์คือ COALESCE ของ Part Number ก่อน ถ้าไม่มีค่อยของ part_number) */}
                 <th>Part ID</th>
                 <th>Part Number</th>
-                <th>ALPL#</th>
+                <th>DWG#</th>
                 <th>H/L</th>
                 <th>Opening</th>
                 <th>Tolerance ID</th>
@@ -1072,24 +1072,24 @@ export default function EditPage() {
                     <div className="field-error">{fieldErrors.package_size}</div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="f-part_number">ALPL#</label>
-                    {/* disabled จนกว่าจะมี Opening ที่หา ALPL# เจอ —
-                        เลือกก่อนไม่ได้เพราะ catalog ของ ALPL# ผูกกับ
+                    <label htmlFor="f-part_number">DWG#</label>
+                    {/* disabled จนกว่าจะมี Opening ที่หา DWG# เจอ —
+                        เลือกก่อนไม่ได้เพราะ catalog ของ DWG# ผูกกับ
                         Opening อยู่ (ดู schema part_number) */}
                     <SingleSelect
                       id="f-part_number"
-                      label="ALPL#"
+                      label="DWG#"
                       options={pnOptions}
                       value={pnValue}
                       disabled={pnOptions.length === 0}
                       onChange={setPnValue}
-                      placeholder={!pkgValue.trim() ? "เลือก Opening ก่อน" : "เลือก ALPL#"}
-                      emptyText="Opening นี้ยังไม่มี ALPL#"
+                      placeholder={!pkgValue.trim() ? "เลือก Opening ก่อน" : "เลือก DWG#"}
+                      emptyText="Opening นี้ยังไม่มี DWG#"
                       invalid={!!fieldErrors.part_number}
                     />
                     <div className="field-error">{fieldErrors.part_number}</div>
                   </div>
-                  {/* Handler — เลือกได้เอง ไม่ผูกกับ ALPL# แล้ว
+                  {/* Handler — เลือกได้เอง ไม่ผูกกับ DWG# แล้ว
                       (Part Number ตัวเดียวกันย้ายเครื่องได้ ส่วน part_number เป็นแค่แคตตาล็อก)
                       เว้นว่างได้ = ยังไม่ระบุ */}
                   <div className="form-group">

@@ -2,10 +2,11 @@
 export function toUiTerms(input: string): string {
   const catalogPart = "__CATALOG_PART_TERM__";
   return input
+    .replace(/ALPL#/g, "DWG#")
     .replace(/Part Number/g, catalogPart)
     .replace(/Package Size/g, "Opening")
     .replace(/ALPL/g, "Part Number")
-    .replace(new RegExp(catalogPart, "g"), "ALPL#")
+    .replace(new RegExp(catalogPart, "g"), "DWG#")
     .replace(/Nominal X/g, "Nominal_X")
     .replace(/Nominal Y/g, "Nominal_Y")
     .replace(/Upper Tolerance|Upper Tol/g, "USL")
