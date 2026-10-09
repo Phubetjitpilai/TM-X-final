@@ -163,7 +163,7 @@ def make_plan(workbook, conn, database):
                              f"missing={sorted(set(actual)-set(header))}, "
                              f"unknown={sorted(set(header)-set(actual))}")
         selected = [actual[name] for name in header]
-        if any("GENERATED" in c.extra.upper() for c in selected):
+        if any("VIRTUAL GENERATED" in c.extra.upper() or "STORED GENERATED" in c.extra.upper() for c in selected):
             raise ValueError(f"Generated columns in {table} require a dedicated import")
         # Preflight the entire file before writing any table.
         count = sum(1 for _ in data_rows(sheet, selected))
